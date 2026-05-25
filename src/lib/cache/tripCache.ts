@@ -5,6 +5,7 @@ import type { TripForm } from '@/lib/validations/tripForm'
 const CACHE_TTL_HOURS = 6
 
 function buildCacheKey(form: TripForm): string {
+  // paquete excluded: we cache all 3 packages together under one key
   const str = [
     form.destino,
     form.origen,
@@ -12,7 +13,6 @@ function buildCacheKey(form: TripForm): string {
     form.fechaFin,
     String(form.personas),
     form.tipo,
-    form.paquete,
   ].join(':')
   return createHash('sha256').update(str).digest('hex').slice(0, 32)
 }

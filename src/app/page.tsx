@@ -1,10 +1,16 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import Image from 'next/image'
 import { TripForm } from '@/components/trip/TripForm'
 import { TripMap } from '@/components/map/TripMap'
+import { PackageCompare } from '@/components/trip/PackageCompare'
+import { BudgetDisplay } from '@/components/trip/BudgetDisplay'
+import { ActivityItem } from '@/components/trip/ActivityItem'
 import type { TripForm as TripFormType } from '@/lib/validations/tripForm'
 import type { Trip } from '@/types/trip'
+import type { WeatherData } from '@/lib/api/openweather'
+import type { GenerateResult } from '@/app/api/generate/route'
 
 const LOADING_STEPS = [
   {
@@ -23,23 +29,28 @@ const LOADING_STEPS = [
     duracion: 2000,
   },
   {
-    mensaje: 'La IA está armando tu viaje perfecto...',
+    mensaje: 'La IA está armando 3 versiones de tu viaje...',
     icono: '🤖',
     duracion: 3000,
   },
   {
-    mensaje: 'Optimizando la ruta para que no pierdas tiempo...',
+    mensaje: 'Optimizando rutas para que no pierdas tiempo...',
     icono: '📍',
     duracion: 1000,
   },
 ] as const
 
-type AppStep = 'landing' | 'form' | 'loading' | 'result'
+type AppStep = 'landing' | 'form' | 'loading' | 'packages' | 'result'
 
 export default function HomePage() {
   const [step, setStep] = useState<AppStep>('landing')
   const [loadingStep, setLoadingStep] = useState(0)
+  const [allPackages, setAllPackages] = useState<GenerateResult | null>(null)
+  const [selectedPackage, setSelectedPackage] = useState<
+    'basico' | 'confort' | 'premium'
+  >('confort')
   const [itinerary, setItinerary] = useState<Trip | null>(null)
+  const [weather, setWeather] = useState<WeatherData | null>(null)
   const [formData, setFormData] = useState<TripFormType | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -54,9 +65,7 @@ export default function HomePage() {
       }
     }
     const timerId = setTimeout(advance, LOADING_STEPS[0]?.duracion ?? 2000)
-    return () => {
-      clearTimeout(timerId)
-    }
+    return () => clearTimeout(timerId)
   }, [step])
 
   const handleSubmit = async (form: TripFormType) => {
@@ -64,6 +73,7 @@ export default function HomePage() {
     setLoadingStep(0)
     setError(null)
     setFormData(form)
+    setSelectedPackage(form.paquete)
 
     try {
       const response = await fetch('/api/generate', {
@@ -72,55 +82,26 @@ export default function HomePage() {
         body: JSON.stringify(form),
       })
 
-      if (!response.ok) {
-        throw new Error('Error generando el itinerario')
-      }
+      if (!response.ok) throw new Error('Error generando el itinerario')
 
-      const body = response.body
-      if (!body) {
-        throw new Error('Sin respuesta del servidor')
-      }
-
-      const reader = body.getReader()
-      const decoder = new TextDecoder()
-      let json = ''
-
-      for (;;) {
-        const { done, value } = await reader.read()
-        if (done) break
-        json += decoder.decode(value, { stream: true })
-      }
-
-      const partial = JSON.parse(json) as Omit<
-        Trip,
-        | 'id'
-        | 'origen'
-        | 'personas'
-        | 'fechaInicio'
-        | 'fechaFin'
-        | 'paquete'
-        | 'listaActividades'
-        | 'actividadesPendientes'
-      >
-      const trip: Trip = {
-        ...partial,
-        id: crypto.randomUUID(),
-        origen: form.origen,
-        personas: form.personas,
-        fechaInicio: form.fechaInicio,
-        fechaFin: form.fechaFin,
-        paquete: form.paquete,
-        listaActividades: [],
-        actividadesPendientes: [],
-      }
-      setItinerary(trip)
-      setStep('result')
+      const result = (await response.json()) as GenerateResult
+      setAllPackages(result)
+      setWeather(result.weather)
+      setStep('packages')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error desconocido')
       setStep('form')
     }
   }
 
+  const handleSelectPackage = (paquete: 'basico' | 'confort' | 'premium') => {
+    if (!allPackages) return
+    setSelectedPackage(paquete)
+    setItinerary(allPackages[paquete])
+    setStep('result')
+  }
+
+  // ── Loading ───────────────────────────────────────────────────────────────
   if (step === 'loading') {
     const current = LOADING_STEPS[loadingStep]
     return (
@@ -138,42 +119,120 @@ export default function HomePage() {
           <p className="mt-4 text-lg font-medium text-gray-700">
             {current?.mensaje ?? ''}
           </p>
+          <p className="mt-2 text-sm text-gray-400">
+            Generando 3 paquetes en paralelo...
+          </p>
         </div>
       </main>
     )
   }
 
+  // ── Package selection ─────────────────────────────────────────────────────
+  if (step === 'packages' && allPackages) {
+    return (
+      <main className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 px-4 py-12">
+        <div className="mx-auto max-w-2xl">
+          {formData ? (
+            <p className="mb-6 text-center text-sm text-gray-500">
+              {allPackages.basico.destino} · {formData.personas} persona
+              {formData.personas !== 1 ? 's' : ''} · {formData.fechaInicio} →{' '}
+              {formData.fechaFin}
+            </p>
+          ) : null}
+          <div className="rounded-2xl bg-white p-6 shadow-lg">
+            <PackageCompare
+              basico={allPackages.basico}
+              confort={allPackages.confort}
+              premium={allPackages.premium}
+              selected={selectedPackage}
+              moneda={formData?.moneda ?? 'USD'}
+              onSelect={handleSelectPackage}
+            />
+          </div>
+        </div>
+      </main>
+    )
+  }
+
+  // ── Result ────────────────────────────────────────────────────────────────
   if (step === 'result' && itinerary) {
     return (
       <main className="min-h-screen bg-gray-50">
         <div className="mx-auto max-w-4xl px-4 py-8">
+          {/* Header */}
           <div className="mb-6 flex items-center justify-between">
             <div>
               <h1 className="text-2xl font-bold text-gray-900">
                 {itinerary.destino}
               </h1>
               {formData ? (
-                <p className="text-sm text-gray-500 mt-0.5">
+                <p className="mt-0.5 text-sm text-gray-500">
                   {formData.personas} persona
                   {formData.personas !== 1 ? 's' : ''} · {formData.fechaInicio}{' '}
-                  → {formData.fechaFin} · {itinerary.paquete}
+                  → {formData.fechaFin} ·{' '}
+                  <span className="capitalize">{itinerary.paquete}</span>
                 </p>
               ) : null}
             </div>
-            <button
-              onClick={() => setStep('form')}
-              className="text-sm text-blue-600 hover:underline"
-            >
-              Nuevo viaje
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setStep('packages')}
+                className="text-sm text-blue-600 hover:underline"
+              >
+                Cambiar paquete
+              </button>
+              <button
+                onClick={() => setStep('form')}
+                className="text-sm text-gray-400 hover:underline"
+              >
+                Nuevo viaje
+              </button>
+            </div>
           </div>
 
-          <div className="mb-6 h-72 rounded-xl overflow-hidden shadow-sm">
+          {/* Weather strip */}
+          {weather ? (
+            <div className="mb-4 flex items-center gap-3 rounded-xl bg-sky-50 px-4 py-3 text-sm">
+              <Image
+                src={`https://openweathermap.org/img/wn/${weather.icon}.png`}
+                alt={weather.description}
+                width={40}
+                height={40}
+                unoptimized
+              />
+              <span className="font-semibold text-gray-800">
+                {Math.round(weather.temp)}°C
+              </span>
+              <span className="capitalize text-gray-600">
+                {weather.description}
+              </span>
+              <span className="text-gray-400">
+                · {weather.humidity}% humedad
+              </span>
+              <span className="text-gray-400">
+                · {weather.windSpeed} m/s viento
+              </span>
+            </div>
+          ) : null}
+
+          {/* Map */}
+          <div className="mb-6 h-72 overflow-hidden rounded-xl shadow-sm">
             <TripMap dias={itinerary.dias} />
           </div>
 
+          {/* Summary */}
           <p className="mb-6 text-gray-600">{itinerary.resumenViaje}</p>
 
+          {/* Budget */}
+          <div className="mb-4">
+            <BudgetDisplay
+              dias={itinerary.dias}
+              currency={formData?.moneda ?? 'USD'}
+              totalBudget={itinerary.presupuestoTotal}
+            />
+          </div>
+
+          {/* Budget per person */}
           <div className="mb-4 grid grid-cols-2 gap-3 text-sm">
             <div className="rounded-lg bg-white p-3 shadow-sm">
               <p className="text-gray-500">Presupuesto total</p>
@@ -187,6 +246,7 @@ export default function HomePage() {
             </div>
           </div>
 
+          {/* Warnings */}
           {itinerary.advertencias.length > 0 ? (
             <div className="mb-4 rounded-lg bg-amber-50 p-4">
               <p className="mb-2 font-medium text-amber-800">Advertencias</p>
@@ -198,41 +258,31 @@ export default function HomePage() {
             </div>
           ) : null}
 
+          {/* Days */}
           <div className="flex flex-col gap-4">
             {itinerary.dias.map((dia) => (
-              <div
-                key={dia.numero}
-                className="rounded-xl bg-white p-4 shadow-sm"
-              >
-                <h2 className="mb-1 font-semibold text-gray-900">
-                  Día {dia.numero}: {dia.titulo}
-                </h2>
-                <p className="mb-3 text-sm text-gray-500">{dia.ciudad}</p>
-                <div className="flex flex-col gap-2">
+              <div key={dia.numero} className="rounded-xl bg-white shadow-sm">
+                <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3">
+                  <div>
+                    <h2 className="font-semibold text-gray-900">
+                      Día {dia.numero}: {dia.titulo}
+                    </h2>
+                    <p className="text-xs text-gray-400">{dia.ciudad}</p>
+                  </div>
+                  <span className="text-sm font-medium text-gray-500">
+                    ${dia.presupuestoDia}
+                  </span>
+                </div>
+                <div className="divide-y divide-gray-50">
                   {dia.actividades.map((act) => (
-                    <div
-                      key={act.id}
-                      className="flex items-start gap-3 text-sm"
-                    >
-                      <span className="min-w-[48px] text-gray-400">
-                        {act.horaInicio}
-                      </span>
-                      <div className="flex-1">
-                        <p className="font-medium text-gray-800">
-                          {act.nombre}
-                        </p>
-                        <p className="text-gray-500">{act.direccion}</p>
-                      </div>
-                      <span className="text-gray-700">
-                        ${act.precioEstimado}
-                      </span>
-                    </div>
+                    <ActivityItem key={act.id} activity={act} />
                   ))}
                 </div>
               </div>
             ))}
           </div>
 
+          {/* Tips */}
           {itinerary.consejos.length > 0 ? (
             <div className="mt-4 rounded-lg bg-blue-50 p-4">
               <p className="mb-2 font-medium text-blue-800">Consejos</p>
@@ -248,6 +298,7 @@ export default function HomePage() {
     )
   }
 
+  // ── Form ──────────────────────────────────────────────────────────────────
   if (step === 'form') {
     return (
       <main className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 px-4 py-12">
@@ -271,6 +322,7 @@ export default function HomePage() {
     )
   }
 
+  // ── Landing ───────────────────────────────────────────────────────────────
   return (
     <main className="flex min-h-screen flex-col items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 px-4">
       <div className="text-center">

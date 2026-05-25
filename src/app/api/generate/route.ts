@@ -6,9 +6,22 @@ import { searchFlights } from '@/lib/api/amadeus'
 import { searchHotels } from '@/lib/api/booking'
 import { searchActivities } from '@/lib/api/viator'
 import { getWeatherByCity } from '@/lib/api/openweather'
+import type { WeatherData } from '@/lib/api/openweather'
+import { getTravelTimes } from '@/lib/api/googlemaps'
 import { getCachedTrip, saveCachedTrip } from '@/lib/cache/tripCache'
+import type { Trip, Day } from '@/types/trip'
+import type { Activity } from '@/types/activity'
+
+export const maxDuration = 60
 
 const anthropic = new Anthropic()
+
+export interface GenerateResult {
+  basico: Trip
+  confort: Trip
+  premium: Trip
+  weather: WeatherData | null
+}
 
 async function buscarVuelos(form: TripForm): Promise<unknown> {
   try {
@@ -44,11 +57,76 @@ async function buscarActividades(form: TripForm): Promise<unknown> {
   }
 }
 
-async function buscarClima(form: TripForm): Promise<unknown> {
+async function buscarClima(form: TripForm): Promise<WeatherData | null> {
   try {
     return await getWeatherByCity(form.destino)
   } catch {
     return null
+  }
+}
+
+async function enrichDayWithTravelTimes(day: Day): Promise<Day> {
+  if (day.actividades.length < 2) return day
+  try {
+    const times = await getTravelTimes(day.actividades)
+    const enriched: Activity[] = day.actividades.map((act, i) => ({
+      ...act,
+      tiempoHastaSiguiente: times[i] ?? act.tiempoHastaSiguiente,
+    }))
+    return { ...day, actividades: enriched }
+  } catch {
+    return day
+  }
+}
+
+async function generatePackage(
+  form: TripForm,
+  paquete: 'basico' | 'confort' | 'premium'
+): Promise<Trip> {
+  const formWithPaquete: TripForm = { ...form, paquete }
+  const prompt = buildItineraryPrompt(formWithPaquete)
+
+  const message = await anthropic.messages.create({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 8000,
+    messages: [{ role: 'user', content: prompt }],
+  })
+
+  const text =
+    (
+      message.content.find((b) => b.type === 'text') as
+        | { type: 'text'; text: string }
+        | undefined
+    )?.text ?? '{}'
+
+  const partial = JSON.parse(text) as Omit<
+    Trip,
+    | 'id'
+    | 'origen'
+    | 'personas'
+    | 'fechaInicio'
+    | 'fechaFin'
+    | 'paquete'
+    | 'listaActividades'
+    | 'actividadesPendientes'
+  >
+
+  // Enrich each day's activities with real Google Maps travel times in parallel
+  const enrichedDias = await Promise.all(
+    partial.dias.map(enrichDayWithTravelTimes)
+  )
+
+  return {
+    ...partial,
+    dias: enrichedDias,
+    id: crypto.randomUUID(),
+    origen: form.origen,
+    personas: form.personas,
+    fechaInicio: form.fechaInicio,
+    fechaFin: form.fechaFin,
+    paquete,
+    listaActividades: [],
+    actividadesPendientes: [],
   }
 }
 
@@ -57,62 +135,40 @@ export async function POST(request: Request): Promise<Response> {
   const parsed = TripFormSchema.safeParse(body)
 
   if (!parsed.success) {
-    return new Response(JSON.stringify({ error: parsed.error.flatten() }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json' },
-    })
+    return Response.json({ error: parsed.error.flatten() }, { status: 400 })
   }
 
   const form = parsed.data
 
-  // Check Supabase cache first
   const cached = await getCachedTrip(form)
   if (cached) {
     return new Response(cached, {
-      headers: {
-        'Content-Type': 'text/plain; charset=utf-8',
-        'X-Cache': 'HIT',
-      },
+      headers: { 'Content-Type': 'application/json', 'X-Cache': 'HIT' },
     })
   }
 
-  // Fire all external searches in parallel — fail gracefully
-  await Promise.all([
+  // Fire all external searches + 3 Claude generations in parallel
+  const [, , , weather, basico, confort, premium] = await Promise.all([
     buscarVuelos(form),
     buscarHoteles(form),
     buscarActividades(form),
     buscarClima(form),
+    generatePackage(form, 'basico'),
+    generatePackage(form, 'confort'),
+    generatePackage(form, 'premium'),
   ])
 
-  const stream = anthropic.messages.stream({
-    model: 'claude-sonnet-4-6',
-    max_tokens: 8000,
-    messages: [{ role: 'user', content: buildItineraryPrompt(form) }],
-  })
+  const result: GenerateResult = {
+    basico: basico as Trip,
+    confort: confort as Trip,
+    premium: premium as Trip,
+    weather: weather as WeatherData | null,
+  }
 
-  const encoder = new TextEncoder()
-  let accumulated = ''
+  const json = JSON.stringify(result)
+  await saveCachedTrip(form, json)
 
-  const readable = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      try {
-        for await (const event of stream) {
-          if (
-            event.type === 'content_block_delta' &&
-            event.delta.type === 'text_delta'
-          ) {
-            accumulated += event.delta.text
-            controller.enqueue(encoder.encode(event.delta.text))
-          }
-        }
-        await saveCachedTrip(form, accumulated)
-      } finally {
-        controller.close()
-      }
-    },
-  })
-
-  return new Response(readable, {
-    headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+  return new Response(json, {
+    headers: { 'Content-Type': 'application/json' },
   })
 }
