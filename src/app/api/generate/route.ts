@@ -5,6 +5,8 @@ import { buildItineraryPrompt } from '@/lib/ai/generateItinerary'
 import { searchFlights } from '@/lib/api/amadeus'
 import { searchHotels } from '@/lib/api/booking'
 import { searchActivities } from '@/lib/api/viator'
+import { getWeatherByCity } from '@/lib/api/openweather'
+import { getCachedTrip, saveCachedTrip } from '@/lib/cache/tripCache'
 
 const anthropic = new Anthropic()
 
@@ -42,6 +44,14 @@ async function buscarActividades(form: TripForm): Promise<unknown> {
   }
 }
 
+async function buscarClima(form: TripForm): Promise<unknown> {
+  try {
+    return await getWeatherByCity(form.destino)
+  } catch {
+    return null
+  }
+}
+
 export async function POST(request: Request): Promise<Response> {
   const body: unknown = await request.json()
   const parsed = TripFormSchema.safeParse(body)
@@ -55,11 +65,23 @@ export async function POST(request: Request): Promise<Response> {
 
   const form = parsed.data
 
+  // Check Supabase cache first
+  const cached = await getCachedTrip(form)
+  if (cached) {
+    return new Response(cached, {
+      headers: {
+        'Content-Type': 'text/plain; charset=utf-8',
+        'X-Cache': 'HIT',
+      },
+    })
+  }
+
+  // Fire all external searches in parallel — fail gracefully
   await Promise.all([
     buscarVuelos(form),
     buscarHoteles(form),
     buscarActividades(form),
-    Promise.resolve(null),
+    buscarClima(form),
   ])
 
   const stream = anthropic.messages.stream({
@@ -69,6 +91,8 @@ export async function POST(request: Request): Promise<Response> {
   })
 
   const encoder = new TextEncoder()
+  let accumulated = ''
+
   const readable = new ReadableStream<Uint8Array>({
     async start(controller) {
       try {
@@ -77,9 +101,11 @@ export async function POST(request: Request): Promise<Response> {
             event.type === 'content_block_delta' &&
             event.delta.type === 'text_delta'
           ) {
+            accumulated += event.delta.text
             controller.enqueue(encoder.encode(event.delta.text))
           }
         }
+        await saveCachedTrip(form, accumulated)
       } finally {
         controller.close()
       }

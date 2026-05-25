@@ -1,34 +1,42 @@
-import type { TripPackage } from '@/types/trip'
 import { cn } from '@/lib/utils/cn'
+import type { TripForm } from '@/lib/validations/tripForm'
 
-const PACKAGES: TripPackage[] = [
-  { type: 'budget', label: 'Budget', priceMultiplier: 0.7 },
-  { type: 'standard', label: 'Standard', priceMultiplier: 1 },
-  { type: 'premium', label: 'Premium', priceMultiplier: 1.5 },
-  { type: 'luxury', label: 'Luxury', priceMultiplier: 2.5 },
+const PACKAGES: {
+  value: TripForm['paquete']
+  label: string
+  desc: string
+}[] = [
+  { value: 'basico', label: 'Básico', desc: '3★ · Eco · Transporte público' },
+  { value: 'confort', label: 'Confort', desc: '4★ · Turista+ · Taxi/Uber' },
+  {
+    value: 'premium',
+    label: 'Premium',
+    desc: '5★ · Business · Tours privados',
+  },
 ]
 
 interface PackageSelectorProps {
-  value: TripPackage['type']
-  onChange: (type: TripPackage['type']) => void
+  value: TripForm['paquete']
+  onChange: (type: TripForm['paquete']) => void
 }
 
 export function PackageSelector({ value, onChange }: PackageSelectorProps) {
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+    <div className="grid grid-cols-3 gap-2">
       {PACKAGES.map((pkg) => (
         <button
-          key={pkg.type}
-          onClick={() => onChange(pkg.type)}
+          key={pkg.value}
+          type="button"
+          onClick={() => onChange(pkg.value)}
           className={cn(
             'rounded-lg border-2 p-3 text-center transition-colors',
-            value === pkg.type
+            value === pkg.value
               ? 'border-blue-600 bg-blue-50 text-blue-700'
               : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300'
           )}
         >
-          <p className="font-semibold">{pkg.label}</p>
-          <p className="text-xs text-gray-500">{pkg.priceMultiplier}x</p>
+          <p className="font-semibold text-sm">{pkg.label}</p>
+          <p className="text-xs text-gray-500 mt-0.5">{pkg.desc}</p>
         </button>
       ))}
     </div>

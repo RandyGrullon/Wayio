@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { TripForm } from '@/components/trip/TripForm'
+import { TripMap } from '@/components/map/TripMap'
 import type { TripForm as TripFormType } from '@/lib/validations/tripForm'
 import type { Trip } from '@/types/trip'
 
@@ -39,6 +40,7 @@ export default function HomePage() {
   const [step, setStep] = useState<AppStep>('landing')
   const [loadingStep, setLoadingStep] = useState(0)
   const [itinerary, setItinerary] = useState<Trip | null>(null)
+  const [formData, setFormData] = useState<TripFormType | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -61,6 +63,7 @@ export default function HomePage() {
     setStep('loading')
     setLoadingStep(0)
     setError(null)
+    setFormData(form)
 
     try {
       const response = await fetch('/api/generate', {
@@ -88,8 +91,29 @@ export default function HomePage() {
         json += decoder.decode(value, { stream: true })
       }
 
-      const trip = JSON.parse(json) as Omit<Trip, 'id'>
-      setItinerary({ ...trip, id: crypto.randomUUID() })
+      const partial = JSON.parse(json) as Omit<
+        Trip,
+        | 'id'
+        | 'origen'
+        | 'personas'
+        | 'fechaInicio'
+        | 'fechaFin'
+        | 'paquete'
+        | 'listaActividades'
+        | 'actividadesPendientes'
+      >
+      const trip: Trip = {
+        ...partial,
+        id: crypto.randomUUID(),
+        origen: form.origen,
+        personas: form.personas,
+        fechaInicio: form.fechaInicio,
+        fechaFin: form.fechaFin,
+        paquete: form.paquete,
+        listaActividades: [],
+        actividadesPendientes: [],
+      }
+      setItinerary(trip)
       setStep('result')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error desconocido')
@@ -121,12 +145,21 @@ export default function HomePage() {
 
   if (step === 'result' && itinerary) {
     return (
-      <main className="min-h-screen bg-gray-50 px-4 py-8">
-        <div className="mx-auto max-w-2xl">
+      <main className="min-h-screen bg-gray-50">
+        <div className="mx-auto max-w-4xl px-4 py-8">
           <div className="mb-6 flex items-center justify-between">
-            <h1 className="text-2xl font-bold text-gray-900">
-              {itinerary.destino}
-            </h1>
+            <div>
+              <h1 className="text-2xl font-bold text-gray-900">
+                {itinerary.destino}
+              </h1>
+              {formData ? (
+                <p className="text-sm text-gray-500 mt-0.5">
+                  {formData.personas} persona
+                  {formData.personas !== 1 ? 's' : ''} · {formData.fechaInicio}{' '}
+                  → {formData.fechaFin} · {itinerary.paquete}
+                </p>
+              ) : null}
+            </div>
             <button
               onClick={() => setStep('form')}
               className="text-sm text-blue-600 hover:underline"
@@ -134,7 +167,13 @@ export default function HomePage() {
               Nuevo viaje
             </button>
           </div>
+
+          <div className="mb-6 h-72 rounded-xl overflow-hidden shadow-sm">
+            <TripMap dias={itinerary.dias} />
+          </div>
+
           <p className="mb-6 text-gray-600">{itinerary.resumenViaje}</p>
+
           <div className="mb-4 grid grid-cols-2 gap-3 text-sm">
             <div className="rounded-lg bg-white p-3 shadow-sm">
               <p className="text-gray-500">Presupuesto total</p>
@@ -147,6 +186,7 @@ export default function HomePage() {
               </p>
             </div>
           </div>
+
           {itinerary.advertencias.length > 0 ? (
             <div className="mb-4 rounded-lg bg-amber-50 p-4">
               <p className="mb-2 font-medium text-amber-800">Advertencias</p>
@@ -157,6 +197,7 @@ export default function HomePage() {
               </ul>
             </div>
           ) : null}
+
           <div className="flex flex-col gap-4">
             {itinerary.dias.map((dia) => (
               <div
@@ -191,6 +232,7 @@ export default function HomePage() {
               </div>
             ))}
           </div>
+
           {itinerary.consejos.length > 0 ? (
             <div className="mt-4 rounded-lg bg-blue-50 p-4">
               <p className="mb-2 font-medium text-blue-800">Consejos</p>

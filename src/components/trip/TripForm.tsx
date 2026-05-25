@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
+import { PackageSelector } from '@/components/trip/PackageSelector'
 import type { TripForm } from '@/lib/validations/tripForm'
 
 const TIPOS_VIAJE = [
@@ -20,14 +21,16 @@ interface TripFormProps {
   loading?: boolean
 }
 
-type FormState = Partial<Omit<TripForm, 'moneda'>> & {
+type FormState = Partial<Omit<TripForm, 'moneda' | 'paquete'>> & {
   moneda: TripForm['moneda']
+  paquete: TripForm['paquete']
 }
 
 export function TripForm({ onSubmit, loading = false }: TripFormProps) {
   const [form, setForm] = useState<FormState>({
     destinoSorpresa: false,
     moneda: 'USD',
+    paquete: 'confort',
     personas: 2,
     tipo: 'aventura',
     preferencias: [],
@@ -45,6 +48,7 @@ export function TripForm({ onSubmit, loading = false }: TripFormProps) {
       presupuesto: form.presupuesto ?? 0,
       moneda: form.moneda,
       tipo: form.tipo ?? 'aventura',
+      paquete: form.paquete,
       preferencias: form.preferencias,
     }
     await onSubmit(data)
@@ -186,6 +190,14 @@ export function TripForm({ onSubmit, loading = false }: TripFormProps) {
             </button>
           ))}
         </div>
+      </div>
+
+      <div className="flex flex-col gap-2">
+        <p className="text-sm font-medium text-gray-700">Paquete</p>
+        <PackageSelector
+          value={form.paquete}
+          onChange={(p) => setForm((f) => ({ ...f, paquete: p }))}
+        />
       </div>
 
       <Button type="submit" size="lg" loading={loading} className="mt-2">

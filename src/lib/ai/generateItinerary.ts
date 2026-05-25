@@ -1,5 +1,14 @@
 import type { TripForm } from '@/lib/validations/tripForm'
 
+const PAQUETE_INSTRUCCIONES: Record<TripForm['paquete'], string> = {
+  basico:
+    'PAQUETE BÁSICO: hoteles 3 estrellas o hostales bien valorados, vuelos económicos (clase turista sin extras), prioriza actividades gratuitas o de bajo costo, transporte público cuando sea posible.',
+  confort:
+    'PAQUETE CONFORT: hoteles 4 estrellas, vuelo en clase turista con equipaje incluido, mix equilibrado de actividades gratuitas y de pago, taxi o Uber para traslados clave.',
+  premium:
+    'PAQUETE PREMIUM: hoteles 5 estrellas o boutique de lujo, vuelo en clase business o primera, tours privados, restaurantes top (mínimo 2 por viaje), traslados en vehículo privado.',
+}
+
 export function buildItineraryPrompt(form: TripForm): string {
   const destinoFinal = form.destinoSorpresa
     ? 'SORPRESA (elige un destino perfecto para el tipo de viaje solicitado, usa el nombre real del lugar en el JSON)'
@@ -9,6 +18,8 @@ export function buildItineraryPrompt(form: TripForm): string {
     form.preferencias && form.preferencias.length > 0
       ? `\n- Preferencias: ${form.preferencias.join(', ')}`
       : ''
+
+  const paqueteInstruccion = PAQUETE_INSTRUCCIONES[form.paquete]
 
   return `
 Eres el mejor planificador de viajes del mundo.
@@ -21,7 +32,11 @@ DATOS DEL VIAJE:
 - Personas: ${form.personas}
 - Fechas: ${form.fechaInicio} al ${form.fechaFin}
 - Presupuesto total: ${form.presupuesto} ${form.moneda}
-- Tipo de viaje: ${form.tipo}${preferenciasLinea}
+- Tipo de viaje: ${form.tipo}
+- Paquete: ${form.paquete.toUpperCase()}${preferenciasLinea}
+
+INSTRUCCIONES DE PAQUETE:
+${paqueteInstruccion}
 
 REGLAS CRITICAS DE OPTIMIZACION DE RUTA:
 1. NUNCA volver a un lugar ya visitado.

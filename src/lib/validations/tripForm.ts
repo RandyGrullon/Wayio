@@ -18,6 +18,7 @@ export const TripFormSchema = z.object({
     'romantico',
     'gastronomia',
   ]),
+  paquete: z.enum(['basico', 'confort', 'premium']).default('confort'),
   preferencias: z.array(z.string()).optional(),
 })
 
