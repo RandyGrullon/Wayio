@@ -20,6 +20,7 @@ export const TripFormSchema = z.object({
   ]),
   paquete: z.enum(['basico', 'confort', 'premium']).default('confort'),
   preferencias: z.array(z.string()).optional(),
+  zona: z.string().optional(),
 })
 
 export type TripForm = z.infer<typeof TripFormSchema>

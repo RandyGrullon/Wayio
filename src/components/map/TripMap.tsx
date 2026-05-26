@@ -13,6 +13,7 @@ interface TripMapProps {
   dias: Day[]
   userLocation?: UserLocation
   actividadActiva?: Activity
+  isCrucero?: boolean
   className?: string
 }
 
@@ -38,6 +39,7 @@ export function TripMap({
   dias,
   userLocation,
   actividadActiva,
+  isCrucero = false,
   className,
 }: TripMapProps) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -98,9 +100,9 @@ export function TripMap({
             source: `route-${dayIdx}`,
             paint: {
               'line-color': color,
-              'line-width': 3,
+              'line-width': isCrucero ? 2 : 3,
               'line-opacity': 0.8,
-              'line-dasharray': [2, 1],
+              'line-dasharray': isCrucero ? [4, 3] : [2, 1],
             },
           })
         }
@@ -118,7 +120,19 @@ export function TripMap({
             justify-content:center;font-size:11px;font-weight:bold;
             cursor:pointer;box-shadow:0 2px 4px rgba(0,0,0,.35);
           `
-          el.textContent = String(actIdx + 1)
+          const isPort = isCrucero && activity.puertoCrucero
+          if (isPort) {
+            el.style.cssText = `
+              width:32px;height:32px;border-radius:6px;
+              background-color:#1e40af;border:2px solid white;
+              color:white;display:flex;align-items:center;
+              justify-content:center;font-size:16px;
+              cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,.45);
+            `
+            el.textContent = '⚓'
+          } else {
+            el.textContent = String(actIdx + 1)
+          }
 
           const nav = buildNavigationLinks(activity.lat, activity.lng)
           const popup = new mapboxgl.Popup({
@@ -173,7 +187,7 @@ export function TripMap({
       mapRef.current = null
       setMapLoaded(false)
     }
-  }, [dias])
+  }, [dias, isCrucero])
 
   // ── Day filter ────────────────────────────────────────────────────────────
   useEffect(() => {

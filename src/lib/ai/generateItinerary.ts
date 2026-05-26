@@ -19,6 +19,9 @@ export function buildItineraryPrompt(form: TripForm): string {
       ? `\n- Preferencias: ${form.preferencias.join(', ')}`
       : ''
 
+  const zonaLinea = form.zona ? `\n- Zona del crucero: ${form.zona}` : ''
+  const isCrucero = form.tipo === 'crucero'
+
   const paqueteInstruccion = PAQUETE_INSTRUCCIONES[form.paquete]
 
   return `
@@ -33,7 +36,7 @@ DATOS DEL VIAJE:
 - Fechas: ${form.fechaInicio} al ${form.fechaFin}
 - Presupuesto total: ${form.presupuesto} ${form.moneda}
 - Tipo de viaje: ${form.tipo}
-- Paquete: ${form.paquete.toUpperCase()}${preferenciasLinea}
+- Paquete: ${form.paquete.toUpperCase()}${preferenciasLinea}${zonaLinea}
 
 INSTRUCCIONES DE PAQUETE:
 ${paqueteInstruccion}
@@ -50,7 +53,19 @@ REGLAS CRITICAS DE OPTIMIZACION DE RUTA:
 9. Incluir tiempo de desplazamiento realista entre actividades.
 10. Si hay playa: ir por la manana, nunca al mediodia.
 
-REGLAS DE RADIO DE GEOFENCING:
+${
+  isCrucero
+    ? `REGLAS ESPECIALES DE CRUCERO:
+1. El primer y ultimo item de cada dia de puerto debe ser el MUELLE/TERMINAL del crucero (tipo: traslado, puertoCrucero: true).
+2. El campo tiempoEmbarqueMinutos indica cuantos minutos antes de zarpar se cierra el embarque (pon 90 si no se sabe).
+3. La ruta de cada dia es circular: comienza y termina en el puerto.
+4. Excursiones solo en horas de puerto (tipicamente 07:00-16:00).
+5. Incluir siempre traslado de regreso al barco con tiempo de sobra antes del zarpe.
+6. Agrupa excursiones geograficamente: NO mezcles extremos opuestos en un mismo dia.
+
+`
+    : ''
+}REGLAS DE RADIO DE GEOFENCING:
 - Restaurante: 80 metros
 - Museo o templo: 120 metros
 - Mirador o punto especifico: 100 metros
@@ -111,7 +126,9 @@ EL JSON DEBE SEGUIR EXACTAMENTE ESTA ESTRUCTURA:
           "consejos": [string],
           "tiempoHastaSiguiente": number,
           "estado": "pendiente",
-          "esPerdida": false
+          "esPerdida": false,
+          "puertoCrucero": boolean,
+          "tiempoEmbarqueMinutos": number
         }
       ]
     }

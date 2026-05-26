@@ -8,11 +8,13 @@ import { TripMap } from '@/components/map/TripMap'
 import { PackageCompare } from '@/components/trip/PackageCompare'
 import { BudgetDisplay } from '@/components/trip/BudgetDisplay'
 import { ActivityItem } from '@/components/trip/ActivityItem'
+import { RecreateTrip } from '@/components/trip/RecreateTrip'
 import { useUser } from '@/hooks/useUser'
 import type { TripForm as TripFormType } from '@/lib/validations/tripForm'
 import type { Trip } from '@/types/trip'
 import type { WeatherData } from '@/lib/api/openweather'
 import type { GenerateResult } from '@/app/api/generate/route'
+import type { PlaceFromVideo } from '@/lib/ai/analyzeVideo'
 
 const LOADING_STEPS = [
   {
@@ -58,6 +60,7 @@ export default function HomePage() {
   const [formData, setFormData] = useState<TripFormType | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [showRecreate, setShowRecreate] = useState(false)
 
   useEffect(() => {
     if (step !== 'loading') return
@@ -97,6 +100,27 @@ export default function HomePage() {
       setError(err instanceof Error ? err.message : 'Error desconocido')
       setStep('form')
     }
+  }
+
+  const handleRecreateTripConfirm = (
+    destino: string,
+    _lugares: PlaceFromVideo[]
+  ) => {
+    setShowRecreate(false)
+    // Pre-fill the form step with the detected destination
+    setFormData((prev) => ({
+      destino,
+      destinoSorpresa: false,
+      origen: prev?.origen ?? '',
+      personas: prev?.personas ?? 2,
+      fechaInicio: prev?.fechaInicio ?? '',
+      fechaFin: prev?.fechaFin ?? '',
+      presupuesto: prev?.presupuesto ?? 2000,
+      moneda: prev?.moneda ?? 'USD',
+      tipo: prev?.tipo ?? 'aventura',
+      paquete: prev?.paquete ?? 'confort',
+    }))
+    setStep('form')
   }
 
   const handleSelectPackage = (paquete: 'basico' | 'confort' | 'premium') => {
@@ -363,25 +387,39 @@ export default function HomePage() {
 
   // ── Landing ───────────────────────────────────────────────────────────────
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 px-4">
-      <div className="text-center">
-        <h1 className="text-5xl font-bold text-gray-900">TripMind</h1>
-        <p className="mt-4 text-xl text-gray-600">
-          Planificación de viajes con IA y GPS en vivo
-        </p>
-        <p className="mt-2 text-gray-500">
-          Dinos a dónde quieres ir, cuánto tienes, y la IA arma tu viaje
-          perfecto.
-        </p>
-        <div className="mt-8">
-          <button
-            onClick={() => setStep('form')}
-            className="rounded-lg bg-blue-600 px-8 py-4 text-lg font-medium text-white transition-colors hover:bg-blue-700"
-          >
-            Planificar mi viaje
-          </button>
+    <>
+      {showRecreate ? (
+        <RecreateTrip
+          onConfirm={handleRecreateTripConfirm}
+          onClose={() => setShowRecreate(false)}
+        />
+      ) : null}
+      <main className="flex min-h-screen flex-col items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 px-4">
+        <div className="text-center">
+          <h1 className="text-5xl font-bold text-gray-900">TripMind</h1>
+          <p className="mt-4 text-xl text-gray-600">
+            Planificación de viajes con IA y GPS en vivo
+          </p>
+          <p className="mt-2 text-gray-500">
+            Dinos a dónde quieres ir, cuánto tienes, y la IA arma tu viaje
+            perfecto.
+          </p>
+          <div className="mt-8 flex flex-col items-center gap-3">
+            <button
+              onClick={() => setStep('form')}
+              className="rounded-lg bg-blue-600 px-8 py-4 text-lg font-medium text-white transition-colors hover:bg-blue-700"
+            >
+              Planificar mi viaje
+            </button>
+            <button
+              onClick={() => setShowRecreate(true)}
+              className="rounded-lg border border-blue-300 bg-white px-6 py-3 text-sm font-medium text-blue-700 transition-colors hover:bg-blue-50"
+            >
+              Recrea este viaje (desde video)
+            </button>
+          </div>
         </div>
-      </div>
-    </main>
+      </main>
+    </>
   )
 }

@@ -30,4 +30,6 @@ export interface Activity {
   estado: 'pendiente' | 'en_curso' | 'completada' | 'perdida' | 'recuperada'
   esPerdida: boolean
   reagendadaDesdeDia?: number
+  tiempoEmbarqueMinutos?: number
+  puertoCrucero?: boolean
 }

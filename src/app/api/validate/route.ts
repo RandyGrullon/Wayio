@@ -12,6 +12,6 @@ export async function POST(request: Request): Promise<NextResponse> {
     )
   }
 
-  const result = await validateSchedule(body.dias)
-  return NextResponse.json(result)
+  const conflicts = await validateSchedule(body.dias)
+  return NextResponse.json({ conflicts })
 }

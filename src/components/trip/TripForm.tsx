@@ -24,6 +24,7 @@ interface TripFormProps {
 type FormState = Partial<Omit<TripForm, 'moneda' | 'paquete'>> & {
   moneda: TripForm['moneda']
   paquete: TripForm['paquete']
+  zona?: string
 }
 
 export function TripForm({ onSubmit, loading = false }: TripFormProps) {
@@ -50,6 +51,7 @@ export function TripForm({ onSubmit, loading = false }: TripFormProps) {
       tipo: form.tipo ?? 'aventura',
       paquete: form.paquete,
       preferencias: form.preferencias,
+      ...(form.tipo === 'crucero' && form.zona ? { zona: form.zona } : {}),
     }
     await onSubmit(data)
   }
@@ -191,6 +193,17 @@ export function TripForm({ onSubmit, loading = false }: TripFormProps) {
           ))}
         </div>
       </div>
+
+      {form.tipo === 'crucero' ? (
+        <Input
+          id="zona"
+          label="Zona del crucero"
+          placeholder="Caribe, Mediterráneo, Alaska..."
+          value={form.zona ?? ''}
+          onChange={(e) => setForm((f) => ({ ...f, zona: e.target.value }))}
+          required
+        />
+      ) : null}
 
       <div className="flex flex-col gap-2">
         <p className="text-sm font-medium text-gray-700">Paquete</p>

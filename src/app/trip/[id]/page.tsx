@@ -1,15 +1,19 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { TripMap } from '@/components/map/TripMap'
 import { ActivityItem } from '@/components/trip/ActivityItem'
 import { BudgetDisplay } from '@/components/trip/BudgetDisplay'
+import { ConflictDisplay } from '@/components/trip/ConflictDisplay'
+import { AlertLevel5Cruise } from '@/components/alerts/AlertLevel5Cruise'
 import { useTrip } from '@/hooks/useTrip'
 import { useGPS } from '@/hooks/useGPS'
 import { signOut } from '@/lib/auth/actions'
 import type { Activity } from '@/types/activity'
+import type { Conflict } from '@/types/conflicts'
+import type { Alert } from '@/types/alerts'
 
 export default function TripPage() {
   const params = useParams()
@@ -36,10 +40,79 @@ export default function TripPage() {
   )
   const [rescheduleLoading, setRescheduleLoading] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [conflicts, setConflicts] = useState<Conflict[]>([])
+  const [dismissedConflicts, setDismissedConflicts] = useState<Set<string>>(
+    new Set()
+  )
+  const [boardingAlert, setBoardingAlert] = useState<Alert | null>(null)
+  const validateIntervalRef = useRef<ReturnType<typeof setInterval> | null>(
+    null
+  )
 
   useEffect(() => {
     loadTrip()
   }, [loadTrip])
+
+  useEffect(() => {
+    if (!trip) return
+    const dias = trip.dias
+
+    const validate = async () => {
+      try {
+        const res = await fetch('/api/validate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dias }),
+        })
+        if (!res.ok) return
+        const data = (await res.json()) as { conflicts: Conflict[] }
+        setConflicts(data.conflicts)
+      } catch {
+        // best-effort
+      }
+    }
+
+    void validate()
+    validateIntervalRef.current = setInterval(() => void validate(), 30000)
+    return () => {
+      if (validateIntervalRef.current)
+        clearInterval(validateIntervalRef.current)
+    }
+  }, [trip])
+
+  // Boarding alert: check every minute if any port activity is within 90 min
+  useEffect(() => {
+    if (!trip) return
+    const checkBoarding = () => {
+      const now = new Date()
+      const nowMin = now.getHours() * 60 + now.getMinutes()
+      for (const day of trip.dias) {
+        for (const act of day.actividades) {
+          if (!act.puertoCrucero || !act.tiempoEmbarqueMinutos) continue
+          const [h = '0', m = '0'] = act.horaInicio.split(':')
+          const actMin = parseInt(h, 10) * 60 + parseInt(m, 10)
+          const deadline = actMin - 90
+          if (nowMin >= deadline && nowMin < actMin) {
+            setBoardingAlert({
+              id: `boarding-${act.id}`,
+              level: 5,
+              title: '¡Atención! Regresa al crucero',
+              message: `Debes embarcar antes de las ${act.horaInicio}. Tiempo restante: ${actMin - nowMin} min.`,
+              activityId: act.id,
+              timestamp: Date.now(),
+              acknowledged: false,
+              actions: [{ label: 'Ir al mapa', type: 'navigate' }],
+            })
+            return
+          }
+        }
+      }
+      setBoardingAlert(null)
+    }
+    checkBoarding()
+    const id = setInterval(checkBoarding, 60000)
+    return () => clearInterval(id)
+  }, [trip])
 
   const handleMarkLost = async (activity: Activity) => {
     await markActivityLost(activity.id)
@@ -102,8 +175,21 @@ export default function TripPage() {
     )
   }
 
+  const isCrucero =
+    trip.paquete !== undefined &&
+    trip.dias.some((d) => d.actividades.some((a) => a.puertoCrucero))
+  const visibleConflicts = conflicts.filter(
+    (c) => !dismissedConflicts.has(c.id)
+  )
+
   return (
     <main className="min-h-screen bg-gray-50">
+      {boardingAlert ? (
+        <AlertLevel5Cruise
+          alert={boardingAlert}
+          onDismiss={() => setBoardingAlert(null)}
+        />
+      ) : null}
       <div className="mx-auto max-w-4xl px-4 py-8">
         {/* Header */}
         <div className="mb-6 flex items-start justify-between">
@@ -149,6 +235,7 @@ export default function TripPage() {
         <div className="mb-6 h-72 overflow-hidden rounded-xl shadow-sm">
           <TripMap
             dias={trip.dias}
+            isCrucero={isCrucero}
             {...(location
               ? {
                   userLocation: {
@@ -245,6 +332,18 @@ export default function TripPage() {
                 <li key={i}>{adv}</li>
               ))}
             </ul>
+          </div>
+        ) : null}
+
+        {/* Conflicts */}
+        {visibleConflicts.length > 0 ? (
+          <div className="mb-4">
+            <ConflictDisplay
+              conflicts={visibleConflicts}
+              onDismiss={(id) =>
+                setDismissedConflicts((s) => new Set([...s, id]))
+              }
+            />
           </div>
         ) : null}
 
