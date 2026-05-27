@@ -1,6 +1,6 @@
 import type { ActivityType } from '../constants/geofencingRadii'
 
-export type ActivityStatus = 'pendiente' | 'en_curso' | 'completada'
+export type ActivityStatus = 'pendiente' | 'en_curso' | 'completada' | 'perdida'
 
 export interface Activity {
   id: string
@@ -16,11 +16,15 @@ export interface Activity {
   horaEntrada?: Date
   horaSalida?: Date
   diaIndex: number
+  duracionMinutos: number
   precio?: number
   linkAfiliado?: string
   fotos?: string[]
   puertoCrucero?: boolean
   tiempoEmbarqueMinutos?: number
+  esUnica?: boolean
+  tieneReserva?: boolean
+  votosPositivos?: number
 }
 
 export interface ActivityEvaluation extends Activity {

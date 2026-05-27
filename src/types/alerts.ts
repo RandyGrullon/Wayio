@@ -1,5 +1,13 @@
 import type { AlertLevelNumber } from './geofencing'
 
+export interface AlertMessage {
+  mensajeAmigable: string
+  actividadRecomendarQuitar: string | null
+  razonSimple: string
+  tiempoQueAhorra: number
+  alternativa: string | null
+}
+
 export interface Alert {
   id: string
   level: AlertLevelNumber

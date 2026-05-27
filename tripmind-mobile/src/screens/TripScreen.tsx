@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import {
   View,
   Text,
+  Modal,
   ScrollView,
   StyleSheet,
   SafeAreaView,
@@ -10,10 +11,13 @@ import {
 import * as Notifications from 'expo-notifications'
 import { ActivityCard } from '../components/ActivityCard'
 import { OfflineIndicator } from '../components/OfflineIndicator'
+import { AlertOverlay } from '../components/alerts/AlertOverlay'
+import { ReschedulePanel } from '../components/ReschedulePanel'
 import { MapScreen } from './MapScreen'
 import { useLocation } from '../hooks/useLocation'
 import { useGeofencing } from '../hooks/useGeofencing'
 import { useOfflineSync } from '../hooks/useOfflineSync'
+import { useAlertEngine } from '../hooks/useAlertEngine'
 import {
   startBackgroundTracking,
   stopBackgroundTracking,
@@ -21,6 +25,7 @@ import {
 import { loadTrip, loadActiveTripId } from '../lib/offline'
 import type { Trip } from '../types/trip'
 import type { Activity } from '../types/activity'
+import type { RescheduleOption } from '../types/alert'
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -38,16 +43,24 @@ export function TripScreen(): React.ReactElement {
   const [trip, setTrip] = useState<Trip | null>(null)
   const [activeTab, setActiveTab] = useState<Tab>('map')
   const [gpsEnabled, setGpsEnabled] = useState(false)
+  const [reschedulingActivity, setReschedulingActivity] =
+    useState<Activity | null>(null)
 
   const { location, isTracking } = useLocation()
   const offlineSync = useOfflineSync()
 
   const tripActivities: Activity[] =
     trip?.dias.flatMap((d) => d.actividades) ?? []
+
   const { activities, recentEvents } = useGeofencing(
     location,
     trip?.id ?? '',
     tripActivities
+  )
+
+  const { alertState, dismiss } = useAlertEngine(
+    trip?.dias ?? [],
+    trip?.isCrucero === true
   )
 
   useEffect(() => {
@@ -68,6 +81,66 @@ export function TripScreen(): React.ReactElement {
     }
     setGpsEnabled((prev) => !prev)
   }
+
+  const handleElegirOpcion = useCallback(
+    (opcion: 'A' | 'B' | 'C') => {
+      if (opcion === 'A' && alertState.actividadActualId) {
+        const actividadPerdida = activities.find(
+          (a) => a.id === alertState.actividadActualId
+        )
+        if (actividadPerdida) setReschedulingActivity(actividadPerdida)
+      }
+      dismiss()
+    },
+    [alertState.actividadActualId, activities, dismiss]
+  )
+
+  const handleAceptarRecomendacion = useCallback((actividadId: string) => {
+    setTrip((prev) => {
+      if (!prev) return prev
+      return {
+        ...prev,
+        dias: prev.dias.map((d) => ({
+          ...d,
+          actividades: d.actividades.map((a) =>
+            a.id === actividadId ? { ...a, estado: 'perdida' as const } : a
+          ),
+        })),
+      }
+    })
+  }, [])
+
+  const handleReschedule = useCallback(
+    (option: RescheduleOption) => {
+      if (!reschedulingActivity || !trip) return
+
+      setTrip((prev) => {
+        if (!prev) return prev
+        const act: Activity = {
+          ...reschedulingActivity,
+          estado: 'pendiente' as const,
+          diaIndex: option.dia,
+        }
+
+        return {
+          ...prev,
+          dias: prev.dias.map((d) => {
+            if (d.index !== option.dia) return d
+            const nuevas = [...d.actividades]
+            nuevas.splice(option.posicion, 0, act)
+            return { ...d, actividades: nuevas }
+          }),
+        }
+      })
+
+      setReschedulingActivity(null)
+    },
+    [reschedulingActivity, trip]
+  )
+
+  const actividadActual =
+    activities.find((a) => a.id === alertState.actividadActualId) ?? null
+  const puertoCrucero = activities.find((a) => a.puertoCrucero === true) ?? null
 
   if (!trip) {
     return (
@@ -152,6 +225,34 @@ export function TripScreen(): React.ReactElement {
           <View style={styles.listBottom} />
         </ScrollView>
       )}
+
+      <AlertOverlay
+        alertState={alertState}
+        actividadActual={actividadActual}
+        puertoCrucero={puertoCrucero}
+        onDismiss={dismiss}
+        onAceptarRecomendacion={handleAceptarRecomendacion}
+        onElegirOpcion={handleElegirOpcion}
+      />
+
+      <Modal
+        visible={reschedulingActivity !== null}
+        transparent
+        animationType="slide"
+        statusBarTranslucent
+        onRequestClose={() => setReschedulingActivity(null)}
+      >
+        <View style={styles.rescheduleOverlay}>
+          {reschedulingActivity !== null && (
+            <ReschedulePanel
+              actividadPerdida={reschedulingActivity}
+              itinerarioCompleto={trip.dias}
+              onReschedule={handleReschedule}
+              onClose={() => setReschedulingActivity(null)}
+            />
+          )}
+        </View>
+      </Modal>
     </SafeAreaView>
   )
 }
@@ -217,4 +318,9 @@ const styles = StyleSheet.create({
   tabTextActive: { color: '#2563EB', fontWeight: '700' },
   list: { flex: 1 },
   listBottom: { height: 24 },
+  rescheduleOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(0,0,0,0.4)',
+  },
 })

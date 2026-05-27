@@ -5,12 +5,14 @@ const STATUS_COLORS: Record<ActivityEvaluation['estado'], string> = {
   pendiente: '#6B7280',
   en_curso: '#2563EB',
   completada: '#16A34A',
+  perdida: '#DC2626',
 }
 
 const STATUS_LABELS: Record<ActivityEvaluation['estado'], string> = {
   pendiente: 'Pendiente',
   en_curso: 'En curso',
   completada: 'Completada',
+  perdida: 'Perdida',
 }
 
 interface Props {
