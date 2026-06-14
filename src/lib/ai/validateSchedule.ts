@@ -1,4 +1,5 @@
-import Anthropic from '@anthropic-ai/sdk'
+import { aiClient } from '@/lib/ai/client'
+import { extractJson } from '@/lib/ai/extractJson'
 import type { Day } from '@/types/trip'
 import type {
   Conflict,
@@ -6,8 +7,6 @@ import type {
   ConflictSeverity,
 } from '@/types/conflicts'
 import type { Activity } from '@/types/activity'
-
-const client = new Anthropic()
 
 interface RawConflict {
   tipo: ConflictType
@@ -123,17 +122,15 @@ ${JSON.stringify(dias, null, 2)}`
 
   let aiConflicts: RawConflict[] = []
   try {
-    const message = await client.messages.create({
+    const message = await aiClient.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 2048,
       messages: [{ role: 'user', content: prompt }],
     })
     const content = message.content[0]
-    if (content?.type === 'text') {
-      const match = content.text.match(/\[[\s\S]*\]/)
-      if (match?.[0]) {
-        aiConflicts = JSON.parse(match[0]) as RawConflict[]
-      }
+    if (content?.type === 'text' && content.text.trim()) {
+      const parsed = extractJson<RawConflict[]>(content.text)
+      if (Array.isArray(parsed)) aiConflicts = parsed
     }
   } catch {
     // AI validation is best-effort; local conflicts still returned

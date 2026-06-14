@@ -1,4 +1,5 @@
-import Anthropic from '@anthropic-ai/sdk'
+import type Anthropic from '@anthropic-ai/sdk'
+import { aiClient } from '@/lib/ai/client'
 import { exec } from 'child_process'
 import { promisify } from 'util'
 import * as fs from 'fs'
@@ -10,7 +11,6 @@ import ffmpeg from 'fluent-ffmpeg'
 ffmpeg.setFfmpegPath(ffmpegInstaller.path)
 
 const execAsync = promisify(exec)
-const client = new Anthropic()
 
 const VISION_PROMPT = `Analiza este frame de video de viaje. Identifica con confianza >= 0.7:
 - Nombre del lugar (ciudad, landmark, restaurante, hotel, etc.)
@@ -88,7 +88,7 @@ async function analyzeFrameBatch(
     )
   }
 
-  const message = await client.messages.create({
+  const message = await aiClient.messages.create({
     model: 'claude-sonnet-4-6',
     max_tokens: 2048,
     messages: [{ role: 'user', content }],
@@ -144,7 +144,7 @@ async function consolidatePlaces(
       resumen: 'No se identificaron lugares en el video.',
     }
   }
-  const message = await client.messages.create({
+  const message = await aiClient.messages.create({
     model: 'claude-sonnet-4-6',
     max_tokens: 512,
     messages: [
@@ -175,7 +175,7 @@ Responde SOLO con JSON: {"destinoSugerido": string, "resumen": string}`,
 export async function analyzeVideoFromUrl(
   url: string
 ): Promise<VideoAnalysisResult> {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tripmind-video-'))
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wayio-video-'))
   const framesDir = path.join(tmpDir, 'frames')
   fs.mkdirSync(framesDir)
 
@@ -203,7 +203,7 @@ export async function analyzeVideoFromBase64(
   imageBase64: string,
   mediaType: 'image/jpeg' | 'image/png' | 'image/webp'
 ): Promise<VideoAnalysisResult> {
-  const message = await client.messages.create({
+  const message = await aiClient.messages.create({
     model: 'claude-sonnet-4-6',
     max_tokens: 1024,
     messages: [

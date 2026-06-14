@@ -3,6 +3,8 @@ import {
   analyzeVideoFromUrl,
   analyzeVideoFromBase64,
 } from '@/lib/ai/analyzeVideo'
+import type { VideoAnalysisResult } from '@/lib/ai/analyzeVideo'
+import { aiConfigured } from '@/lib/ai/config'
 import { z } from 'zod'
 
 const urlSchema = z.object({
@@ -14,10 +16,31 @@ const base64Schema = z.object({
   mediaType: z.enum(['image/jpeg', 'image/png', 'image/webp']),
 })
 
+const DEMO_VIDEO_RESULT: VideoAnalysisResult = {
+  lugares: [
+    {
+      lugar: 'Tokio',
+      pais: 'Japón',
+      region: 'Kanto',
+      tipo: 'ciudad',
+      actividades: ['templos', 'gastronomía', 'compras'],
+      confianza: 0.9,
+    },
+  ],
+  destinoSugerido: 'Tokio',
+  resumen:
+    'Demo: sin API key de IA mostramos un resultado de ejemplo (Tokio). Configura la IA para analizar videos reales.',
+}
+
 export const maxDuration = 120
 
 export async function POST(request: Request): Promise<NextResponse> {
   const body: unknown = await request.json()
+
+  // Modo demo: sin IA devolvemos un análisis de ejemplo
+  if (!aiConfigured()) {
+    return NextResponse.json(DEMO_VIDEO_RESULT)
+  }
 
   const urlParsed = urlSchema.safeParse(body)
   if (urlParsed.success) {

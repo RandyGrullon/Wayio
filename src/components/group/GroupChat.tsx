@@ -29,8 +29,15 @@ export function GroupChat({ messages, currentUserId, onSend }: GroupChatProps) {
   }
 
   return (
-    <div className="flex flex-col h-96">
-      <div className="flex-1 overflow-y-auto flex flex-col gap-2 p-4">
+    <div className="flex h-96 flex-col">
+      <div className="flex flex-1 flex-col gap-2 overflow-y-auto p-1">
+        {messages.length === 0 ? (
+          <div className="flex flex-1 items-center justify-center">
+            <p className="text-sm text-fg-subtle">
+              Sé el primero en escribir 👋
+            </p>
+          </div>
+        ) : null}
         {messages.map((msg) => {
           const isOwn = msg.userId === currentUserId
           return (
@@ -39,23 +46,27 @@ export function GroupChat({ messages, currentUserId, onSend }: GroupChatProps) {
               className={`flex ${isOwn ? 'justify-end' : 'justify-start'}`}
             >
               <div
-                className={`max-w-xs rounded-xl px-3 py-2 text-sm ${isOwn ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-900'}`}
+                className={`max-w-xs rounded-2xl px-3.5 py-2 text-sm shadow-[var(--shadow-soft)] ${
+                  isOwn
+                    ? 'grad-brand rounded-br-md text-white'
+                    : 'rounded-bl-md border border-border bg-surface text-fg'
+                }`}
               >
                 {!isOwn ? (
-                  <p className="text-xs font-medium mb-1 opacity-70">
+                  <p className="mb-1 text-xs font-semibold text-brand-600">
                     {msg.userName}
                   </p>
                 ) : null}
-                <p>{msg.text}</p>
+                <p className="break-words">{msg.text}</p>
               </div>
             </div>
           )
         })}
       </div>
-      <div className="flex gap-2 border-t p-3">
+      <div className="mt-2 flex gap-2 border-t border-border pt-3">
         <Input
           id="chat-input"
-          placeholder="Type a message..."
+          placeholder="Escribe un mensaje..."
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
@@ -63,8 +74,8 @@ export function GroupChat({ messages, currentUserId, onSend }: GroupChatProps) {
           }}
           className="flex-1"
         />
-        <Button onClick={handleSend} size="sm">
-          Send
+        <Button onClick={handleSend} size="md">
+          Enviar
         </Button>
       </div>
     </div>

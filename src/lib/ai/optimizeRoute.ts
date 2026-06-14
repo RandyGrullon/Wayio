@@ -1,18 +1,17 @@
-import Anthropic from '@anthropic-ai/sdk'
+import { aiClient } from '@/lib/ai/client'
+import { extractJson } from '@/lib/ai/extractJson'
 import type { Activity } from '@/types/activity'
-
-const client = new Anthropic()
 
 export async function optimizeRoute(
   activities: Activity[]
 ): Promise<Activity[]> {
-  const message = await client.messages.create({
+  const message = await aiClient.messages.create({
     model: 'claude-sonnet-4-6',
     max_tokens: 2048,
     messages: [
       {
         role: 'user',
-        content: `Optimize the order of these activities to minimize travel time and maximize experience. Return the same activities array reordered as JSON:\n${JSON.stringify(activities)}`,
+        content: `Optimize the order of these activities to minimize travel time and maximize experience. Return ONLY a JSON array with the same activities reordered, no extra text:\n${JSON.stringify(activities)}`,
       },
     ],
   })
@@ -22,10 +21,5 @@ export async function optimizeRoute(
     throw new Error('Unexpected response type from AI')
   }
 
-  const jsonMatch = content.text.match(/\[[\s\S]*\]/)
-  if (!jsonMatch?.[0]) {
-    throw new Error('No JSON found in AI response')
-  }
-
-  return JSON.parse(jsonMatch[0]) as Activity[]
+  return extractJson<Activity[]>(content.text)
 }

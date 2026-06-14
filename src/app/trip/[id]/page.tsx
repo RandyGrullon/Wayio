@@ -3,11 +3,15 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
+import { MapPin, Share2, Check, LogOut, Eye } from 'lucide-react'
 import { TripMap } from '@/components/map/TripMap'
 import { ActivityItem } from '@/components/trip/ActivityItem'
 import { BudgetDisplay } from '@/components/trip/BudgetDisplay'
 import { ConflictDisplay } from '@/components/trip/ConflictDisplay'
 import { AlertLevel5Cruise } from '@/components/alerts/AlertLevel5Cruise'
+import { Logo } from '@/components/ui/Logo'
+import { ThemeToggle } from '@/components/ui/ThemeToggle'
+import { Button } from '@/components/ui/Button'
 import { useTrip } from '@/hooks/useTrip'
 import { useGPS } from '@/hooks/useGPS'
 import { signOut } from '@/lib/auth/actions'
@@ -40,6 +44,7 @@ export default function TripPage() {
   )
   const [rescheduleLoading, setRescheduleLoading] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [shareCopied, setShareCopied] = useState(false)
   const [conflicts, setConflicts] = useState<Conflict[]>([])
   const [dismissedConflicts, setDismissedConflicts] = useState<Set<string>>(
     new Set()
@@ -146,14 +151,22 @@ export default function TripPage() {
     })
   }
 
+  const handleCopyShareLink = () => {
+    const url = `${window.location.origin}/viaje-compartido/${tripId}`
+    navigator.clipboard.writeText(url).then(() => {
+      setShareCopied(true)
+      setTimeout(() => setShareCopied(false), 2000)
+    })
+  }
+
   if (loading) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-gray-50">
+      <main className="bg-aurora flex min-h-screen items-center justify-center">
         <div className="text-center">
-          <div className="mb-3 h-2 w-48 overflow-hidden rounded-full bg-blue-200 mx-auto">
-            <div className="h-2 w-1/2 animate-pulse rounded-full bg-blue-600" />
+          <div className="mx-auto mb-3 h-2 w-48 overflow-hidden rounded-full bg-surface-muted">
+            <div className="grad-brand h-full w-1/2 animate-pulse rounded-full" />
           </div>
-          <p className="text-sm text-gray-500">Cargando viaje...</p>
+          <p className="text-sm text-fg-muted">Cargando viaje...</p>
         </div>
       </main>
     )
@@ -161,12 +174,14 @@ export default function TripPage() {
 
   if (error || !trip) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-gray-50 px-4">
+      <main className="bg-aurora flex min-h-screen items-center justify-center px-4">
         <div className="text-center">
-          <p className="text-red-600">{error ?? 'Viaje no encontrado'}</p>
+          <p className="font-medium text-red-600">
+            {error ?? 'Viaje no encontrado'}
+          </p>
           <Link
             href="/"
-            className="mt-4 block text-sm text-blue-600 hover:underline"
+            className="mt-4 inline-block text-sm font-semibold text-brand-600 hover:underline"
           >
             ← Volver al inicio
           </Link>
@@ -183,56 +198,89 @@ export default function TripPage() {
   )
 
   return (
-    <main className="min-h-screen bg-gray-50">
+    <main className="min-h-screen bg-bg">
       {boardingAlert ? (
         <AlertLevel5Cruise
           alert={boardingAlert}
           onDismiss={() => setBoardingAlert(null)}
         />
       ) : null}
-      <div className="mx-auto max-w-4xl px-4 py-8">
+
+      {/* Top bar */}
+      <header className="sticky top-0 z-40 border-b border-border bg-surface/80 backdrop-blur">
+        <div className="mx-auto flex max-w-4xl items-center justify-between px-4 py-3 sm:px-6">
+          <Link href="/" aria-label="Inicio">
+            <Logo />
+          </Link>
+          <div className="flex items-center gap-2">
+            <ThemeToggle />
+            <form action={signOut}>
+              <Button type="submit" variant="ghost" size="icon" title="Salir">
+                <LogOut className="h-4 w-4" />
+              </Button>
+            </form>
+          </div>
+        </div>
+      </header>
+
+      <div className="mx-auto max-w-4xl px-4 py-6 sm:px-6 sm:py-8">
         {/* Header */}
-        <div className="mb-6 flex items-start justify-between">
+        <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">{trip.destino}</h1>
-            <p className="mt-0.5 text-sm text-gray-500">
+            <h1 className="text-2xl font-extrabold tracking-tight text-fg sm:text-3xl">
+              {trip.destino}
+            </h1>
+            <p className="mt-1 text-sm text-fg-muted">
               {trip.personas} persona{trip.personas !== 1 ? 's' : ''} ·{' '}
               {trip.fechaInicio} → {trip.fechaFin} ·{' '}
-              <span className="capitalize">{trip.paquete}</span>
+              <span className="font-semibold capitalize text-brand-600">
+                {trip.paquete}
+              </span>
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {grupoLink ? (
-              <button
-                onClick={handleCopyGroupLink}
-                className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
-              >
-                {copied ? '¡Copiado!' : 'Compartir grupo'}
-              </button>
+              <Button variant="outline" size="sm" onClick={handleCopyGroupLink}>
+                {copied ? (
+                  <>
+                    <Check className="h-4 w-4" /> ¡Copiado!
+                  </>
+                ) : (
+                  <>
+                    <Share2 className="h-4 w-4" /> Compartir grupo
+                  </>
+                )}
+              </Button>
             ) : null}
-            <button
-              onClick={() => (watching ? stopWatching() : startWatching())}
-              className={`rounded-lg px-3 py-1.5 text-xs font-medium ${
-                watching
-                  ? 'bg-blue-600 text-white'
-                  : 'border border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
-              }`}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleCopyShareLink}
+              title="Copiar link público de solo lectura"
             >
-              {watching ? '📍 GPS activo' : 'GPS off'}
-            </button>
-            <form action={signOut}>
-              <button
-                type="submit"
-                className="text-xs text-gray-400 hover:text-gray-600"
-              >
-                Salir
-              </button>
-            </form>
+              {shareCopied ? (
+                <>
+                  <Check className="h-4 w-4" /> ¡Copiado!
+                </>
+              ) : (
+                <>
+                  <Eye className="h-4 w-4" /> Compartir vista
+                </>
+              )}
+            </Button>
+            <Button
+              variant={watching ? 'primary' : 'outline'}
+              size="sm"
+              onClick={() => (watching ? stopWatching() : startWatching())}
+            >
+              <MapPin className="h-4 w-4" />
+              {watching ? 'GPS activo' : 'GPS off'}
+            </Button>
           </div>
         </div>
 
         {/* Map */}
-        <div className="mb-6 h-72 overflow-hidden rounded-xl shadow-sm">
+        <div className="mb-6 h-72 overflow-hidden rounded-3xl border border-border shadow-[var(--shadow-soft)]">
           <TripMap
             dias={trip.dias}
             isCrucero={isCrucero}
@@ -249,24 +297,24 @@ export default function TripPage() {
           />
         </div>
 
-        {/* Reagendamiento modal */}
+        {/* Reagendamiento */}
         {rescheduleTarget ? (
-          <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
-            <p className="mb-2 font-semibold text-amber-800">
+          <div className="mb-4 rounded-2xl border border-sun-200 bg-sun-50 p-4 dark:border-sun-500/30 dark:bg-sun-500/10">
+            <p className="mb-2 font-semibold text-sun-800 dark:text-sun-200">
               Actividad perdida: {rescheduleTarget.nombre}
             </p>
             {rescheduleResult ? (
               <div className="flex flex-col gap-2">
-                <p className="text-sm text-gray-700">
+                <p className="text-sm text-fg-muted">
                   La IA sugiere reagendar para:{' '}
-                  <strong>
+                  <strong className="text-fg">
                     {rescheduleResult.horaInicio} – {rescheduleResult.horaFin}
                   </strong>
                 </p>
                 <div className="flex gap-2">
                   <button
                     onClick={handleAcceptReschedule}
-                    className="rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700"
+                    className="rounded-xl bg-green-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-green-700"
                   >
                     Aceptar
                   </button>
@@ -275,7 +323,7 @@ export default function TripPage() {
                       setRescheduleTarget(null)
                       setRescheduleResult(null)
                     }}
-                    className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                    className="rounded-xl border border-border-strong px-3 py-1.5 text-xs font-semibold text-fg-muted hover:bg-surface-muted"
                   >
                     Descartar
                   </button>
@@ -286,13 +334,13 @@ export default function TripPage() {
                 <button
                   onClick={handleReschedule}
                   disabled={rescheduleLoading}
-                  className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-60"
+                  className="grad-brand rounded-xl px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
                 >
                   {rescheduleLoading ? 'Buscando...' : 'Buscar nueva hora'}
                 </button>
                 <button
                   onClick={() => setRescheduleTarget(null)}
-                  className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                  className="rounded-xl border border-border-strong px-3 py-1.5 text-xs font-semibold text-fg-muted hover:bg-surface-muted"
                 >
                   Guardar como perdida
                 </button>
@@ -303,11 +351,11 @@ export default function TripPage() {
 
         {/* Pending activities */}
         {actividadesPendientes.length > 0 ? (
-          <div className="mb-4 rounded-xl border border-gray-200 bg-white p-4">
-            <p className="mb-2 text-sm font-semibold text-gray-700">
+          <div className="mb-4 rounded-2xl border border-border bg-surface p-4 shadow-[var(--shadow-soft)]">
+            <p className="mb-2 text-sm font-semibold text-fg">
               Actividades pendientes para tu próxima visita
             </p>
-            <ul className="list-disc pl-4 text-sm text-gray-500">
+            <ul className="list-disc space-y-1 pl-5 text-sm text-fg-muted">
               {actividadesPendientes.map((a) => (
                 <li key={a.id}>{a.nombre}</li>
               ))}
@@ -321,13 +369,15 @@ export default function TripPage() {
         </div>
 
         {/* Summary */}
-        <p className="mb-6 text-gray-600">{trip.resumenViaje}</p>
+        <p className="mb-6 text-fg-muted">{trip.resumenViaje}</p>
 
         {/* Warnings */}
         {trip.advertencias.length > 0 ? (
-          <div className="mb-4 rounded-lg bg-amber-50 p-4">
-            <p className="mb-2 font-medium text-amber-800">Advertencias</p>
-            <ul className="list-disc pl-4 text-sm text-amber-700">
+          <div className="mb-4 rounded-2xl border border-sun-200 bg-sun-50 p-4 dark:border-sun-500/30 dark:bg-sun-500/10">
+            <p className="mb-2 font-semibold text-sun-800 dark:text-sun-200">
+              Advertencias
+            </p>
+            <ul className="list-disc space-y-1 pl-5 text-sm text-sun-700 dark:text-sun-300">
               {trip.advertencias.map((adv, i) => (
                 <li key={i}>{adv}</li>
               ))}
@@ -350,19 +400,25 @@ export default function TripPage() {
         {/* Days */}
         <div className="flex flex-col gap-4">
           {trip.dias.map((dia) => (
-            <div key={dia.numero} className="rounded-xl bg-white shadow-sm">
-              <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3">
-                <div>
-                  <h2 className="font-semibold text-gray-900">
-                    Día {dia.numero}: {dia.titulo}
-                  </h2>
-                  <p className="text-xs text-gray-400">{dia.ciudad}</p>
+            <div
+              key={dia.numero}
+              className="overflow-hidden rounded-3xl border border-border bg-surface shadow-[var(--shadow-soft)]"
+            >
+              <div className="flex items-center justify-between border-b border-border px-5 py-4">
+                <div className="flex items-center gap-3">
+                  <span className="grad-brand flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-sm font-bold text-white">
+                    {dia.numero}
+                  </span>
+                  <div>
+                    <h2 className="font-bold text-fg">{dia.titulo}</h2>
+                    <p className="text-xs text-fg-subtle">{dia.ciudad}</p>
+                  </div>
                 </div>
-                <span className="text-sm font-medium text-gray-500">
+                <span className="rounded-full bg-surface-muted px-3 py-1 text-sm font-semibold text-fg-muted">
                   ${dia.presupuestoDia}
                 </span>
               </div>
-              <div className="divide-y divide-gray-50">
+              <div className="divide-y divide-border">
                 {dia.actividades.map((act) => (
                   <div key={act.id} className="px-2">
                     <ActivityItem
@@ -372,7 +428,7 @@ export default function TripPage() {
                         : {})}
                     />
                     {act.estado === 'perdida' ? (
-                      <p className="pb-2 pl-[60px] text-xs font-medium text-red-500">
+                      <p className="pb-2 pl-[60px] text-xs font-semibold text-red-500">
                         Actividad perdida
                       </p>
                     ) : null}
@@ -385,9 +441,11 @@ export default function TripPage() {
 
         {/* Tips */}
         {trip.consejos.length > 0 ? (
-          <div className="mt-4 rounded-lg bg-blue-50 p-4">
-            <p className="mb-2 font-medium text-blue-800">Consejos</p>
-            <ul className="list-disc pl-4 text-sm text-blue-700">
+          <div className="mt-4 rounded-2xl border border-brand-200 bg-brand-50 p-4 dark:border-brand-500/30 dark:bg-brand-500/10">
+            <p className="mb-2 font-semibold text-brand-800 dark:text-brand-200">
+              Consejos
+            </p>
+            <ul className="list-disc space-y-1 pl-5 text-sm text-brand-700 dark:text-brand-300">
               {trip.consejos.map((c, i) => (
                 <li key={i}>{c}</li>
               ))}

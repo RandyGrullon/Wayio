@@ -39,20 +39,20 @@ export function ExpenseSplit({ expenses, members }: ExpenseSplitProps) {
         {expenses.map((expense) => (
           <div
             key={expense.id}
-            className="flex justify-between rounded-lg bg-gray-50 px-3 py-2 text-sm"
+            className="flex justify-between rounded-xl bg-surface-muted px-3 py-2.5 text-sm"
           >
-            <span className="text-gray-700">{expense.description}</span>
-            <span className="font-medium">
+            <span className="text-fg">{expense.description}</span>
+            <span className="font-bold text-fg">
               {formatCurrency(expense.amount, expense.currency)}
             </span>
           </div>
         ))}
       </div>
-      <div className="border-t pt-4">
-        <p className="text-sm font-semibold text-gray-700 mb-2">Balances</p>
+      <div className="border-t border-border pt-4">
+        <p className="mb-2 text-sm font-bold text-fg">Balances</p>
         {Array.from(balances.entries()).map(([userId, balance]) => (
-          <div key={userId} className="flex justify-between text-sm">
-            <span className="text-gray-600">
+          <div key={userId} className="flex justify-between py-0.5 text-sm">
+            <span className="text-fg-muted">
               {memberMap.get(userId) ?? userId}
             </span>
             <span className={balance >= 0 ? 'text-green-600' : 'text-red-600'}>

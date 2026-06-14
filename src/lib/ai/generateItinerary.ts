@@ -1,5 +1,12 @@
 import type { TripForm } from '@/lib/validations/tripForm'
 
+export interface ItineraryContext {
+  /** Coordenadas reales del centro del destino (geocodificado). */
+  anchor?: { lat: number; lng: number; displayName: string } | null
+  /** Resumen del clima esperado para empacar y planear. */
+  clima?: { temp: number; description: string } | null
+}
+
 const PAQUETE_INSTRUCCIONES: Record<TripForm['paquete'], string> = {
   basico:
     'PAQUETE BÁSICO: hoteles 3 estrellas o hostales bien valorados, vuelos económicos (clase turista sin extras), prioriza actividades gratuitas o de bajo costo, transporte público cuando sea posible.',
@@ -9,7 +16,10 @@ const PAQUETE_INSTRUCCIONES: Record<TripForm['paquete'], string> = {
     'PAQUETE PREMIUM: hoteles 5 estrellas o boutique de lujo, vuelo en clase business o primera, tours privados, restaurantes top (mínimo 2 por viaje), traslados en vehículo privado.',
 }
 
-export function buildItineraryPrompt(form: TripForm): string {
+export function buildItineraryPrompt(
+  form: TripForm,
+  context: ItineraryContext = {}
+): string {
   const destinoFinal = form.destinoSorpresa
     ? 'SORPRESA (elige un destino perfecto para el tipo de viaje solicitado, usa el nombre real del lugar en el JSON)'
     : form.destino
@@ -24,6 +34,14 @@ export function buildItineraryPrompt(form: TripForm): string {
 
   const paqueteInstruccion = PAQUETE_INSTRUCCIONES[form.paquete]
 
+  const anchorLinea = context.anchor
+    ? `\n- Coordenadas reales del destino (úsalas como centro; las lat/lng de las actividades deben estar cerca de aquí): ${context.anchor.lat}, ${context.anchor.lng} (${context.anchor.displayName})`
+    : ''
+
+  const climaLinea = context.clima
+    ? `\n- Clima esperado: ${Math.round(context.clima.temp)}°C, ${context.clima.description}. Ajusta actividades y consejos de equipaje al clima.`
+    : ''
+
   return `
 Eres el mejor planificador de viajes del mundo.
 Tu trabajo es crear un itinerario perfecto que la gente
@@ -36,7 +54,7 @@ DATOS DEL VIAJE:
 - Fechas: ${form.fechaInicio} al ${form.fechaFin}
 - Presupuesto total: ${form.presupuesto} ${form.moneda}
 - Tipo de viaje: ${form.tipo}
-- Paquete: ${form.paquete.toUpperCase()}${preferenciasLinea}${zonaLinea}
+- Paquete: ${form.paquete.toUpperCase()}${preferenciasLinea}${zonaLinea}${anchorLinea}${climaLinea}
 
 INSTRUCCIONES DE PAQUETE:
 ${paqueteInstruccion}

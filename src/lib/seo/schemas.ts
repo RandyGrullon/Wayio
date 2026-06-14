@@ -1,6 +1,6 @@
 import type { Destino } from './destinos'
 
-const BASE_URL = process.env['NEXT_PUBLIC_BASE_URL'] ?? 'https://tripmind.app'
+const BASE_URL = process.env['NEXT_PUBLIC_BASE_URL'] ?? 'https://wayio.app'
 
 export interface TravelActionSchema {
   '@context': 'https://schema.org'
@@ -46,7 +46,7 @@ export function buildTravelActionSchema(destino: Destino): TravelActionSchema {
     },
     agent: {
       '@type': 'SoftwareApplication',
-      name: 'TripMind',
+      name: 'Wayio',
       applicationCategory: 'TravelApplication',
       url: BASE_URL,
     },
@@ -69,7 +69,7 @@ export function buildOrganizationSchema() {
   return {
     '@context': 'https://schema.org',
     '@type': 'Organization',
-    name: 'TripMind',
+    name: 'Wayio',
     url: BASE_URL,
     description: 'Planificador de viajes con inteligencia artificial',
   }

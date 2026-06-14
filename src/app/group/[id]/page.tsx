@@ -3,8 +3,11 @@
 import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { Users } from 'lucide-react'
 import { GroupRoom } from '@/components/group/GroupRoom'
 import { TripMap } from '@/components/map/TripMap'
+import { Logo } from '@/components/ui/Logo'
+import { ThemeToggle } from '@/components/ui/ThemeToggle'
 import { useUser } from '@/hooks/useUser'
 import type { Trip } from '@/types/trip'
 import type { TripRow } from '@/types/database'
@@ -59,20 +62,27 @@ export default function GroupPage() {
 
   if (userLoading || pageLoading) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-gray-50">
-        <p className="text-sm text-gray-500">Cargando sala grupal...</p>
+      <main className="bg-aurora flex min-h-screen items-center justify-center">
+        <div className="text-center">
+          <div className="mx-auto mb-3 h-2 w-48 overflow-hidden rounded-full bg-surface-muted">
+            <div className="grad-brand h-full w-1/2 animate-pulse rounded-full" />
+          </div>
+          <p className="text-sm text-fg-muted">Cargando sala grupal...</p>
+        </div>
       </main>
     )
   }
 
   if (error || !trip || !tripId || !user) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-gray-50 px-4">
+      <main className="bg-aurora flex min-h-screen items-center justify-center px-4">
         <div className="text-center">
-          <p className="text-red-600">{error ?? 'Error al cargar el grupo'}</p>
+          <p className="font-medium text-red-600">
+            {error ?? 'Error al cargar el grupo'}
+          </p>
           <Link
             href="/"
-            className="mt-4 block text-sm text-blue-600 hover:underline"
+            className="mt-4 inline-block text-sm font-semibold text-brand-600 hover:underline"
           >
             ← Volver al inicio
           </Link>
@@ -82,23 +92,39 @@ export default function GroupPage() {
   }
 
   return (
-    <main className="min-h-screen bg-gray-50">
-      <div className="mx-auto max-w-4xl px-4 py-8">
-        <div className="mb-6">
-          <h1 className="text-2xl font-bold text-gray-900">{trip.destino}</h1>
-          <p className="mt-0.5 text-sm text-gray-500">
-            Sala grupal · {trip.personas} viajero
-            {trip.personas !== 1 ? 's' : ''}
-          </p>
+    <main className="min-h-screen bg-bg">
+      <header className="sticky top-0 z-40 border-b border-border bg-surface/80 backdrop-blur">
+        <div className="mx-auto flex max-w-4xl items-center justify-between px-4 py-3 sm:px-6">
+          <Link href="/" aria-label="Inicio">
+            <Logo />
+          </Link>
+          <ThemeToggle />
+        </div>
+      </header>
+
+      <div className="mx-auto max-w-4xl px-4 py-6 sm:px-6 sm:py-8">
+        <div className="mb-6 flex items-center gap-3">
+          <span className="grad-brand flex h-11 w-11 items-center justify-center rounded-2xl text-white">
+            <Users className="h-5 w-5" />
+          </span>
+          <div>
+            <h1 className="text-2xl font-extrabold tracking-tight text-fg">
+              {trip.destino}
+            </h1>
+            <p className="text-sm text-fg-muted">
+              Sala grupal · {trip.personas} viajero
+              {trip.personas !== 1 ? 's' : ''}
+            </p>
+          </div>
         </div>
 
         {/* Map with group */}
-        <div className="mb-6 h-64 overflow-hidden rounded-xl shadow-sm">
+        <div className="mb-6 h-64 overflow-hidden rounded-3xl border border-border shadow-[var(--shadow-soft)]">
           <TripMap dias={trip.dias} />
         </div>
 
         {/* Group room */}
-        <div className="rounded-2xl bg-white p-4 shadow-sm">
+        <div className="rounded-3xl border border-border bg-surface p-4 shadow-[var(--shadow-soft)] sm:p-6">
           <GroupRoom tripId={tripId} trip={trip} currentUser={user} />
         </div>
       </div>

@@ -1,7 +1,9 @@
 'use client'
 
 import { Suspense, useState, useTransition } from 'react'
+import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
+import { Logo } from '@/components/ui/Logo'
 import {
   signInWithGoogle,
   signInWithEmail,
@@ -45,25 +47,34 @@ function LoginForm() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 px-4">
-      <div className="w-full max-w-md rounded-2xl bg-white p-8 shadow-lg">
+    <main className="bg-aurora flex min-h-screen items-center justify-center px-4 py-10">
+      <div className="animate-rise glass w-full max-w-md rounded-3xl p-8 shadow-[0_24px_60px_-24px_rgba(15,23,42,0.4)]">
         <div className="mb-6 text-center">
-          <h1 className="text-2xl font-bold text-gray-900">TripMind</h1>
-          <p className="mt-1 text-sm text-gray-500">
+          <Link
+            href="/"
+            className="mb-4 inline-flex items-center justify-center"
+            aria-label="Inicio"
+          >
+            <Logo />
+          </Link>
+          <h1 className="text-xl font-extrabold tracking-tight text-fg">
+            {mode === 'login' ? '¡Bienvenido de vuelta!' : 'Crea tu cuenta'}
+          </h1>
+          <p className="mt-1 text-sm text-fg-muted">
             {mode === 'login'
               ? 'Inicia sesión para guardar tus viajes'
-              : 'Crea tu cuenta gratis'}
+              : 'Empieza gratis, sin tarjeta'}
           </p>
         </div>
 
         {authError ? (
-          <div className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
+          <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
             Error de autenticación. Intenta de nuevo.
           </div>
         ) : null}
 
         {success ? (
-          <div className="mb-4 rounded-lg bg-green-50 px-3 py-2 text-sm text-green-700">
+          <div className="mb-4 rounded-xl border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700 dark:border-green-500/30 dark:bg-green-500/10 dark:text-green-300">
             Cuenta creada. Revisa tu email para confirmar.
           </div>
         ) : null}
@@ -72,7 +83,7 @@ function LoginForm() {
         <button
           onClick={handleGoogle}
           disabled={isPending}
-          className="mb-4 flex w-full items-center justify-center gap-3 rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-60"
+          className="mb-4 flex w-full items-center justify-center gap-3 rounded-xl border border-border-strong bg-surface px-4 py-3 text-sm font-semibold text-fg transition-colors hover:bg-surface-muted disabled:opacity-60"
         >
           <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
             <path
@@ -97,10 +108,10 @@ function LoginForm() {
 
         <div className="relative mb-4">
           <div className="absolute inset-0 flex items-center">
-            <div className="w-full border-t border-gray-200" />
+            <div className="w-full border-t border-border" />
           </div>
-          <div className="relative flex justify-center text-xs text-gray-400">
-            <span className="bg-white px-2">o con email</span>
+          <div className="relative flex justify-center text-xs text-fg-subtle">
+            <span className="bg-surface px-2">o con email</span>
           </div>
         </div>
 
@@ -112,7 +123,7 @@ function LoginForm() {
               value={nombre}
               onChange={(e) => setNombre(e.target.value)}
               required
-              className="rounded-lg border border-gray-300 px-3 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="h-11 rounded-xl border border-border-strong bg-surface px-3.5 text-sm text-fg placeholder:text-fg-subtle focus:border-brand-500 focus:outline-none focus:ring-4 focus:ring-brand-500/15"
             />
           ) : null}
           <input
@@ -121,7 +132,7 @@ function LoginForm() {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             required
-            className="rounded-lg border border-gray-300 px-3 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            className="h-11 rounded-xl border border-border-strong bg-surface px-3.5 text-sm text-fg placeholder:text-fg-subtle focus:border-brand-500 focus:outline-none focus:ring-4 focus:ring-brand-500/15"
           />
           <input
             type="password"
@@ -130,17 +141,17 @@ function LoginForm() {
             onChange={(e) => setPassword(e.target.value)}
             required
             minLength={6}
-            className="rounded-lg border border-gray-300 px-3 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            className="h-11 rounded-xl border border-border-strong bg-surface px-3.5 text-sm text-fg placeholder:text-fg-subtle focus:border-brand-500 focus:outline-none focus:ring-4 focus:ring-brand-500/15"
           />
 
           {fieldError ? (
-            <p className="text-xs text-red-600">{fieldError}</p>
+            <p className="text-xs font-medium text-red-600">{fieldError}</p>
           ) : null}
 
           <button
             type="submit"
             disabled={isPending}
-            className="rounded-xl bg-blue-600 py-3 text-sm font-semibold text-white transition-colors hover:bg-blue-700 disabled:opacity-60"
+            className="grad-brand mt-1 rounded-xl py-3 text-sm font-bold text-white shadow-[0_8px_24px_-8px_rgba(20,184,166,0.6)] transition-all hover:-translate-y-0.5 active:scale-[0.99] disabled:opacity-60"
           >
             {isPending
               ? 'Cargando...'
@@ -150,14 +161,14 @@ function LoginForm() {
           </button>
         </form>
 
-        <p className="mt-4 text-center text-sm text-gray-500">
+        <p className="mt-5 text-center text-sm text-fg-muted">
           {mode === 'login' ? '¿No tienes cuenta? ' : '¿Ya tienes cuenta? '}
           <button
             onClick={() => {
               setMode(mode === 'login' ? 'signup' : 'login')
               setFieldError(null)
             }}
-            className="font-medium text-blue-600 hover:underline"
+            className="font-semibold text-brand-600 hover:underline"
           >
             {mode === 'login' ? 'Crear cuenta' : 'Iniciar sesión'}
           </button>

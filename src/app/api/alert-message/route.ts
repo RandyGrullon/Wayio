@@ -1,4 +1,5 @@
-import Anthropic from '@anthropic-ai/sdk'
+import { aiClient } from '@/lib/ai/client'
+import { extractJson } from '@/lib/ai/extractJson'
 import { z } from 'zod'
 import type { AlertMessage } from '@/types/alerts'
 
@@ -7,8 +8,6 @@ export const maxDuration = 30
 const Schema = z.object({
   prompt: z.string().min(10).max(4000),
 })
-
-const anthropic = new Anthropic()
 
 const fallback: AlertMessage = {
   mensajeAmigable:
@@ -27,7 +26,7 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ error: parsed.error.flatten() }, { status: 400 })
   }
 
-  const message = await anthropic.messages.create({
+  const message = await aiClient.messages.create({
     model: 'claude-sonnet-4-6',
     max_tokens: 512,
     system:
@@ -43,7 +42,7 @@ export async function POST(request: Request): Promise<Response> {
     )?.text ?? ''
 
   try {
-    const result = JSON.parse(text) as AlertMessage
+    const result = extractJson<AlertMessage>(text)
     return Response.json(result)
   } catch {
     return Response.json(fallback)

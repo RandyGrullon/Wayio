@@ -38,7 +38,7 @@ export function PaywallModal({
         <div className="mb-6 flex items-start justify-between gap-4">
           <div>
             <h2 className="text-2xl font-bold text-gray-900">
-              Desbloquea TripMind Pro
+              Desbloquea Wayio Pro
             </h2>
             {triggerMessage && (
               <p className="mt-1 text-sm text-indigo-700 font-medium">

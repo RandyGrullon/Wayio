@@ -1,8 +1,8 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import mapboxgl from 'mapbox-gl'
-import 'mapbox-gl/dist/mapbox-gl.css'
+import maplibregl from 'maplibre-gl'
+import 'maplibre-gl/dist/maplibre-gl.css'
 import type { Day } from '@/types/trip'
 import type { Activity } from '@/types/activity'
 import type { UserLocation } from '@/types/geofencing'
@@ -16,6 +16,9 @@ interface TripMapProps {
   isCrucero?: boolean
   className?: string
 }
+
+// Estilo de mapa gratuito (OpenFreeMap): sin API key, sin tarjeta, sin registro
+const MAP_STYLE = 'https://tiles.openfreemap.org/styles/liberty'
 
 // Approximate a circle as a GeoJSON polygon
 function makeCircleCoords(
@@ -43,21 +46,27 @@ export function TripMap({
   className,
 }: TripMapProps) {
   const containerRef = useRef<HTMLDivElement>(null)
-  const mapRef = useRef<mapboxgl.Map | null>(null)
-  const gpsMarkerRef = useRef<mapboxgl.Marker | null>(null)
+  const mapRef = useRef<maplibregl.Map | null>(null)
+  const gpsMarkerRef = useRef<maplibregl.Marker | null>(null)
   // day index → markers for that day
-  const markersRef = useRef<Map<number, mapboxgl.Marker[]>>(new Map())
+  const markersRef = useRef<Map<number, maplibregl.Marker[]>>(new Map())
   const [activeDayIdx, setActiveDayIdx] = useState<number | null>(null)
   const [mapLoaded, setMapLoaded] = useState(false)
+
+  // ¿Alguna actividad tiene coordenadas reales? Si no, no inicializamos el mapa
+  // (centrarlo en un punto arbitrario engaña al usuario): mostramos un aviso.
+  const hasAnyCoords = dias.some((d) =>
+    d.actividades.some((a) => a.lat !== 0 || a.lng !== 0)
+  )
 
   // ── Map init ──────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return
 
-    const token = process.env['NEXT_PUBLIC_MAPBOX_TOKEN']
-    if (!token || token === 'tu_token') return
-
-    mapboxgl.accessToken = token
+    const anyCoords = dias.some((d) =>
+      d.actividades.some((a) => a.lat !== 0 || a.lng !== 0)
+    )
+    if (!anyCoords) return
 
     const firstAct = dias[0]?.actividades[0]
     const center: [number, number] =
@@ -65,17 +74,17 @@ export function TripMap({
         ? [firstAct.lng, firstAct.lat]
         : [-69.9, 18.5]
 
-    const map = new mapboxgl.Map({
+    const map = new maplibregl.Map({
       container: containerRef.current,
-      style: 'mapbox://styles/mapbox/streets-v12',
+      style: MAP_STYLE,
       center,
       zoom: 12,
     })
     mapRef.current = map
-    map.addControl(new mapboxgl.NavigationControl(), 'top-right')
+    map.addControl(new maplibregl.NavigationControl(), 'top-right')
 
     map.on('load', () => {
-      const bounds = new mapboxgl.LngLatBounds()
+      const bounds = new maplibregl.LngLatBounds()
 
       dias.forEach((day, dayIdx) => {
         const color = DAY_COLORS[dayIdx % DAY_COLORS.length] ?? '#2E75B6'
@@ -108,7 +117,7 @@ export function TripMap({
         }
 
         // Activity markers
-        const dayMarkers: mapboxgl.Marker[] = []
+        const dayMarkers: maplibregl.Marker[] = []
         validActs.forEach((activity, actIdx) => {
           bounds.extend([activity.lng, activity.lat])
 
@@ -135,7 +144,7 @@ export function TripMap({
           }
 
           const nav = buildNavigationLinks(activity.lat, activity.lng)
-          const popup = new mapboxgl.Popup({
+          const popup = new maplibregl.Popup({
             offset: 26,
             maxWidth: '230px',
           }).setHTML(
@@ -162,7 +171,7 @@ export function TripMap({
           )
 
           dayMarkers.push(
-            new mapboxgl.Marker(el)
+            new maplibregl.Marker({ element: el })
               .setLngLat([activity.lng, activity.lat])
               .setPopup(popup)
               .addTo(map)
@@ -219,7 +228,7 @@ export function TripMap({
         width:16px;height:16px;background:#3B82F6;border-radius:50%;
         border:3px solid white;box-shadow:0 0 0 4px rgba(59,130,246,.3);
       `
-      gpsMarkerRef.current = new mapboxgl.Marker(el)
+      gpsMarkerRef.current = new maplibregl.Marker({ element: el })
         .setLngLat([userLocation.lng, userLocation.lat])
         .addTo(map)
     } else {
@@ -270,55 +279,54 @@ export function TripMap({
     return cleanup
   }, [actividadActiva, mapLoaded])
 
-  const noToken =
-    !process.env['NEXT_PUBLIC_MAPBOX_TOKEN'] ||
-    process.env['NEXT_PUBLIC_MAPBOX_TOKEN'] === 'tu_token'
-
   return (
     <div
       className={`relative overflow-hidden rounded-xl ${className ?? 'h-full w-full'}`}
     >
-      {noToken ? (
-        <div className="flex h-full w-full items-center justify-center bg-gray-100">
-          <p className="text-sm text-gray-500">
-            Configura NEXT_PUBLIC_MAPBOX_TOKEN para ver el mapa
+      {/* Sin coordenadas: aviso en vez de un mapa centrado en un punto al azar */}
+      {!hasAnyCoords ? (
+        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-surface-muted px-6 text-center">
+          <span className="text-3xl">🗺️</span>
+          <p className="text-sm font-semibold text-fg">
+            Ubicaciones aún no disponibles
+          </p>
+          <p className="max-w-xs text-xs text-fg-subtle">
+            Estamos afinando las coordenadas de las actividades. Aparecerán en
+            el mapa en unos segundos.
           </p>
         </div>
-      ) : (
-        <>
-          {/* Day selector overlay */}
-          <div className="absolute left-2 top-2 z-10 flex flex-wrap gap-1">
-            <button
-              onClick={() => setActiveDayIdx(null)}
-              className="rounded px-2 py-1 text-xs font-semibold text-white shadow"
-              style={{
-                backgroundColor: '#1f2937',
-                opacity: activeDayIdx === null ? 1 : 0.65,
-              }}
-            >
-              Todos
-            </button>
-            {dias.map((day, idx) => (
-              <button
-                key={day.numero}
-                onClick={() =>
-                  setActiveDayIdx(idx === activeDayIdx ? null : idx)
-                }
-                className="rounded px-2 py-1 text-xs font-semibold text-white shadow transition-opacity"
-                style={{
-                  backgroundColor:
-                    DAY_COLORS[idx % DAY_COLORS.length] ?? '#2E75B6',
-                  opacity:
-                    activeDayIdx === null || activeDayIdx === idx ? 1 : 0.55,
-                }}
-              >
-                D{day.numero}
-              </button>
-            ))}
-          </div>
-          <div ref={containerRef} className="h-full w-full" />
-        </>
-      )}
+      ) : null}
+
+      {/* Day selector overlay */}
+      <div
+        className="absolute left-2 top-2 z-10 flex flex-wrap gap-1"
+        style={{ display: hasAnyCoords ? undefined : 'none' }}
+      >
+        <button
+          onClick={() => setActiveDayIdx(null)}
+          className="rounded px-2 py-1 text-xs font-semibold text-white shadow"
+          style={{
+            backgroundColor: '#1f2937',
+            opacity: activeDayIdx === null ? 1 : 0.65,
+          }}
+        >
+          Todos
+        </button>
+        {dias.map((day, idx) => (
+          <button
+            key={day.numero}
+            onClick={() => setActiveDayIdx(idx === activeDayIdx ? null : idx)}
+            className="rounded px-2 py-1 text-xs font-semibold text-white shadow transition-opacity"
+            style={{
+              backgroundColor: DAY_COLORS[idx % DAY_COLORS.length] ?? '#2E75B6',
+              opacity: activeDayIdx === null || activeDayIdx === idx ? 1 : 0.55,
+            }}
+          >
+            D{day.numero}
+          </button>
+        ))}
+      </div>
+      <div ref={containerRef} className="h-full w-full" />
     </div>
   )
 }

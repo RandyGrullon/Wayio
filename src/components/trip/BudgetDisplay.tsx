@@ -20,14 +20,14 @@ export function BudgetDisplay({
   const percentage = Math.min((spent / totalBudget) * 100, 100)
 
   return (
-    <div className="rounded-xl bg-white p-4 shadow-sm">
-      <div className="flex justify-between text-sm text-gray-600 mb-2">
+    <div className="rounded-2xl border border-border bg-surface p-4 shadow-[var(--shadow-soft)]">
+      <div className="mb-2 flex justify-between text-sm text-fg-muted">
         <span>Gastado: {formatCurrency(spent, currency)}</span>
         <span>Presupuesto: {formatCurrency(totalBudget, currency)}</span>
       </div>
-      <div className="h-2 w-full rounded-full bg-gray-200">
+      <div className="h-2.5 w-full overflow-hidden rounded-full bg-surface-muted">
         <div
-          className={`h-2 rounded-full transition-all ${remaining < 0 ? 'bg-red-500' : 'bg-blue-500'}`}
+          className={`h-full rounded-full transition-all duration-500 ${remaining < 0 ? 'bg-red-500' : 'grad-brand'}`}
           style={{ width: `${percentage}%` }}
         />
       </div>

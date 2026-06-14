@@ -1,7 +1,7 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npx create-next-app@latest tripmind --typescript --tailwind --eslint --app --src-dir --import-alias \"@/*\" --no-git)",
+      "Bash(npx create-next-app@latest wayio --typescript --tailwind --eslint --app --src-dir --import-alias \"@/*\" --no-git)",
       "PowerShell(New-Item *)",
       "Bash(npx prettier *)",
       "Bash(npx next *)",

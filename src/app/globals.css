@@ -1,26 +1,267 @@
 @import 'tailwindcss';
 
+/* Dark mode is class-driven (html.dark) so we can also respect the system
+   preference via a tiny inline script in the root layout. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Design tokens — Wayio "vibrant travel" system
+   Brand = teal (trust / action) · Coral (energy / accent) · Amber (sun)
+   ───────────────────────────────────────────────────────────────────────── */
+@theme {
+  --font-sans:
+    var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+
+  /* Brand — teal/ocean */
+  --color-brand-50: #effdfa;
+  --color-brand-100: #c9f7ef;
+  --color-brand-200: #95efe0;
+  --color-brand-300: #5ce0ce;
+  --color-brand-400: #2cc6b6;
+  --color-brand-500: #14b8a6;
+  --color-brand-600: #0a9488;
+  --color-brand-700: #0c766e;
+  --color-brand-800: #105e58;
+  --color-brand-900: #124e49;
+  --color-brand-950: #042f2c;
+
+  /* Coral — sunset accent */
+  --color-coral-50: #fff5f3;
+  --color-coral-100: #ffe7e1;
+  --color-coral-200: #ffcabe;
+  --color-coral-300: #ffa492;
+  --color-coral-400: #ff7458;
+  --color-coral-500: #fb5234;
+  --color-coral-600: #ec3a1c;
+  --color-coral-700: #c42c15;
+  --color-coral-800: #a22817;
+  --color-coral-900: #86271a;
+  --color-coral-950: #491008;
+
+  /* Sun — warm amber */
+  --color-sun-50: #fffbeb;
+  --color-sun-100: #fef2c7;
+  --color-sun-200: #fde488;
+  --color-sun-300: #fcd049;
+  --color-sun-400: #fbbd23;
+  --color-sun-500: #f59e0b;
+  --color-sun-600: #d97706;
+  --color-sun-700: #b45309;
+  --color-sun-800: #924012;
+  --color-sun-900: #783512;
+
+  /* Radius scale */
+  --radius-xl: 1rem;
+  --radius-2xl: 1.25rem;
+  --radius-3xl: 1.75rem;
+
+  /* Signature shadows (soft, colored) */
+  --shadow-soft:
+    0 1px 2px rgb(15 23 42 / 0.04), 0 8px 24px -8px rgb(15 23 42 / 0.12);
+  --shadow-glow: 0 10px 30px -8px rgb(20 184 166 / 0.45);
+  --shadow-coral: 0 10px 30px -8px rgb(251 82 52 / 0.45);
+
+  /* Easing */
+  --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* ── Semantic surface tokens (light) ─────────────────────────────────────── */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --bg: #f7f8fa;
+  --bg-elev: #ffffff;
+  --surface: #ffffff;
+  --surface-muted: #f1f3f6;
+  --fg: #0f172a;
+  --fg-muted: #64748b;
+  --fg-subtle: #94a3b8;
+  --border: #e6e9ef;
+  --border-strong: #d3d8e0;
+  --glass: rgb(255 255 255 / 0.7);
+  --glass-border: rgb(255 255 255 / 0.55);
 }
 
+.dark {
+  --bg: #070b14;
+  --bg-elev: #0e1422;
+  --surface: #111827;
+  --surface-muted: #1a2335;
+  --fg: #f1f5f9;
+  --fg-muted: #94a3b8;
+  --fg-subtle: #64748b;
+  --border: #1e293b;
+  --border-strong: #2c3a52;
+  --glass: rgb(17 24 39 / 0.6);
+  --glass-border: rgb(255 255 255 / 0.08);
+}
+
+/* Expose semantic tokens to Tailwind utilities (bg-surface, text-fg, …) */
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-bg: var(--bg);
+  --color-bg-elev: var(--bg-elev);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-fg: var(--fg);
+  --color-fg-muted: var(--fg-muted);
+  --color-fg-subtle: var(--fg-subtle);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
 }
 
-@media (prefers-color-scheme: dark) {
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    /* Tints native controls: the selected day in date pickers, checkboxes,
+       radios, range sliders, etc. — applies app-wide. */
+    accent-color: var(--color-brand-500);
+  }
+  ::selection {
+    background: color-mix(in oklab, var(--color-brand-500) 30%, transparent);
+  }
+  /* Native date/time pickers follow the active theme */
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    color-scheme: light;
+  }
+  .dark {
+    color-scheme: dark;
+  }
+  input[type='date']::-webkit-calendar-picker-indicator {
+    cursor: pointer;
+    border-radius: 6px;
+    padding: 2px;
+    opacity: 0.6;
+    transition: opacity 0.15s;
+  }
+  input[type='date']::-webkit-calendar-picker-indicator:hover {
+    opacity: 1;
+    background: color-mix(in oklab, var(--color-brand-500) 18%, transparent);
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-fg-subtle);
+    background-clip: content-box;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* ─────────────────────────────────────────────────────────────────────────
+   Utilities
+   ───────────────────────────────────────────────────────────────────────── */
+@utility glass {
+  background: var(--glass);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  border: 1px solid var(--glass-border);
+}
+
+@utility text-gradient {
+  background-image: linear-gradient(
+    100deg,
+    var(--color-brand-500),
+    var(--color-coral-500) 55%,
+    var(--color-sun-500)
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+@utility bg-aurora {
+  background:
+    radial-gradient(
+      60% 70% at 12% 0%,
+      color-mix(in oklab, var(--color-brand-400) 28%, transparent),
+      transparent 60%
+    ),
+    radial-gradient(
+      55% 65% at 95% 12%,
+      color-mix(in oklab, var(--color-coral-400) 26%, transparent),
+      transparent 60%
+    ),
+    radial-gradient(
+      60% 80% at 60% 100%,
+      color-mix(in oklab, var(--color-sun-300) 22%, transparent),
+      transparent 60%
+    ),
+    var(--bg);
+}
+
+@utility grad-brand {
+  background-image: linear-gradient(
+    120deg,
+    var(--color-brand-600),
+    var(--color-brand-500) 40%,
+    var(--color-coral-500)
+  );
+}
+
+/* ── Animations ──────────────────────────────────────────────────────────── */
+@keyframes wy-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+@keyframes wy-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes wy-pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0
+      color-mix(in oklab, var(--color-brand-500) 60%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 12px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+@utility animate-float {
+  animation: wy-float 6s var(--ease-out-soft) infinite;
+}
+@utility animate-rise {
+  animation: wy-rise 0.6s var(--ease-out-soft) both;
+}
+@utility animate-pulse-ring {
+  animation: wy-pulse-ring 2s ease-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

@@ -13,30 +13,34 @@ export function ActivityItem({ activity, onSelect }: ActivityItemProps) {
   const hasCoords = activity.lat !== 0 || activity.lng !== 0
 
   return (
-    <div className="flex flex-col gap-2 rounded-lg p-3 hover:bg-gray-50">
+    <div className="flex flex-col gap-2 rounded-2xl p-3 transition-colors hover:bg-surface-muted">
       <button
         onClick={() => onSelect?.(activity)}
         className="flex w-full items-start gap-3 text-left"
       >
-        <div className="flex flex-col items-center text-xs text-gray-500 min-w-[48px]">
+        <div className="flex min-w-[48px] flex-col items-center text-xs font-medium text-fg-muted">
           <span>{activity.horaInicio}</span>
-          <span className="text-gray-300">|</span>
+          <span className="text-border-strong">|</span>
           <span>{activity.horaFin}</span>
         </div>
         <div className="flex-1">
-          <p className="font-medium text-gray-900">{activity.nombre}</p>
-          <p className="text-sm text-gray-500">{activity.direccion}</p>
+          <p className="font-semibold text-fg">{activity.nombre}</p>
+          <p className="text-sm text-fg-muted">{activity.direccion}</p>
           {activity.consejos.length > 0 ? (
-            <p className="mt-1 text-xs text-gray-400">{activity.consejos[0]}</p>
+            <p className="mt-1 text-xs text-fg-subtle">
+              {activity.consejos[0]}
+            </p>
           ) : null}
         </div>
         <div className="flex flex-col items-end gap-1">
-          <Badge variant="info">{activity.tipo}</Badge>
-          <span className="text-sm font-medium text-gray-700">
+          <Badge variant="brand">{activity.tipo}</Badge>
+          <span className="text-sm font-bold text-fg">
             {formatCurrency(activity.precioEstimado)}
           </span>
           {activity.reservaRequerida ? (
-            <span className="text-xs text-amber-600">Reserva req.</span>
+            <span className="text-xs font-medium text-sun-600">
+              Reserva req.
+            </span>
           ) : null}
         </div>
       </button>
@@ -65,7 +69,7 @@ export function ActivityItem({ activity, onSelect }: ActivityItemProps) {
             href={nav.apple}
             target="_blank"
             rel="noopener noreferrer"
-            className="rounded bg-gray-700 px-2 py-0.5 text-xs font-medium text-white"
+            className="rounded bg-slate-700 px-2 py-0.5 text-xs font-medium text-white"
           >
             Apple Maps
           </a>

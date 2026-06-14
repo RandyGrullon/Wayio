@@ -84,15 +84,15 @@ export function GroupRoom({ tripId, trip, currentUser }: GroupRoomProps) {
   return (
     <div className="flex flex-col gap-4">
       {/* Tab bar */}
-      <div className="flex gap-1 rounded-xl bg-gray-100 p-1">
+      <div className="flex gap-1 rounded-2xl bg-surface-muted p-1">
         {TABS.map(({ key, label }) => (
           <button
             key={key}
             onClick={() => setTab(key)}
-            className={`flex-1 rounded-lg py-2 text-xs font-semibold transition-colors ${
+            className={`flex-1 rounded-xl py-2 text-xs font-bold transition-all ${
               tab === key
-                ? 'bg-white text-gray-900 shadow-sm'
-                : 'text-gray-500 hover:text-gray-700'
+                ? 'bg-surface text-fg shadow-[var(--shadow-soft)]'
+                : 'text-fg-muted hover:text-fg'
             }`}
           >
             {label}
@@ -150,7 +150,7 @@ export function GroupRoom({ tripId, trip, currentUser }: GroupRoomProps) {
                 setExpenseForm((f) => ({ ...f, concepto: e.target.value }))
               }
               required
-              className="min-w-0 flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+              className="h-11 min-w-0 flex-1 rounded-xl border border-border-strong bg-surface px-3.5 text-sm text-fg placeholder:text-fg-subtle focus:border-brand-500 focus:outline-none focus:ring-4 focus:ring-brand-500/15"
             />
             <input
               type="number"
@@ -162,11 +162,11 @@ export function GroupRoom({ tripId, trip, currentUser }: GroupRoomProps) {
               min={0.01}
               step="0.01"
               required
-              className="w-24 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+              className="h-11 w-24 rounded-xl border border-border-strong bg-surface px-3.5 text-sm text-fg placeholder:text-fg-subtle focus:border-brand-500 focus:outline-none focus:ring-4 focus:ring-brand-500/15"
             />
             <button
               type="submit"
-              className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700"
+              className="grad-brand h-11 w-11 shrink-0 rounded-xl text-lg font-bold text-white"
             >
               +
             </button>
@@ -177,7 +177,9 @@ export function GroupRoom({ tripId, trip, currentUser }: GroupRoomProps) {
               members={membersForSplit}
             />
           ) : (
-            <p className="text-sm text-gray-400">Sin gastos registrados aún.</p>
+            <p className="text-sm text-fg-subtle">
+              Sin gastos registrados aún.
+            </p>
           )}
         </div>
       ) : null}
@@ -188,24 +190,24 @@ export function GroupRoom({ tripId, trip, currentUser }: GroupRoomProps) {
           {members.map((m) => (
             <div
               key={m.id}
-              className="flex items-center gap-3 rounded-xl bg-white p-3 shadow-sm"
+              className="flex items-center gap-3 rounded-2xl border border-border bg-surface p-3 shadow-[var(--shadow-soft)]"
             >
-              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-500 text-sm font-bold text-white">
+              <div className="grad-brand flex h-9 w-9 items-center justify-center rounded-full text-sm font-bold text-white">
                 {m.nombre[0]?.toUpperCase() ?? '?'}
               </div>
               <div className="flex-1">
-                <p className="text-sm font-medium text-gray-900">{m.nombre}</p>
+                <p className="text-sm font-semibold text-fg">{m.nombre}</p>
                 {m.ultima_ubicacion ? (
-                  <p className="text-xs text-gray-400">
+                  <p className="text-xs text-fg-subtle">
                     Ubicación actualizada{' '}
                     {new Date(m.ultima_ubicacion).toLocaleTimeString()}
                   </p>
                 ) : (
-                  <p className="text-xs text-gray-400">Sin ubicación</p>
+                  <p className="text-xs text-fg-subtle">Sin ubicación</p>
                 )}
               </div>
               {m.user_id === currentUser.id ? (
-                <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700">
+                <span className="rounded-full bg-brand-50 px-2.5 py-0.5 text-xs font-bold text-brand-700 dark:bg-brand-500/15 dark:text-brand-300">
                   Tú
                 </span>
               ) : null}

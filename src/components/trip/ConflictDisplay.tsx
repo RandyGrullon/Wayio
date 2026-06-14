@@ -12,28 +12,28 @@ const SEVERITY_STYLES: Record<
   { bg: string; border: string; text: string; badge: string }
 > = {
   critico: {
-    bg: 'bg-red-50',
-    border: 'border-red-200',
-    text: 'text-red-800',
+    bg: 'bg-red-50 dark:bg-red-500/10',
+    border: 'border-red-200 dark:border-red-500/30',
+    text: 'text-red-800 dark:text-red-300',
     badge: 'bg-red-600 text-white',
   },
   advertencia: {
-    bg: 'bg-amber-50',
-    border: 'border-amber-200',
-    text: 'text-amber-800',
-    badge: 'bg-amber-500 text-white',
+    bg: 'bg-sun-50 dark:bg-sun-500/10',
+    border: 'border-sun-200 dark:border-sun-500/30',
+    text: 'text-sun-800 dark:text-sun-300',
+    badge: 'bg-sun-500 text-white',
   },
   sugerencia: {
-    bg: 'bg-blue-50',
-    border: 'border-blue-200',
-    text: 'text-blue-800',
-    badge: 'bg-blue-500 text-white',
+    bg: 'bg-brand-50 dark:bg-brand-500/10',
+    border: 'border-brand-200 dark:border-brand-500/30',
+    text: 'text-brand-800 dark:text-brand-300',
+    badge: 'bg-brand-500 text-white',
   },
   info: {
-    bg: 'bg-gray-50',
-    border: 'border-gray-200',
-    text: 'text-gray-700',
-    badge: 'bg-gray-400 text-white',
+    bg: 'bg-surface-muted',
+    border: 'border-border',
+    text: 'text-fg-muted',
+    badge: 'bg-fg-subtle text-white',
   },
 }
 

@@ -1,7 +1,7 @@
 import type { MetadataRoute } from 'next'
 import { DESTINOS } from '@/lib/seo/destinos'
 
-const BASE_URL = process.env['NEXT_PUBLIC_BASE_URL'] ?? 'https://tripmind.app'
+const BASE_URL = process.env['NEXT_PUBLIC_BASE_URL'] ?? 'https://wayio.app'
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const staticPages: MetadataRoute.Sitemap = [

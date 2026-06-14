@@ -1,13 +1,25 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
-const PROTECTED_PREFIXES = ['/trip/', '/group/']
+const PROTECTED_PREFIXES = ['/trip/', '/group/', '/admin']
 
 const SUPABASE_URL = process.env['NEXT_PUBLIC_SUPABASE_URL'] ?? ''
 const SUPABASE_ANON_KEY = process.env['NEXT_PUBLIC_SUPABASE_ANON_KEY'] ?? ''
 
 export async function proxy(request: NextRequest): Promise<NextResponse> {
-  let response = NextResponse.next({ request })
+  const response = NextResponse.next({ request })
+
+  // Modo demo: sin Supabase no protegemos rutas (la app se puede navegar)
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return response
+
+  return withAuth(request, response)
+}
+
+async function withAuth(
+  request: NextRequest,
+  initialResponse: NextResponse
+): Promise<NextResponse> {
+  let response = initialResponse
 
   const supabase = createServerClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     cookies: {
@@ -44,5 +56,5 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
 }
 
 export const config = {
-  matcher: ['/trip/:path*', '/group/:path*'],
+  matcher: ['/trip/:path*', '/group/:path*', '/admin/:path*'],
 }

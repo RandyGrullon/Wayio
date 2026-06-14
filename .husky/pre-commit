@@ -1,2 +1,2 @@
 npx lint-staged
-cd tripmind-mobile && npx lint-staged
+cd mobile && npx lint-staged

@@ -1,15 +1,13 @@
-import Anthropic from '@anthropic-ai/sdk'
+import { aiClient } from '@/lib/ai/client'
 import type { AlertLevelNumber } from '@/types/geofencing'
 import type { Activity } from '@/types/activity'
-
-const client = new Anthropic()
 
 export async function generateAlertMessage(
   level: AlertLevelNumber,
   activity: Activity,
   distanceMeters: number
 ): Promise<string> {
-  const message = await client.messages.create({
+  const message = await aiClient.messages.create({
     model: 'claude-haiku-4-5-20251001',
     max_tokens: 256,
     messages: [

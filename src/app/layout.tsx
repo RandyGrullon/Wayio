@@ -1,6 +1,7 @@
-import type { Metadata } from 'next'
+import type { Metadata, Viewport } from 'next'
 import { Geist, Geist_Mono } from 'next/font/google'
 import PostHogProvider from '@/components/providers/PostHogProvider'
+import { AnnouncementBanner } from '@/components/admin/AnnouncementBanner'
 import './globals.css'
 
 const geistSans = Geist({
@@ -14,10 +15,30 @@ const geistMono = Geist_Mono({
 })
 
 export const metadata: Metadata = {
-  title: 'TripMind — AI Travel Planner',
+  title: 'Wayio — Tu viaje perfecto, planificado con IA',
   description:
-    'Plan your perfect trip with AI and navigate with live GPS guidance',
+    'Dinos a dónde quieres ir y cuánto tienes: la IA arma tu itinerario perfecto con vuelos, hoteles y actividades, más GPS en vivo durante el viaje.',
+  keywords: ['viajes', 'IA', 'itinerario', 'planificador', 'GPS', 'turismo'],
+  openGraph: {
+    title: 'Wayio — Tu viaje perfecto, planificado con IA',
+    description:
+      'Planificación de viajes con IA y navegación GPS en vivo. Tres paquetes a tu medida en segundos.',
+    type: 'website',
+  },
 }
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  viewportFit: 'cover',
+  themeColor: [
+    { media: '(prefers-color-scheme: light)', color: '#f7f8fa' },
+    { media: '(prefers-color-scheme: dark)', color: '#070b14' },
+  ],
+}
+
+// Sets the theme class before paint to avoid a flash of the wrong theme.
+const themeScript = `(function(){try{var t=localStorage.getItem('wayio-theme');var d=t?t==='dark':matchMedia('(prefers-color-scheme: dark)').matches;document.documentElement.classList.toggle('dark',d);}catch(e){}})();`
 
 export default function RootLayout({
   children,
@@ -26,11 +47,18 @@ export default function RootLayout({
 }>) {
   return (
     <html
-      lang="en"
+      lang="es"
+      suppressHydrationWarning
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="flex min-h-full flex-col">
-        <PostHogProvider>{children}</PostHogProvider>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
+      </head>
+      <body className="flex min-h-full flex-col bg-bg text-fg">
+        <PostHogProvider>
+          <AnnouncementBanner />
+          {children}
+        </PostHogProvider>
       </body>
     </html>
   )
