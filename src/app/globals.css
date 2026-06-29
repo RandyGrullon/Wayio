@@ -256,6 +256,36 @@
   animation: wy-pulse-ring 2s ease-out infinite;
 }
 
+/* ── 3D loader ───────────────────────────────────────────────────────────── */
+@keyframes wy-spin3d {
+  from {
+    transform: rotateY(0deg) rotateX(10deg);
+  }
+  to {
+    transform: rotateY(360deg) rotateX(10deg);
+  }
+}
+@keyframes wy-icon-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.35) rotateY(-100deg);
+  }
+  55% {
+    opacity: 1;
+    transform: scale(1.12) rotateY(14deg);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) rotateY(0deg);
+  }
+}
+@utility loader3d-spin {
+  animation: wy-spin3d 2.6s linear infinite;
+}
+@utility loader3d-pop {
+  animation: wy-icon-pop 0.6s var(--ease-out-soft) both;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

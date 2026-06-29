@@ -15,19 +15,8 @@ import {
   CloudSun,
   Star,
   ChevronLeft,
-  CalendarPlus,
-  Printer,
-  RefreshCw,
-  Hotel,
-  Pencil,
-  Check,
-  Share2,
 } from 'lucide-react'
 import { downloadIcs } from '@/lib/utils/ics'
-import {
-  buildSkyscannerLink,
-  buildBookingLink,
-} from '@/constants/affiliateLinks'
 import { TripForm } from '@/components/trip/TripForm'
 import { TripMap } from '@/components/map/TripMap'
 import { PackageCompare } from '@/components/trip/PackageCompare'
@@ -35,6 +24,10 @@ import { BudgetDisplay } from '@/components/trip/BudgetDisplay'
 import { EditableDays } from '@/components/trip/EditableDays'
 import { AdjustChat } from '@/components/trip/AdjustChat'
 import { RecreateTrip } from '@/components/trip/RecreateTrip'
+import { RealSearch } from '@/components/trip/RealSearch'
+import { Loader3D } from '@/components/ui/Loader3D'
+import { ResultActions } from '@/components/trip/ResultActions'
+import { TripEssentials } from '@/components/trip/TripEssentials'
 import { useBackgroundGeocode } from '@/hooks/useBackgroundGeocode'
 import { streamGenerate } from '@/lib/ai/streamClient'
 import { SiteHeader } from '@/components/layout/SiteHeader'
@@ -48,29 +41,34 @@ import type { PlaceFromVideo } from '@/lib/ai/analyzeVideo'
 
 const LOADING_STEPS = [
   {
-    mensaje: 'Buscando vuelos desde tu ciudad...',
-    icono: '✈️',
-    duracion: 2000,
+    mensaje: 'Buscando los mejores vuelos...',
+    icon: 'plane',
+    duracion: 2200,
   },
   {
-    mensaje: 'Encontrando los mejores hoteles...',
-    icono: '🏨',
+    mensaje: 'Encontrando hoteles ideales...',
+    icon: 'hotel',
+    duracion: 2200,
+  },
+  {
+    mensaje: 'Revisando opciones de transporte...',
+    icon: 'car',
     duracion: 2000,
   },
   {
     mensaje: 'Descubriendo actividades increíbles...',
-    icono: '🗺️',
-    duracion: 2000,
+    icon: 'compass',
+    duracion: 2200,
   },
   {
-    mensaje: 'La IA está armando 3 versiones de tu viaje...',
-    icono: '🤖',
-    duracion: 3000,
+    mensaje: 'La IA arma 3 versiones de tu viaje...',
+    icon: 'sparkles',
+    duracion: 3200,
   },
   {
     mensaje: 'Optimizando rutas para que no pierdas tiempo...',
-    icono: '📍',
-    duracion: 1000,
+    icon: 'pin',
+    duracion: 1500,
   },
 ] as const
 
@@ -278,8 +276,8 @@ export default function HomePage() {
     return (
       <main className="bg-aurora flex min-h-screen flex-col items-center justify-center px-4">
         <div className="w-full max-w-sm text-center">
-          <div className="animate-float mx-auto mb-8 flex h-24 w-24 items-center justify-center rounded-3xl bg-surface text-6xl shadow-[var(--shadow-soft)]">
-            {current?.icono ?? '✈️'}
+          <div className="mb-8">
+            <Loader3D icon={current?.icon ?? 'plane'} />
           </div>
           <div className="mb-3 h-2 w-full overflow-hidden rounded-full bg-surface-muted">
             <div
@@ -362,86 +360,26 @@ export default function HomePage() {
                 </p>
               ) : null}
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <Button onClick={handleSaveTrip} loading={saving} size="sm">
-                {user ? 'Guardar viaje' : 'Guardar (inicia sesión)'}
-              </Button>
-              <Button
-                variant={editing ? 'primary' : 'outline'}
-                size="sm"
-                onClick={() => setEditing((e) => !e)}
-                title="Editar el itinerario antes de guardar"
-              >
-                {editing ? (
-                  <>
-                    <Check className="h-4 w-4" />
-                    Listo
-                  </>
-                ) : (
-                  <>
-                    <Pencil className="h-4 w-4" />
-                    Editar
-                  </>
-                )}
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setEditing(false)
-                  setStep('packages')
-                }}
-              >
-                Cambiar paquete
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleShare}
-                loading={sharing}
-                title="Crear un link público de solo lectura"
-              >
-                <Share2 className="h-4 w-4" />
-                {user ? 'Compartir' : 'Compartir (inicia sesión)'}
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleRegenerate}
-                title="Generar otra versión del itinerario"
-              >
-                <RefreshCw className="h-4 w-4" />
-                Otra versión
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => itinerary && downloadIcs(itinerary)}
-                title="Exportar a calendario (.ics)"
-              >
-                <CalendarPlus className="h-4 w-4" />
-                Calendario
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => window.print()}
-                title="Imprimir o guardar como PDF"
-              >
-                <Printer className="h-4 w-4" />
-                PDF
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  setEditing(false)
-                  setStep('form')
-                }}
-              >
-                Nuevo viaje
-              </Button>
-            </div>
+            <ResultActions
+              isAuthed={Boolean(user)}
+              saving={saving}
+              sharing={sharing}
+              editing={editing}
+              onSave={handleSaveTrip}
+              onToggleEdit={() => setEditing((e) => !e)}
+              onChangePackage={() => {
+                setEditing(false)
+                setStep('packages')
+              }}
+              onShare={handleShare}
+              onRegenerate={handleRegenerate}
+              onCalendar={() => itinerary && downloadIcs(itinerary)}
+              onPrint={() => window.print()}
+              onNewTrip={() => {
+                setEditing(false)
+                setStep('form')
+              }}
+            />
           </div>
 
           {/* Link público de compartir */}
@@ -513,59 +451,24 @@ export default function HomePage() {
             />
           </div>
 
-          {/* Budget cards */}
-          <div className="mb-6 grid grid-cols-2 gap-3">
-            <div className="rounded-2xl border border-border bg-surface p-4 shadow-[var(--shadow-soft)]">
-              <p className="text-xs font-medium uppercase tracking-wide text-fg-subtle">
-                Presupuesto total
-              </p>
-              <p className="mt-1 text-xl font-bold text-fg">
-                ${itinerary.presupuestoTotal}
-              </p>
-            </div>
-            <div className="rounded-2xl border border-border bg-surface p-4 shadow-[var(--shadow-soft)]">
-              <p className="text-xs font-medium uppercase tracking-wide text-fg-subtle">
-                Por persona
-              </p>
-              <p className="mt-1 text-xl font-bold text-fg">
-                ${itinerary.presupuestoPorPersona}
-              </p>
-            </div>
-          </div>
+          {/* Completa tu viaje: vuelo incluido + add-ons inteligentes */}
+          <TripEssentials
+            itinerary={itinerary}
+            origen={formData?.origen ?? itinerary.origen}
+            personas={formData?.personas ?? itinerary.personas}
+            fechaInicio={formData?.fechaInicio ?? itinerary.fechaInicio}
+            fechaFin={formData?.fechaFin ?? itinerary.fechaFin}
+            moneda={formData?.moneda ?? 'USD'}
+          />
 
-          {/* Reservas (afiliados) */}
-          <div className="mb-6 flex flex-col gap-2 rounded-2xl border border-border bg-surface p-4 shadow-[var(--shadow-soft)] sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-sm font-semibold text-fg">
-              ¿Listo para reservar?
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {formData ? (
-                <a
-                  href={buildSkyscannerLink(
-                    formData.origen,
-                    itinerary.destino,
-                    formData.fechaInicio
-                  )}
-                  target="_blank"
-                  rel="noopener noreferrer sponsored"
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-border-strong bg-surface px-3 py-2 text-sm font-medium text-fg transition-colors hover:bg-surface-muted"
-                >
-                  <Plane className="h-4 w-4 text-brand-500" /> Buscar vuelos
-                </a>
-              ) : null}
-              <a
-                href={buildBookingLink(
-                  itinerary.destino,
-                  itinerary.fechaInicio
-                )}
-                target="_blank"
-                rel="noopener noreferrer sponsored"
-                className="inline-flex items-center gap-1.5 rounded-xl border border-border-strong bg-surface px-3 py-2 text-sm font-medium text-fg transition-colors hover:bg-surface-muted"
-              >
-                <Hotel className="h-4 w-4 text-coral-500" /> Buscar hoteles
-              </a>
-            </div>
-          </div>
+          {/* Búsqueda real (vuelos / hoteles / actividades) */}
+          <RealSearch
+            destino={itinerary.destino}
+            fechaInicio={formData?.fechaInicio ?? itinerary.fechaInicio}
+            fechaFin={formData?.fechaFin ?? itinerary.fechaFin}
+            personas={formData?.personas ?? itinerary.personas}
+            origen={formData?.origen ?? itinerary.origen}
+          />
 
           {/* Warnings */}
           {itinerary.advertencias.length > 0 ? (
