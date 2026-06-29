@@ -3,9 +3,18 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
-import { MapPin, Share2, Check, LogOut, Eye } from 'lucide-react'
+import {
+  MapPin,
+  Share2,
+  Check,
+  LogOut,
+  Eye,
+  WifiOff,
+  Download,
+} from 'lucide-react'
 import { TripMap } from '@/components/map/TripMap'
 import { ActivityItem } from '@/components/trip/ActivityItem'
+import { ReserveButton } from '@/components/trip/ReserveButton'
 import { BudgetDisplay } from '@/components/trip/BudgetDisplay'
 import { ConflictDisplay } from '@/components/trip/ConflictDisplay'
 import { AlertLevel5Cruise } from '@/components/alerts/AlertLevel5Cruise'
@@ -14,6 +23,7 @@ import { ThemeToggle } from '@/components/ui/ThemeToggle'
 import { Button } from '@/components/ui/Button'
 import { useTrip } from '@/hooks/useTrip'
 import { useGPS } from '@/hooks/useGPS'
+import { useOfflineTrip } from '@/hooks/useOfflineTrip'
 import { signOut } from '@/lib/auth/actions'
 import type { Activity } from '@/types/activity'
 import type { Conflict } from '@/types/conflicts'
@@ -24,7 +34,7 @@ export default function TripPage() {
   const tripId = params['id'] as string
 
   const {
-    trip,
+    trip: loadedTrip,
     grupoLink,
     actividadesPendientes,
     loading,
@@ -36,6 +46,12 @@ export default function TripPage() {
   } = useTrip(tripId)
 
   const { location, startWatching, stopWatching, watching } = useGPS()
+  const { isOnline, savedAt, cacheTrip, readCachedTrip } =
+    useOfflineTrip(tripId)
+  // Cached copy used as a fallback when the network fetch fails offline.
+  const [offlineTrip, setOfflineTrip] = useState<typeof loadedTrip>(null)
+  // What the screen actually renders: fresh data when available, else cache.
+  const trip = loadedTrip ?? offlineTrip
   const [rescheduleTarget, setRescheduleTarget] = useState<Activity | null>(
     null
   )
@@ -57,6 +73,20 @@ export default function TripPage() {
   useEffect(() => {
     loadTrip()
   }, [loadTrip])
+
+  // Persist every freshly-loaded trip so it stays viewable with no connection.
+  useEffect(() => {
+    if (loadedTrip) void cacheTrip(loadedTrip)
+  }, [loadedTrip, cacheTrip])
+
+  // If the network fetch failed and we're offline, fall back to the cache.
+  useEffect(() => {
+    if (loadedTrip || offlineTrip) return
+    if (!error && isOnline) return
+    void readCachedTrip(tripId).then((cached) => {
+      if (cached) setOfflineTrip(cached)
+    })
+  }, [loadedTrip, offlineTrip, error, isOnline, tripId, readCachedTrip])
 
   useEffect(() => {
     if (!trip) return
@@ -159,7 +189,7 @@ export default function TripPage() {
     })
   }
 
-  if (loading) {
+  if (loading && !trip) {
     return (
       <main className="bg-aurora flex min-h-screen items-center justify-center">
         <div className="text-center">
@@ -172,7 +202,7 @@ export default function TripPage() {
     )
   }
 
-  if (error || !trip) {
+  if (!trip) {
     return (
       <main className="bg-aurora flex min-h-screen items-center justify-center px-4">
         <div className="text-center">
@@ -222,6 +252,30 @@ export default function TripPage() {
           </div>
         </div>
       </header>
+
+      {/* Offline / cached-copy banner */}
+      {!isOnline || (offlineTrip && !loadedTrip) ? (
+        <div className="border-b border-sun-200 bg-sun-50 dark:border-sun-500/30 dark:bg-sun-500/10">
+          <div className="mx-auto flex max-w-4xl items-center gap-2 px-4 py-2 text-xs font-medium text-sun-800 dark:text-sun-200 sm:px-6">
+            <WifiOff className="h-3.5 w-3.5 shrink-0" />
+            <span>
+              {!isOnline
+                ? 'Sin conexión — mostrando la copia guardada de tu viaje.'
+                : 'Mostrando la copia guardada (no se pudo conectar al servidor).'}
+              {savedAt
+                ? ` Guardado el ${new Date(savedAt).toLocaleString('es')}.`
+                : ''}
+            </span>
+          </div>
+        </div>
+      ) : savedAt ? (
+        <div className="border-b border-border bg-surface/60">
+          <div className="mx-auto flex max-w-4xl items-center gap-2 px-4 py-1.5 text-[11px] font-medium text-fg-subtle sm:px-6">
+            <Download className="h-3 w-3 shrink-0" />
+            <span>Disponible sin conexión</span>
+          </div>
+        </div>
+      ) : null}
 
       <div className="mx-auto max-w-4xl px-4 py-6 sm:px-6 sm:py-8">
         {/* Header */}
@@ -276,6 +330,11 @@ export default function TripPage() {
               <MapPin className="h-4 w-4" />
               {watching ? 'GPS activo' : 'GPS off'}
             </Button>
+            <ReserveButton
+              tripId={tripId}
+              destino={trip.destino}
+              presupuestoTotal={trip.presupuestoTotal}
+            />
           </div>
         </div>
 

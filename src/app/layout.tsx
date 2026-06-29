@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next'
 import { Geist, Geist_Mono } from 'next/font/google'
 import PostHogProvider from '@/components/providers/PostHogProvider'
 import { AnnouncementBanner } from '@/components/admin/AnnouncementBanner'
+import OfflineRegister from '@/components/OfflineRegister'
 import './globals.css'
 
 const geistSans = Geist({
@@ -58,6 +59,7 @@ export default function RootLayout({
         <PostHogProvider>
           <AnnouncementBanner />
           {children}
+          <OfflineRegister />
         </PostHogProvider>
       </body>
     </html>
