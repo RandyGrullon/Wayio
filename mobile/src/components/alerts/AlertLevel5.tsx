@@ -96,7 +96,7 @@ export function AlertLevel5({
 
 const styles = StyleSheet.create({
   screen: {
-    ...StyleSheet.absoluteFill,
+    ...StyleSheet.absoluteFillObject,
     backgroundColor: '#DC2626',
     zIndex: 1000,
   },
