@@ -16,6 +16,9 @@ const geistMono = Geist_Mono({
 })
 
 export const metadata: Metadata = {
+  metadataBase: new URL(
+    process.env.NEXT_PUBLIC_BASE_URL ?? 'http://localhost:3000'
+  ),
   title: 'Wayio — Tu viaje perfecto, planificado con IA',
   description:
     'Dinos a dónde quieres ir y cuánto tienes: la IA arma tu itinerario perfecto con vuelos, hoteles y actividades, más GPS en vivo durante el viaje.',
