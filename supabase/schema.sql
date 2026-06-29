@@ -63,7 +63,17 @@ as $$
   );
 $$;
 
--- Crea automáticamente un perfil cuando alguien se registra
+-- Genera un código de referido corto y legible a partir del uid.
+create or replace function public.gen_referral_code(uid uuid)
+returns text
+language sql
+immutable
+as $$
+  select 'WAY' || upper(substr(replace(uid::text, '-', ''), 1, 6));
+$$;
+
+-- Al registrarse (web o mobile): crea perfil + suscripción free + código de
+-- referido, para que la cuenta quede lista de inmediato.
 create or replace function public.handle_new_user()
 returns trigger
 language plpgsql
@@ -79,6 +89,15 @@ begin
     new.raw_user_meta_data->>'avatar_url'
   )
   on conflict (id) do nothing;
+
+  insert into public.subscriptions (user_id, plan_id, tier, status)
+  values (new.id, 'free', 'free', 'active')
+  on conflict (user_id) do nothing;
+
+  insert into public.referrals (user_id, code)
+  values (new.id, public.gen_referral_code(new.id))
+  on conflict (code) do nothing;
+
   return new;
 end;
 $$;
@@ -406,6 +425,17 @@ insert into public.profiles (id, email, full_name, avatar_url)
 select id, email, raw_user_meta_data->>'full_name', raw_user_meta_data->>'avatar_url'
 from auth.users
 on conflict (id) do nothing;
+
+-- Backfill: suscripción free + código de referido para usuarios existentes
+insert into public.subscriptions (user_id, plan_id, tier, status)
+select id, 'free', 'free', 'active'
+from public.profiles
+on conflict (user_id) do nothing;
+
+insert into public.referrals (user_id, code)
+select id, public.gen_referral_code(id)
+from public.profiles
+on conflict (code) do nothing;
 
 -- ============================================================================
 -- HAZTE ADMIN: descomenta y pon tu email (el que usaste para registrarte)
