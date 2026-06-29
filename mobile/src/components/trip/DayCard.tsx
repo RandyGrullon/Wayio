@@ -1,4 +1,4 @@
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native'
+import { Linking, StyleSheet, Text, TouchableOpacity, View } from 'react-native'
 import { colors, radius } from '../../theme'
 import { formatCurrency } from '../../lib/utils/format'
 import type { PlanningActivity, PlanningDay } from '../../types/planning'
@@ -19,42 +19,61 @@ function ActivityRow({
   onMarkLost?: (a: PlanningActivity) => void
 }): React.ReactElement {
   const color = ESTADO_COLOR[activity.estado] ?? colors.textMuted
+  const hasCoords = activity.lat !== 0 || activity.lng !== 0
+  const lost = activity.estado === 'perdida'
+
   return (
     <View style={styles.actRow}>
+      {/* Time rail */}
       <View style={styles.timeCol}>
         <Text style={styles.time}>{activity.horaInicio}</Text>
         <View style={[styles.dot, { backgroundColor: color }]} />
+        <Text style={styles.timeEnd}>{activity.horaFin}</Text>
       </View>
+
+      {/* Name + address + minimal actions */}
       <View style={styles.actBody}>
-        <Text style={styles.actName}>{activity.nombre}</Text>
-        {activity.descripcion ? (
-          <Text style={styles.actDesc} numberOfLines={2}>
-            {activity.descripcion}
+        <Text style={styles.actName} numberOfLines={1}>
+          {activity.nombre}
+        </Text>
+        {activity.direccion ? (
+          <Text style={styles.actAddr} numberOfLines={1}>
+            {activity.direccion}
           </Text>
         ) : null}
-        <View style={styles.actMeta}>
-          {activity.precioEstimado > 0 ? (
-            <Text style={styles.price}>
-              {formatCurrency(activity.precioEstimado)}
-            </Text>
+        <View style={styles.actActions}>
+          {hasCoords ? (
+            <TouchableOpacity
+              onPress={() =>
+                void Linking.openURL(
+                  `https://maps.google.com/?daddr=${activity.lat},${activity.lng}`
+                )
+              }
+            >
+              <Text style={styles.navLink}>📍 Llegar</Text>
+            </TouchableOpacity>
           ) : null}
-          {activity.reservaRequerida ? (
-            <Text style={styles.reserva}>Reserva</Text>
+          {onMarkLost && !lost ? (
+            <TouchableOpacity onPress={() => onMarkLost(activity)} hitSlop={6}>
+              <Text style={styles.lostBtnText}>La perdí</Text>
+            </TouchableOpacity>
           ) : null}
-          {activity.estado === 'perdida' ? (
-            <Text style={styles.lost}>Perdida</Text>
-          ) : null}
+          {lost ? <Text style={styles.lost}>Perdida</Text> : null}
         </View>
       </View>
-      {onMarkLost && activity.estado !== 'perdida' ? (
-        <TouchableOpacity
-          onPress={() => onMarkLost(activity)}
-          hitSlop={8}
-          style={styles.lostBtn}
-        >
-          <Text style={styles.lostBtnText}>La perdí</Text>
-        </TouchableOpacity>
-      ) : null}
+
+      {/* Type + price */}
+      <View style={styles.actRight}>
+        <Text style={styles.tipo}>{activity.tipo}</Text>
+        {activity.precioEstimado > 0 ? (
+          <Text style={styles.price}>
+            {formatCurrency(activity.precioEstimado)}
+          </Text>
+        ) : null}
+        {activity.reservaRequerida ? (
+          <Text style={styles.reserva}>Reserva</Text>
+        ) : null}
+      </View>
     </View>
   )
 }
@@ -120,26 +139,29 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.border,
   },
-  timeCol: { alignItems: 'center', width: 52 },
+  timeCol: { alignItems: 'center', width: 48 },
   time: { fontSize: 12, fontWeight: '600', color: colors.textMuted },
-  dot: { width: 8, height: 8, borderRadius: 4, marginTop: 6 },
+  timeEnd: { fontSize: 11, color: colors.textFaint, marginTop: 4 },
+  dot: { width: 8, height: 8, borderRadius: 4, marginTop: 5 },
   actBody: { flex: 1, paddingHorizontal: 8 },
   actName: { fontSize: 14, fontWeight: '600', color: colors.text },
-  actDesc: {
-    fontSize: 12,
-    color: colors.textMuted,
-    marginTop: 2,
-    lineHeight: 17,
-  },
-  actMeta: {
+  actAddr: { fontSize: 12, color: colors.textMuted, marginTop: 1 },
+  actActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    marginTop: 4,
+    gap: 14,
+    marginTop: 6,
   },
-  price: { fontSize: 12, color: colors.text, fontWeight: '600' },
-  reserva: { fontSize: 11, color: colors.amber, fontWeight: '600' },
+  navLink: { fontSize: 12, color: colors.primary, fontWeight: '500' },
+  actRight: { alignItems: 'flex-end', gap: 3 },
+  tipo: {
+    fontSize: 10,
+    color: colors.primary,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  price: { fontSize: 13, color: colors.text, fontWeight: '700' },
+  reserva: { fontSize: 10, color: colors.amber, fontWeight: '600' },
   lost: { fontSize: 11, color: colors.red, fontWeight: '700' },
-  lostBtn: { alignSelf: 'center' },
   lostBtnText: { fontSize: 12, color: colors.primary, fontWeight: '600' },
 })

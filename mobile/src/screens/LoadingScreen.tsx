@@ -1,18 +1,20 @@
 import { useEffect, useState } from 'react'
 import { StyleSheet, Text, View } from 'react-native'
 import { SafeAreaView } from 'react-native'
+import { Loader3D } from '../components/ui/Loader3D'
 import { colors } from '../theme'
 
 const STEPS = [
-  { msg: 'Buscando vuelos desde tu ciudad...', icon: '✈️', ms: 2000 },
-  { msg: 'Encontrando los mejores hoteles...', icon: '🏨', ms: 2000 },
-  { msg: 'Descubriendo actividades increíbles...', icon: '🗺️', ms: 2000 },
+  { msg: 'Buscando los mejores vuelos...', icon: '✈️', ms: 2200 },
+  { msg: 'Encontrando hoteles ideales...', icon: '🏨', ms: 2200 },
+  { msg: 'Revisando opciones de transporte...', icon: '🚗', ms: 2000 },
+  { msg: 'Descubriendo actividades increíbles...', icon: '🧭', ms: 2200 },
   {
-    msg: 'La IA está armando 3 versiones de tu viaje...',
-    icon: '🤖',
-    ms: 3000,
+    msg: 'La IA arma 3 versiones de tu viaje...',
+    icon: '✨',
+    ms: 3200,
   },
-  { msg: 'Optimizando rutas para no perder tiempo...', icon: '📍', ms: 1000 },
+  { msg: 'Optimizando rutas para no perder tiempo...', icon: '📍', ms: 1500 },
 ] as const
 
 export function LoadingScreen(): React.ReactElement {
@@ -38,7 +40,9 @@ export function LoadingScreen(): React.ReactElement {
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.center}>
-        <Text style={styles.icon}>{current?.icon ?? '✈️'}</Text>
+        <View style={styles.loaderWrap}>
+          <Loader3D icon={current?.icon ?? '✈️'} />
+        </View>
         <View style={styles.barTrack}>
           <View style={[styles.barFill, { width: `${pct}%` }]} />
         </View>
@@ -57,7 +61,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: 24,
   },
-  icon: { fontSize: 64, marginBottom: 24 },
+  loaderWrap: { marginBottom: 28 },
   barTrack: {
     width: 240,
     height: 8,
