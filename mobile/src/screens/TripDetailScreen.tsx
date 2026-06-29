@@ -6,11 +6,16 @@ import {
   Share,
   StyleSheet,
   Text,
+  TouchableOpacity,
   View,
 } from 'react-native'
 import { SafeAreaView } from 'react-native'
 import { ScreenHeader } from '../components/ui/ScreenHeader'
 import { DayCard } from '../components/trip/DayCard'
+import { EditableDays } from '../components/trip/EditableDays'
+import { AdjustChat } from '../components/trip/AdjustChat'
+import { RealSearch } from '../components/trip/RealSearch'
+import { TripEssentials } from '../components/trip/TripEssentials'
 import { Button } from '../components/ui/Button'
 import { useNavigation } from '../navigation/NavigationContext'
 import { useAuth } from '../context/AuthContext'
@@ -18,10 +23,10 @@ import { getTrip, updateTrip } from '../lib/trips/repository'
 import { rescheduleActivity, validateSchedule } from '../lib/api/backend'
 import { config } from '../config'
 import { colors, radius } from '../theme'
-import { formatCurrency } from '../lib/utils/format'
 import type {
   Conflict,
   PlanningActivity,
+  PlanningDay,
   PlanningTrip,
 } from '../types/planning'
 
@@ -41,6 +46,9 @@ export function TripDetailScreen({
 
   const [target, setTarget] = useState<PlanningActivity | null>(null)
   const [suggestion, setSuggestion] = useState<PlanningActivity | null>(null)
+  const [editing, setEditing] = useState(false)
+  const [editDias, setEditDias] = useState<PlanningDay[]>([])
+  const [menuOpen, setMenuOpen] = useState(false)
   const [rescheduling, setRescheduling] = useState(false)
 
   const load = useCallback(async () => {
@@ -149,14 +157,46 @@ export function TripDetailScreen({
     setSuggestion(null)
   }, [trip, target, suggestion, pendientes, persist])
 
-  const handleShare = useCallback(() => {
+  const handleAdjusted = useCallback(
+    (updated: PlanningTrip) => {
+      setTrip(updated)
+      persist(updated, pendientes)
+    },
+    [persist, pendientes]
+  )
+
+  const startEditing = useCallback(() => {
+    if (!trip) return
+    setEditDias(trip.dias)
+    setEditing(true)
+  }, [trip])
+
+  const saveEditing = useCallback(() => {
+    if (!trip) return
+    const next: PlanningTrip = { ...trip, dias: editDias }
+    setTrip(next)
+    persist(next, pendientes)
+    setEditing(false)
+  }, [trip, editDias, persist, pendientes])
+
+  // Public read-only link (mirror of the web "Compartir vista" / viaje-compartido).
+  const handleSharePublic = useCallback(() => {
+    if (!trip) return
+    const url = config.webUrl
+      ? `${config.webUrl}/viaje-compartido/${tripId}`
+      : `wayio://viaje-compartido/${tripId}`
+    void Share.share({
+      message: `Mira mi viaje a ${trip.destino} en Wayio: ${url}`,
+    })
+  }, [trip, tripId])
+
+  // Collaborative group-invite link (mirror of the web "Compartir grupo").
+  const handleShareGroup = useCallback(() => {
     if (!grupoLink) return
     const url = config.webUrl
       ? `${config.webUrl}/group/${grupoLink}`
       : `wayio://group/${grupoLink}`
-    void Share.share({
-      message: `Únete a mi viaje en Wayio: ${url}`,
-    })
+    void Share.share({ message: `Únete a mi viaje en Wayio: ${url}` })
   }, [grupoLink])
 
   if (loading) {
@@ -187,48 +227,48 @@ export function TripDetailScreen({
         subtitle={`${trip.personas} pers · ${trip.fechaInicio} → ${trip.fechaFin}`}
       />
       <ScrollView contentContainerStyle={styles.scroll}>
-        {/* Primary actions */}
+        {/* Primary actions: live mode + edit, the rest behind "Más" */}
         <View style={styles.actions}>
           <Button
             title="📍 Modo en vivo (GPS)"
             onPress={() => navigate({ name: 'live', trip })}
             style={styles.actionBtn}
           />
-          <View style={styles.actionRow}>
-            <Button
-              title="👥 Sala grupal"
-              variant="secondary"
-              onPress={() => navigate({ name: 'group', trip, tripId })}
-              style={styles.half}
-            />
-            <Button
-              title="Compartir"
-              variant="secondary"
-              onPress={handleShare}
-              style={styles.half}
-            />
-          </View>
+          {!editing ? (
+            <View style={styles.actionRow}>
+              <Button
+                title="✏️ Editar"
+                variant="secondary"
+                onPress={startEditing}
+                style={styles.half}
+              />
+              <Button
+                title="··· Más"
+                variant="secondary"
+                onPress={() => setMenuOpen(true)}
+                style={styles.half}
+              />
+            </View>
+          ) : null}
         </View>
 
-        {/* Budget */}
-        <View style={styles.budgetRow}>
-          <View style={styles.budgetBox}>
-            <Text style={styles.budgetLabel}>Total</Text>
-            <Text style={styles.budgetValue}>
-              {formatCurrency(trip.presupuestoTotal)}
-            </Text>
-          </View>
-          <View style={styles.budgetBox}>
-            <Text style={styles.budgetLabel}>Por persona</Text>
-            <Text style={styles.budgetValue}>
-              {formatCurrency(trip.presupuestoPorPersona)}
-            </Text>
-          </View>
-        </View>
+        {/* Completa tu viaje: vuelo incluido + add-ons inteligentes */}
+        <TripEssentials trip={trip} />
 
         {trip.resumenViaje ? (
           <Text style={styles.summary}>{trip.resumenViaje}</Text>
         ) : null}
+
+        {/* AI itinerary adjustments ("hazlo más barato"…) */}
+        <AdjustChat trip={trip} onAdjusted={handleAdjusted} />
+
+        {/* Real-time search (hotels / activities / flights) */}
+        <RealSearch
+          destino={trip.destino}
+          fechaInicio={trip.fechaInicio}
+          fechaFin={trip.fechaFin}
+          personas={trip.personas}
+        />
 
         {/* Conflicts */}
         {conflicts.length > 0 ? (
@@ -272,11 +312,37 @@ export function TripDetailScreen({
         ) : null}
 
         {/* Days */}
-        <View style={styles.section}>
-          {trip.dias.map((d) => (
-            <DayCard key={d.numero} day={d} onMarkLost={handleMarkLost} />
-          ))}
-        </View>
+        {editing ? (
+          <View style={styles.section}>
+            <View style={styles.editBar}>
+              <Text style={styles.editHint}>
+                Editando — mueve, edita, borra o añade actividades.
+              </Text>
+              <View style={styles.editActions}>
+                <Button
+                  title="Cancelar"
+                  variant="secondary"
+                  size="sm"
+                  onPress={() => setEditing(false)}
+                  style={styles.half}
+                />
+                <Button
+                  title="Guardar cambios"
+                  size="sm"
+                  onPress={saveEditing}
+                  style={styles.half}
+                />
+              </View>
+            </View>
+            <EditableDays dias={editDias} onChange={setEditDias} />
+          </View>
+        ) : (
+          <View style={styles.section}>
+            {trip.dias.map((d) => (
+              <DayCard key={d.numero} day={d} onMarkLost={handleMarkLost} />
+            ))}
+          </View>
+        )}
 
         {/* Tips */}
         {trip.consejos.length > 0 ? (
@@ -291,6 +357,47 @@ export function TripDetailScreen({
         ) : null}
         <View style={styles.bottom} />
       </ScrollView>
+
+      {/* "Más" action sheet */}
+      <Modal
+        visible={menuOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setMenuOpen(false)}
+      >
+        <TouchableOpacity
+          style={styles.sheetOverlay}
+          activeOpacity={1}
+          onPress={() => setMenuOpen(false)}
+        >
+          <View style={styles.sheet}>
+            <View style={styles.sheetHandle} />
+            <SheetItem
+              label="👥 Sala grupal"
+              onPress={() => {
+                setMenuOpen(false)
+                navigate({ name: 'group', trip, tripId })
+              }}
+            />
+            <SheetItem
+              label="🔗 Compartir vista pública"
+              onPress={() => {
+                setMenuOpen(false)
+                handleSharePublic()
+              }}
+            />
+            {grupoLink ? (
+              <SheetItem
+                label="✉️ Invitar al grupo"
+                onPress={() => {
+                  setMenuOpen(false)
+                  handleShareGroup()
+                }}
+              />
+            ) : null}
+          </View>
+        </TouchableOpacity>
+      </Modal>
 
       {/* Reschedule modal */}
       <Modal
@@ -352,6 +459,20 @@ export function TripDetailScreen({
   )
 }
 
+function SheetItem({
+  label,
+  onPress,
+}: {
+  label: string
+  onPress: () => void
+}): React.ReactElement {
+  return (
+    <TouchableOpacity style={styles.sheetItem} onPress={onPress}>
+      <Text style={styles.sheetItemText}>{label}</Text>
+    </TouchableOpacity>
+  )
+}
+
 function severityStyle(sev: Conflict['severidad']): {
   backgroundColor: string
 } {
@@ -381,20 +502,6 @@ const styles = StyleSheet.create({
   actionBtn: { marginBottom: 10 },
   actionRow: { flexDirection: 'row', gap: 10 },
   half: { flex: 1 },
-  budgetRow: { flexDirection: 'row', gap: 10, marginBottom: 14 },
-  budgetBox: {
-    flex: 1,
-    backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    padding: 12,
-  },
-  budgetLabel: { fontSize: 12, color: colors.textMuted },
-  budgetValue: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: colors.text,
-    marginTop: 2,
-  },
   summary: {
     fontSize: 14,
     color: colors.textMuted,
@@ -402,6 +509,36 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   section: { marginBottom: 4 },
+  editBar: { marginBottom: 12 },
+  editHint: {
+    fontSize: 12,
+    color: colors.textMuted,
+    marginBottom: 8,
+  },
+  editActions: { flexDirection: 'row', gap: 10 },
+  sheetOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(0,0,0,0.4)',
+  },
+  sheet: {
+    backgroundColor: colors.surface,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingHorizontal: 12,
+    paddingTop: 8,
+    paddingBottom: 32,
+  },
+  sheetHandle: {
+    alignSelf: 'center',
+    width: 40,
+    height: 4,
+    borderRadius: 999,
+    backgroundColor: colors.border,
+    marginBottom: 10,
+  },
+  sheetItem: { paddingVertical: 14, paddingHorizontal: 8 },
+  sheetItemText: { fontSize: 15, color: colors.text, fontWeight: '500' },
   conflict: { borderRadius: radius.md, padding: 12, marginBottom: 8 },
   conflictTitle: { fontSize: 13, fontWeight: '700', color: colors.text },
   conflictDesc: { fontSize: 12, color: colors.textMuted, marginTop: 2 },

@@ -93,12 +93,19 @@ export function HomeScreen(): React.ReactElement {
             />
           }
           ListHeaderComponent={
-            <Button
-              title="+ Nuevo viaje"
-              onPress={() => navigate({ name: 'create' })}
-              size="lg"
-              style={styles.newBtn}
-            />
+            <View style={styles.headerActions}>
+              <Button
+                title="+ Nuevo viaje"
+                onPress={() => navigate({ name: 'create' })}
+                size="lg"
+                style={styles.newBtn}
+              />
+              <Button
+                title="🎬 Desde un video"
+                variant="secondary"
+                onPress={() => navigate({ name: 'recreate' })}
+              />
+            </View>
           }
           ListEmptyComponent={
             <View style={styles.empty}>
@@ -163,7 +170,8 @@ const styles = StyleSheet.create({
   signout: { fontSize: 13, color: colors.textFaint },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   list: { padding: 20, paddingTop: 4 },
-  newBtn: { marginBottom: 16 },
+  headerActions: { marginBottom: 16 },
+  newBtn: { marginBottom: 10 },
   empty: { alignItems: 'center', paddingVertical: 60 },
   emptyTitle: { fontSize: 16, fontWeight: '600', color: colors.text },
   emptyText: {

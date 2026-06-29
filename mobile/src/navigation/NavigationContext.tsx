@@ -13,7 +13,8 @@ import type {
 
 export type Route =
   | { name: 'home' }
-  | { name: 'create' }
+  | { name: 'create'; initialDestino?: string }
+  | { name: 'recreate' }
   | { name: 'packages'; result: GenerateResult; form: TripFormValues }
   | { name: 'trip'; tripId: string }
   | { name: 'live'; trip: PlanningTrip }

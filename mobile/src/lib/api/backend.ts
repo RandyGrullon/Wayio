@@ -9,6 +9,7 @@ import type {
   TripFormValues,
   PlanningActivity,
   PlanningDay,
+  PlanningTrip,
   Conflict,
 } from '../../types/planning'
 
@@ -30,6 +31,33 @@ export function generateTrip(form: TripFormValues): Promise<GenerateResult> {
   return postJSON<GenerateResult>('/api/generate', form)
 }
 
+export interface VideoPlace {
+  lugar: string
+  pais?: string
+  region?: string
+  tipo?: string
+  actividades?: string[]
+  confianza?: number
+}
+
+export interface VideoAnalysisResult {
+  lugares: VideoPlace[]
+  destinoSugerido: string
+  resumen: string
+}
+
+/**
+ * Analyze a travel video by URL (TikTok / Reels / YouTube…) and get the
+ * suggested destination to pre-fill a new trip. Mirrors the web "Desde un
+ * video" flow → `/api/analyze-video`. Without an AI key the backend returns a
+ * demo result, so this never hard-fails on a missing key.
+ */
+export function analyzeVideoUrl(
+  videoUrl: string
+): Promise<VideoAnalysisResult> {
+  return postJSON<VideoAnalysisResult>('/api/analyze-video', { videoUrl })
+}
+
 /** Ask the AI to reschedule a lost activity. Requires the trip to be saved. */
 export async function rescheduleActivity(
   activityId: string,
@@ -45,6 +73,28 @@ export async function rescheduleActivity(
   } catch {
     return null
   }
+}
+
+/**
+ * Ask the AI to adjust an existing itinerary ("hazlo más barato", "añade un día
+ * de playa"…). Returns the full rewritten trip, or throws on a backend error so
+ * the caller can show the message. Mirrors the web `AdjustChat` → `/api/adjust`.
+ */
+export async function adjustTrip(
+  trip: PlanningTrip,
+  instruccion: string
+): Promise<PlanningTrip> {
+  assertBackendConfigured()
+  const res = await fetch(`${config.apiUrl}/api/adjust`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ trip, instruccion }),
+  })
+  const data = (await res.json()) as { trip?: PlanningTrip; error?: string }
+  if (!res.ok || !data.trip) {
+    throw new Error(data.error ?? 'No se pudo ajustar el itinerario.')
+  }
+  return data.trip
 }
 
 /** Validate a day list for schedule conflicts. */

@@ -9,7 +9,11 @@ import { generateTrip } from '../lib/api/backend'
 import { colors } from '../theme'
 import type { TripFormValues } from '../types/planning'
 
-export function CreateTripScreen(): React.ReactElement {
+export function CreateTripScreen({
+  initialDestino,
+}: {
+  initialDestino?: string
+} = {}): React.ReactElement {
   const { navigate } = useNavigation()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -36,7 +40,10 @@ export function CreateTripScreen(): React.ReactElement {
       <ScreenHeader title="Nuevo viaje" subtitle="Planifica con IA" />
       {error ? <Text style={styles.error}>{error}</Text> : null}
       <View style={styles.body}>
-        <TripForm onSubmit={(f) => void handleSubmit(f)} />
+        <TripForm
+          {...(initialDestino ? { initial: { destino: initialDestino } } : {})}
+          onSubmit={(f) => void handleSubmit(f)}
+        />
       </View>
     </SafeAreaView>
   )
