@@ -18,9 +18,9 @@ export async function GET(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
   }
 
-  const results = await searchActivities(
+  const response = await searchActivities(
     parsed.data.destination,
     parsed.data.date
   )
-  return NextResponse.json({ results })
+  return NextResponse.json(response)
 }

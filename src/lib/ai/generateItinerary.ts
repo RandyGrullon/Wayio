@@ -16,6 +16,37 @@ const PAQUETE_INSTRUCCIONES: Record<TripForm['paquete'], string> = {
     'PAQUETE PREMIUM: hoteles 5 estrellas o boutique de lujo, vuelo en clase business o primera, tours privados, restaurantes top (mínimo 2 por viaje), traslados en vehículo privado.',
 }
 
+/**
+ * Bloque que pide a la IA, en la MISMA generación, variantes por tier para cada
+ * actividad sustituible (no traslados). Así los tres paquetes difieren en el TIPO
+ * de hotel/experiencia (no solo en precio escalado) con una sola llamada.
+ *
+ * El coste extra es modesto: el modelo solo añade 2 alternativas cortas por
+ * actividad pagada (nombre + descripción breve + precio), no tres itinerarios.
+ */
+const VARIANTES_INSTRUCCION = `
+VARIANTES POR PAQUETE (CLAVE — GENERA LOS 3 NIVELES DE UNA VEZ):
+La actividad principal de cada item representa el nivel CONFORT (gama media).
+Para cada actividad SUSTITUIBLE (alojamiento, restaurantes, tours, experiencias
+de pago; NO los traslados ni los lugares públicos gratuitos que son iguales en
+todos los niveles), añade el campo "variantesTier" con alternativas reales y
+DISTINTAS EN TIPO, no solo en precio:
+- "basico": opción más económica y sencilla (hostal/hotel 3*, comida local
+  barata, tour en grupo o actividad gratuita equivalente). Suele costar menos.
+- "premium": opción de lujo y exclusiva (hotel 5*/boutique, restaurante top,
+  tour privado o experiencia premium). Suele costar más.
+Cada variante debe ser un lugar/experiencia REAL y plausible en la misma zona,
+con su propio nombre, descripción y precio. Si un item no tiene alternativa
+razonable por nivel (p. ej. un mirador gratuito o un traslado), OMITE
+"variantesTier" en ese item.`
+
+/** Estructura JSON del campo opcional variantesTier dentro de cada actividad. */
+const VARIANTES_SCHEMA = `,
+          "variantesTier": {
+            "basico": { "nombre": string, "descripcion": string, "tipo": "museo|restaurante|templo|parque|barrio|playa|actividad", "precioEstimado": number, "reservaRequerida": boolean },
+            "premium": { "nombre": string, "descripcion": string, "tipo": "museo|restaurante|templo|parque|barrio|playa|actividad", "precioEstimado": number, "reservaRequerida": boolean }
+          }`
+
 export function buildItineraryPrompt(
   form: TripForm,
   context: ItineraryContext = {}
@@ -58,6 +89,7 @@ DATOS DEL VIAJE:
 
 INSTRUCCIONES DE PAQUETE:
 ${paqueteInstruccion}
+${VARIANTES_INSTRUCCION}
 
 REGLAS CRITICAS DE OPTIMIZACION DE RUTA:
 1. NUNCA volver a un lugar ya visitado.
@@ -146,7 +178,7 @@ EL JSON DEBE SEGUIR EXACTAMENTE ESTA ESTRUCTURA:
           "estado": "pendiente",
           "esPerdida": false,
           "puertoCrucero": boolean,
-          "tiempoEmbarqueMinutos": number
+          "tiempoEmbarqueMinutos": number${VARIANTES_SCHEMA}
         }
       ]
     }

@@ -23,6 +23,6 @@ export async function GET(request: Request): Promise<NextResponse> {
   }
 
   const { origin, destination, date, adults } = parsed.data
-  const results = await searchFlights(origin, destination, date, adults)
-  return NextResponse.json({ results })
+  const response = await searchFlights(origin, destination, date, adults)
+  return NextResponse.json(response)
 }

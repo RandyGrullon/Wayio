@@ -23,6 +23,6 @@ export async function GET(request: Request): Promise<NextResponse> {
   }
 
   const { destination, checkIn, checkOut, guests } = parsed.data
-  const results = await searchHotels(destination, checkIn, checkOut, guests)
-  return NextResponse.json({ results })
+  const response = await searchHotels(destination, checkIn, checkOut, guests)
+  return NextResponse.json(response)
 }

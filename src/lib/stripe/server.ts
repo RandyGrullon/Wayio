@@ -16,3 +16,12 @@ export function getStripe(): Stripe {
 export function getStripePriceId(env: string): string {
   return requireEnv(env)
 }
+
+/**
+ * Returns true when the Stripe secret key is present in the environment.
+ * Use this to degrade gracefully (return `{ configured: false }`) instead of
+ * throwing when Stripe is not configured.
+ */
+export function isStripeConfigured(): boolean {
+  return Boolean(process.env['STRIPE_SECRET_KEY'])
+}

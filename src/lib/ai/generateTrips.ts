@@ -182,15 +182,74 @@ async function generatePackage(
   }
 }
 
-// Multiplicador de gasto relativo de cada tier. Se usa para derivar los tiers
-// que no genera la IA, escalando el presupuesto del tier base.
-const TIER_FACTOR: Record<'basico' | 'confort' | 'premium', number> = {
+type Tier = 'basico' | 'confort' | 'premium'
+
+/**
+ * Variante por tier que la IA adjunta a cada actividad sustituible en la MISMA
+ * generación. Permite que cada paquete tenga hoteles/restaurantes/experiencias
+ * genuinamente distintos (no solo precio escalado). Es opcional: si falta (modelo
+ * pequeño, demo o caché antigua) caemos al escalado de precio de siempre.
+ */
+interface TierVariant {
+  nombre?: string
+  descripcion?: string
+  tipo?: Activity['tipo']
+  precioEstimado?: number
+  reservaRequerida?: boolean
+}
+
+/** Actividad tal como llega de la IA: igual que Activity + variantes opcionales. */
+type ActivityWithVariants = Activity & {
+  variantesTier?: Partial<Record<'basico' | 'premium', TierVariant>>
+}
+
+/** Quita el campo transitorio variantesTier antes de exponer la actividad. */
+function stripVariants(act: ActivityWithVariants): Activity {
+  if (!act.variantesTier) return act
+  const { variantesTier: _omit, ...rest } = act
+  void _omit
+  return rest
+}
+
+/** Aplica (si existe) la variante del tier a una actividad y la limpia. */
+function applyVariant(
+  act: ActivityWithVariants,
+  target: Tier,
+  ratio: number
+): Activity {
+  const variant = target === 'confort' ? undefined : act.variantesTier?.[target]
+  const base = stripVariants(act)
+  if (act.tipo === 'traslado' || !variant) {
+    // Sin variante real → comportamiento clásico: escalar solo el precio.
+    return { ...base, precioEstimado: Math.round(base.precioEstimado * ratio) }
+  }
+  // El link de afiliado cambia con el lugar: se quita aquí y deriveTier lo
+  // recalcula a partir del nuevo nombre.
+  const { linkAfiliado: _drop, ...sinLink } = base
+  void _drop
+  return {
+    ...sinLink,
+    nombre: variant.nombre ?? base.nombre,
+    descripcion: variant.descripcion ?? base.descripcion,
+    tipo: variant.tipo ?? base.tipo,
+    reservaRequerida: variant.reservaRequerida ?? base.reservaRequerida,
+    precioEstimado:
+      typeof variant.precioEstimado === 'number'
+        ? Math.round(variant.precioEstimado)
+        : Math.round(base.precioEstimado * ratio),
+  }
+}
+
+// Multiplicador de gasto relativo de cada tier. Se usa como fallback para
+// derivar los tiers cuando la IA no devolvió variantes reales (modelo pequeño,
+// demo o caché antigua), escalando el presupuesto del tier base.
+const TIER_FACTOR: Record<Tier, number> = {
   basico: 0.65,
   confort: 1,
   premium: 1.9,
 }
 
-const TIER_NOTA: Record<'basico' | 'confort' | 'premium', string> = {
+const TIER_NOTA: Record<Tier, string> = {
   basico:
     'Versión económica: alojamiento sencillo y actividades de bajo costo.',
   confort: 'Versión equilibrada: buen confort y mezcla de experiencias.',
@@ -198,34 +257,97 @@ const TIER_NOTA: Record<'basico' | 'confort' | 'premium', string> = {
 }
 
 /**
- * Deriva un tier a partir de otro ya generado, escalando los precios. Evita una
- * segunda llamada de IA (clave en planes gratuitos con límite por minuto) y
- * mantiene el mismo destino/actividades, solo ajusta el nivel de gasto.
+ * Deriva un tier a partir del tier CONFORT generado por la IA. Si la IA adjuntó
+ * variantesTier (hoteles/actividades reales por nivel), las aplica para que cada
+ * paquete difiera en el TIPO de experiencia, no solo en precio. Cuando no hay
+ * variantes, cae al escalado de precio clásico. En ambos casos evita una segunda
+ * llamada de IA (clave en planes gratuitos con límite por minuto).
+ *
+ * `base` debe ser el trip CONFORT (las variantes están relativas a ese nivel).
  */
-function deriveTier(
-  base: Trip,
-  baseTier: 'basico' | 'confort' | 'premium',
-  target: 'basico' | 'confort' | 'premium'
-): Trip {
-  const ratio = TIER_FACTOR[target] / TIER_FACTOR[baseTier]
+function deriveTier(base: Trip, target: Tier): Trip {
+  const ratio = TIER_FACTOR[target] / TIER_FACTOR.confort
   const round = (n: number): number => Math.round(n)
-  const dias = base.dias.map((d) => ({
-    ...d,
-    presupuestoDia: round(d.presupuestoDia * ratio),
-    actividades: d.actividades.map((a) => ({
-      ...a,
-      precioEstimado: round(a.precioEstimado * ratio),
-    })),
-  }))
+
+  const dias = base.dias.map((d) => {
+    let dayHasVariant = false
+    const actividades = (d.actividades as ActivityWithVariants[]).map((a) => {
+      const before = a.nombre
+      const swapped = applyVariant(a, target, ratio)
+      if (swapped.nombre !== before) dayHasVariant = true
+      // Reasignar link de afiliado si la actividad cambió de lugar.
+      return swapped.tipo !== 'traslado' && !swapped.linkAfiliado
+        ? {
+            ...swapped,
+            linkAfiliado: buildViatorLink(swapped.nombre, d.ciudad),
+          }
+        : swapped
+    })
+    // Si el día tuvo swaps reales, recomputar su presupuesto desde los precios
+    // reales de las variantes; si no, escalar como antes.
+    const presupuestoDia = dayHasVariant
+      ? actividades.reduce((s, x) => s + (x.precioEstimado || 0), 0)
+      : round(d.presupuestoDia * ratio)
+    return { ...d, presupuestoDia, actividades }
+  })
+
+  // El total siempre es la suma de los días: coherente con o sin variantes.
+  const presupuestoTotal = dias.reduce((s, d) => s + d.presupuestoDia, 0)
+  const personas = base.personas || 1
+
   return {
     ...base,
     id: crypto.randomUUID(),
     paquete: target,
-    presupuestoTotal: round(base.presupuestoTotal * ratio),
-    presupuestoPorPersona: round(base.presupuestoPorPersona * ratio),
+    presupuestoTotal,
+    presupuestoPorPersona: round(presupuestoTotal / personas),
     resumenViaje: `${TIER_NOTA[target]} ${base.resumenViaje}`,
     dias,
   }
+}
+
+/** Escala todos los importes de un trip por `factor` (sube o baja). */
+function scaleTripMoney(trip: Trip, factor: number): Trip {
+  if (!Number.isFinite(factor) || factor <= 0 || factor === 1) return trip
+  const r = (n: number): number => Math.round(n)
+  return {
+    ...trip,
+    presupuestoTotal: r(trip.presupuestoTotal * factor),
+    presupuestoPorPersona: r(trip.presupuestoPorPersona * factor),
+    dias: trip.dias.map((d) => ({
+      ...d,
+      presupuestoDia: r(d.presupuestoDia * factor),
+      actividades: d.actividades.map((a) => ({
+        ...a,
+        precioEstimado: r(a.precioEstimado * factor),
+      })),
+    })),
+  }
+}
+
+/**
+ * Garantiza que el precio crezca con el tier: básico ≤ confort ≤ premium.
+ * Las variantesTier de la IA pueden no ser monótonas (un premium con precios
+ * más bajos que el confort), lo que confunde al usuario. Mantenemos CONFORT como
+ * ancla (es el plan real de la IA) y reescalamos básico/premium solo si quedaron
+ * fuera de orden.
+ */
+function enforceTierOrder(t: Record<Tier, Trip>): Record<Tier, Trip> {
+  let { basico, premium } = t
+  const { confort } = t
+  const cTotal = confort.presupuestoTotal
+  if (cTotal > 0) {
+    if (basico.presupuestoTotal >= cTotal) {
+      basico = scaleTripMoney(basico, (cTotal * 0.8) / basico.presupuestoTotal)
+    }
+    if (premium.presupuestoTotal <= cTotal * 1.2) {
+      premium = scaleTripMoney(
+        premium,
+        (cTotal * 1.35) / premium.presupuestoTotal
+      )
+    }
+  }
+  return { basico, confort, premium }
 }
 
 /**
@@ -275,21 +397,26 @@ export async function generateTrips(
       : null,
   }
 
-  const baseTier = form.paquete
-
   try {
     emit('ia', 'La IA está armando las 3 versiones de tu viaje')
-    const base = await generatePackage(form, baseTier, context)
+    // Generamos siempre el nivel CONFORT como base: la IA adjunta variantesTier
+    // (básico/premium) ancladas a ese punto medio, y de ahí derivamos los 3.
+    const base = await generatePackage(
+      { ...form, paquete: 'confort' },
+      'confort',
+      context
+    )
     // Afinar coordenadas reales de los lugares clave antes de derivar tiers.
     emit('coords', 'Afinando las coordenadas reales de los lugares')
     await geocodeKeyActivities(base)
-    const tiers = (['basico', 'confort', 'premium'] as const).reduce(
+    const rawTiers = (['basico', 'confort', 'premium'] as const).reduce(
       (acc, t) => {
-        acc[t] = t === baseTier ? base : deriveTier(base, baseTier, t)
+        acc[t] = deriveTier(base, t)
         return acc
       },
-      {} as Record<'basico' | 'confort' | 'premium', Trip>
+      {} as Record<Tier, Trip>
     )
+    const tiers = enforceTierOrder(rawTiers)
     const result: GenerateResult = { ...tiers, weather }
     await saveCachedTrip(form, JSON.stringify(result))
     emit('listo', '¡Tu viaje está listo!')
