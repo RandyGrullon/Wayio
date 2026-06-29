@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, lazy, Suspense } from 'react'
 import {
   View,
   Text,
@@ -7,13 +7,20 @@ import {
   StyleSheet,
   SafeAreaView,
   TouchableOpacity,
+  ActivityIndicator,
 } from 'react-native'
 import * as Notifications from 'expo-notifications'
 import { ActivityCard } from '../components/ActivityCard'
 import { OfflineIndicator } from '../components/OfflineIndicator'
 import { AlertOverlay } from '../components/alerts/AlertOverlay'
 import { ReschedulePanel } from '../components/ReschedulePanel'
-import { MapScreen } from './MapScreen'
+import { ErrorBoundary } from '../components/ErrorBoundary'
+
+// Lazy so the native Mapbox module is only evaluated when the map tab is opened
+// on a dev build. In Expo Go (no native module) the ErrorBoundary shows a hint.
+const MapScreen = lazy(() =>
+  import('./MapScreen').then((m) => ({ default: m.MapScreen }))
+)
 import { useLocation } from '../hooks/useLocation'
 import { useGeofencing } from '../hooks/useGeofencing'
 import { useOfflineSync } from '../hooks/useOfflineSync'
@@ -31,6 +38,7 @@ import {
 import type { Trip } from '../types/trip'
 import type { Activity } from '../types/activity'
 import type { RescheduleOption } from '../types/alert'
+import type { UserLocation } from '../types/geofencing'
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -61,12 +69,16 @@ export function TripScreen({
 
   const { location, isTracking } = useLocation()
   const offlineSync = useOfflineSync()
+  // Dev-only: fake "arriving" at an activity to test geofencing/alerts in Expo
+  // Go without real GPS movement. Overrides the live location when set.
+  const [simulated, setSimulated] = useState<UserLocation | null>(null)
+  const effectiveLocation = simulated ?? location
 
   const tripActivities: Activity[] =
     trip?.dias.flatMap((d) => d.actividades) ?? []
 
   const { activities, recentEvents } = useGeofencing(
-    location,
+    effectiveLocation,
     trip?.id ?? '',
     tripActivities
   )
@@ -238,13 +250,38 @@ export function TripScreen({
       </View>
 
       {activeTab === 'map' ? (
-        <MapScreen
-          activities={activities}
-          userLocation={location}
-          isCrucero={trip.isCrucero}
-        />
+        <ErrorBoundary fallback={<MapUnavailable />}>
+          <Suspense
+            fallback={
+              <View style={styles.mapLoading}>
+                <ActivityIndicator color="#2563EB" />
+              </View>
+            }
+          >
+            <MapScreen
+              activities={activities}
+              userLocation={effectiveLocation}
+              isCrucero={trip.isCrucero}
+            />
+          </Suspense>
+        </ErrorBoundary>
       ) : (
         <ScrollView style={styles.list}>
+          {__DEV__ ? (
+            <SimulatePanel
+              activities={tripActivities}
+              simulating={simulated !== null}
+              onSimulate={(a) =>
+                setSimulated({
+                  lat: a.lat,
+                  lng: a.lng,
+                  accuracy: 5,
+                  timestamp: new Date(),
+                })
+              }
+              onClear={() => setSimulated(null)}
+            />
+          ) : null}
           {activities.map((activity, i) => (
             <ActivityCard key={activity.id} activity={activity} index={i} />
           ))}
@@ -280,6 +317,73 @@ export function TripScreen({
         </View>
       </Modal>
     </SafeAreaView>
+  )
+}
+
+/** Shown in Expo Go where the native map can't load. */
+function MapUnavailable(): React.ReactElement {
+  return (
+    <View style={styles.mapUnavailable}>
+      <Text style={styles.mapUnavailableEmoji}>🗺️</Text>
+      <Text style={styles.mapUnavailableTitle}>
+        El mapa en vivo necesita un dev build
+      </Text>
+      <Text style={styles.mapUnavailableText}>
+        (emulador Android o EAS). El seguimiento por GPS y las alertas funcionan
+        igual — usa la pestaña Lista.
+      </Text>
+    </View>
+  )
+}
+
+/**
+ * Dev-only helper: tap an activity to fake "arriving" there, which fires the
+ * geofence enter event and its alert — lets you test live tracking in Expo Go
+ * without moving (or a Tokyo trip).
+ */
+function SimulatePanel({
+  activities,
+  simulating,
+  onSimulate,
+  onClear,
+}: {
+  activities: Activity[]
+  simulating: boolean
+  onSimulate: (a: Activity) => void
+  onClear: () => void
+}): React.ReactElement {
+  const located = activities.filter((a) => a.lat !== 0 || a.lng !== 0)
+  return (
+    <View style={styles.simPanel}>
+      <View style={styles.simHeader}>
+        <Text style={styles.simTitle}>🧪 Simular ubicación (dev)</Text>
+        {simulating ? (
+          <TouchableOpacity onPress={onClear} hitSlop={6}>
+            <Text style={styles.simClear}>Usar GPS real</Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
+      <Text style={styles.simHint}>
+        Toca una actividad para fingir que llegas y disparar el geofencing.
+      </Text>
+      <View style={styles.simChips}>
+        {located.length === 0 ? (
+          <Text style={styles.simEmpty}>
+            Las actividades aún no tienen coordenadas.
+          </Text>
+        ) : (
+          located.map((a) => (
+            <TouchableOpacity
+              key={a.id}
+              style={styles.simChip}
+              onPress={() => onSimulate(a)}
+            >
+              <Text style={styles.simChipText}>📍 {a.nombre}</Text>
+            </TouchableOpacity>
+          ))
+        )}
+      </View>
+    </View>
   )
 }
 
@@ -347,6 +451,54 @@ const styles = StyleSheet.create({
   tabTextActive: { color: '#2563EB', fontWeight: '700' },
   list: { flex: 1 },
   listBottom: { height: 24 },
+  mapLoading: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  mapUnavailable: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 32,
+    gap: 6,
+  },
+  mapUnavailableEmoji: { fontSize: 44 },
+  mapUnavailableTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#111827',
+    textAlign: 'center',
+  },
+  mapUnavailableText: {
+    fontSize: 13,
+    color: '#6B7280',
+    textAlign: 'center',
+    lineHeight: 19,
+  },
+  simPanel: {
+    backgroundColor: '#EFF6FF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    padding: 12,
+    margin: 12,
+  },
+  simHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  simTitle: { fontSize: 13, fontWeight: '700', color: '#1E3A8A' },
+  simClear: { fontSize: 12, fontWeight: '600', color: '#2563EB' },
+  simHint: { fontSize: 12, color: '#3B5BA5', marginTop: 2, marginBottom: 8 },
+  simChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  simEmpty: { fontSize: 12, color: '#6B7280' },
+  simChip: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  simChipText: { fontSize: 12, color: '#1D4ED8', fontWeight: '600' },
   rescheduleOverlay: {
     flex: 1,
     justifyContent: 'flex-end',
