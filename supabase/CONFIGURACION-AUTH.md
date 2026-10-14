@@ -1,18 +1,19 @@
 # Configuración de Supabase — Login y Register (web + mobile)
 
-> Guía paso a paso para dejar funcionando el registro e inicio de sesión de
-> Wayio, tanto en la **web** (Next.js) como en la **app mobile** (Expo), con los
-> **correos HTML** ya personalizados.
+> Guía paso a paso para dejar funcionando el registro, el inicio de sesión, la
+> recuperación de contraseña y el enlace mágico de Wayio, tanto en la **web**
+> (Next.js) como en la **app mobile** (Expo), con los **correos HTML**
+> personalizados.
 
 Todo lo de esta guía se hace **una vez** por proyecto. Los archivos a los que se
 refiere están en esta carpeta `supabase/`:
 
-| Archivo            | Para qué sirve                                            |
-| ------------------ | --------------------------------------------------------- |
-| `schema.sql`       | Esquema completo (pegar todo en el SQL Editor de una vez) |
-| `migrations/*.sql` | Lo mismo, pero versionado para `supabase db push`         |
-| `templates/*.html` | Los 6 correos de autenticación, con la marca Wayio        |
-| `config.toml`      | Config del stack local + plantillas (Supabase CLI)        |
+| Archivo            | Para qué sirve                                                     |
+| ------------------ | ------------------------------------------------------------------ |
+| `schema.sql`       | Esquema completo (pegar todo en el SQL Editor de una vez)          |
+| `migrations/*.sql` | Lo mismo, pero versionado para `supabase db push`                  |
+| `templates/*.html` | Los 6 correos de autenticación, con la marca Wayio                 |
+| `config.toml`      | Config del **stack local** de la CLI (`supabase start`), no hosted |
 
 ---
 
@@ -28,7 +29,11 @@ Define tus dominios:
 
 - Web producción: `https://wayio.app` (cámbialo por el tuyo)
 - Web local: `http://localhost:3000`
-- Deep link mobile: `wayio://` (esquema de la app Expo)
+- Deep link mobile: `wayio://` (ya declarado en `mobile/app.json`)
+
+> Recomendado: usa **un proyecto de Supabase para desarrollo y otro para
+> producción**. Así las URLs de `localhost` nunca están permitidas en
+> producción.
 
 ---
 
@@ -44,29 +49,25 @@ Tienes **dos formas equivalentes**; elige una.
 
 Esto crea todas las tablas + RLS + el trigger `on_auth_user_created`, que al
 registrarse genera automáticamente: **perfil**, **suscripción `free`** y
-**código de referido**. Así la pantalla de la app no se queda sin datos.
+**código de referido**.
 
 ### Opción B — Con la CLI (versionado, recomendado para el equipo)
 
 ```bash
-npm i -g supabase            # o: npx supabase ...
-supabase link --project-ref <TU_PROJECT_REF>
-supabase db push             # aplica supabase/migrations/ en orden
+npx supabase link --project-ref <TU_PROJECT_REF>
+npx supabase db push         # aplica supabase/migrations/ en orden
 ```
 
-Las migraciones se aplican por nombre (timestamp) en orden:
+> `db push` **solo aplica migraciones**. No sube las plantillas de correo, ni
+> las URLs, ni nada de la sección `[auth]` de `config.toml`: eso se configura
+> en el panel (secciones 2 a 5).
 
-1. `20260101000000_initial_schema.sql` — todo el esquema base.
-2. `20260627120000_auth_signup_provisioning.sql` — aprovisionamiento al
-   registrarse (suscripción `free` + referido) y backfill de los usuarios que ya
-   existían.
-
-> Para futuros cambios: crea un archivo nuevo en `migrations/` con un timestamp
-> mayor y vuelve a `supabase db push`. **No edites** migraciones ya aplicadas.
+Para futuros cambios: crea un archivo nuevo en `migrations/` con un timestamp
+mayor y vuelve a `db push`. **No edites** migraciones ya aplicadas.
 
 ### Hazte admin (opcional)
 
-Al final de `schema.sql` hay una línea comentada. Tras registrarte una vez:
+Tras registrarte una vez:
 
 ```sql
 update public.profiles set role = 'admin' where email = 'tu-email@ejemplo.com';
@@ -78,130 +79,180 @@ update public.profiles set role = 'admin' where email = 'tu-email@ejemplo.com';
 
 Supabase → **Authentication → URL Configuration**:
 
-- **Site URL:** `https://wayio.app` (en local: `http://localhost:3000`)
-- **Redirect URLs** (añade todas las que uses):
+- **Site URL:** `https://wayio.app` (en el proyecto de desarrollo:
+  `http://localhost:3000`). Las plantillas la usan como `{{ .SiteURL }}`, así
+  que **todos los enlaces de los correos apuntan aquí**.
+- **Redirect URLs** (añade todas; los `**` cubren `?next=...`):
 
   ```
-  http://localhost:3000/auth/callback
-  https://wayio.app/auth/callback
-  wayio://auth/callback
+  https://wayio.app/**
+  wayio://**
   ```
 
-La web intercambia el `code` por sesión en `src/app/auth/callback/route.ts`.
-El esquema `wayio://` es para que el correo abra la **app** en el móvil
-(ver sección 6). Si una URL no está en esta lista, Supabase **rechaza** la
-redirección y verás `?error=auth`.
+  En el proyecto de desarrollo, en su lugar:
+
+  ```
+  http://localhost:3000/**
+  wayio://**
+  ```
+
+  Si usas previews de Vercel, añade también su patrón, por ejemplo
+  `https://*-tu-equipo.vercel.app/**`.
+
+Rutas de la web que intervienen (todas ya implementadas):
+
+| Ruta                | Qué hace                                                                                        |
+| ------------------- | ----------------------------------------------------------------------------------------------- |
+| `/auth/callback`    | Vuelta de **Google**: canjea el `code` y lleva a `next` (validado).                             |
+| `/auth/confirm`     | Destino de **todos los correos**: `verifyOtp(token_hash, type)` y redirige a `next` (validado). |
+| `/auth/recuperar`   | Formulario "¿Olvidaste tu contraseña?".                                                         |
+| `/auth/nueva-clave` | Elegir contraseña nueva (solo con la sesión del enlace de recuperación o invitación).           |
+| `/auth/abrir-app`   | Puente para correos pedidos **desde la app**: abre `wayio://auth/callback` con el token.        |
+
+Si una URL no está en la lista, Supabase **ignora** el destino pedido y usa la
+Site URL.
 
 ---
 
 ## 3. Correos personalizados (HTML de Wayio)
 
-Las plantillas están en `supabase/templates/` con la marca (teal `#14b8a6`),
-listas para usar. Hay dos maneras de instalarlas.
+Las plantillas de `supabase/templates/` ya **no usan `{{ .ConfirmationURL }}`**:
+enlazan a `{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=...`.
+Así la confirmación funciona **aunque el correo se abra en otro dispositivo o
+navegador** (el canje PKCE clásico solo funciona en el mismo navegador).
 
-### Opción A — Dashboard (proyecto hosted)
+### Instalación en el proyecto hosted — panel (obligatorio)
 
 Supabase → **Authentication → Emails → Templates**. Para cada tipo, pega el
-contenido del archivo correspondiente y ajusta el asunto:
+contenido completo del archivo y pon el asunto:
 
-| Tipo en el Dashboard | Archivo                           | Asunto sugerido                       |
-| -------------------- | --------------------------------- | ------------------------------------- |
-| Confirm signup       | `templates/confirmation.html`     | Confirma tu cuenta en Wayio ✈️        |
-| Magic Link           | `templates/magic_link.html`       | Tu enlace de acceso a Wayio 🔑        |
-| Reset Password       | `templates/recovery.html`         | Restablece tu contraseña de Wayio 🔒  |
-| Invite user          | `templates/invite.html`           | Te invitaron a Wayio 🌍               |
-| Change Email Address | `templates/email_change.html`     | Confirma tu nuevo email en Wayio ✉️   |
-| Reauthentication     | `templates/reauthentication.html` | Tu código de verificación de Wayio 🛡️ |
+| Tipo en el panel     | Archivo                           | Asunto                                | Enlace que lleva                               |
+| -------------------- | --------------------------------- | ------------------------------------- | ---------------------------------------------- |
+| Confirm signup       | `templates/confirmation.html`     | Confirma tu cuenta en Wayio ✈️        | `type=email&next={{ .RedirectTo }}`            |
+| Magic Link           | `templates/magic_link.html`       | Tu enlace de acceso a Wayio 🔑        | `type=email&next={{ .RedirectTo }}`            |
+| Reset Password       | `templates/recovery.html`         | Restablece tu contraseña de Wayio 🔒  | `type=recovery&next=/auth/nueva-clave`         |
+| Invite user          | `templates/invite.html`           | Te invitaron a Wayio 🌍               | `type=invite&next=/auth/nueva-clave`           |
+| Change Email Address | `templates/email_change.html`     | Confirma tu nuevo email en Wayio ✉️   | `type=email_change&next={{ .RedirectTo }}`     |
+| Reauthentication     | `templates/reauthentication.html` | Tu código de verificación de Wayio 🛡️ | (sin enlace: muestra el código `{{ .Token }}`) |
 
 Variables que usan las plantillas (las rellena Supabase):
 
-- `{{ .ConfirmationURL }}` — enlace de acción (confirmar / reset / magic link).
-- `{{ .Token }}` — código OTP de 6 dígitos (en reauthentication).
+- `{{ .SiteURL }}` — la Site URL de la sección 2.
+- `{{ .TokenHash }}` — el token del enlace (lo verifica `/auth/confirm`).
+- `{{ .RedirectTo }}` — el destino que pidió la web o la app (por ejemplo
+  `https://wayio.app/auth/confirm?next=/group/abc` o `wayio://auth/callback`).
+  La web lo valida: solo acepta rutas de su propio dominio o el deep link de
+  la app; cualquier otra cosa termina en `/`.
+- `{{ .Token }}` — código de 6 dígitos (reauthentication).
 - `{{ .Email }}` / `{{ .NewEmail }}` — en el cambio de email.
 
-### Opción B — CLI (`config.toml`)
+> Si no pegas las plantillas, Supabase usa las suyas (en inglés, con
+> `{{ .ConfirmationURL }}`). La web sigue funcionando en el mismo navegador,
+> pero no entre dispositivos, y la recuperación pedida desde la app falla.
 
-`supabase/config.toml` ya apunta a cada plantilla con su `content_path` y
-`subject`. Con `supabase db push` / `supabase start` se aplican solas. En local,
-los correos se capturan en **Inbucket**: <http://localhost:54324>.
+### Stack local — CLI
+
+`supabase/config.toml` apunta a cada plantilla con `content_path` y `subject`.
+Se aplican **solo** con `npx supabase start` (stack local); los correos se ven
+en **Inbucket**: <http://localhost:54324>.
+
+> Existe `npx supabase config push`, pero sube **todo** el `[auth]` de
+> `config.toml` (incluida `site_url = http://localhost:3000`) al proyecto
+> hosted. No lo uses contra producción: pega las plantillas en el panel.
+
+### Aviso: escáneres de enlaces
+
+Algunos filtros de correo corporativos (por ejemplo Safe Links de Outlook)
+abren los enlaces antes que el usuario y gastan el token. Si alguien dice que
+el enlace "ya caducó" nada más recibirlo, que pida otro o que use el inicio de
+sesión con contraseña.
 
 ---
 
-## 4. Ajustes de email/password
+## 4. Ajustes de email/password y SMTP
 
 Supabase → **Authentication → Providers → Email**:
 
 - **Enable Email provider:** ON.
-- **Confirm email:** ON (recomendado en producción). El usuario debe confirmar
-  antes de poder iniciar sesión. La web ya muestra _"Revisa tu email para
-  confirmar"_ tras registrarse, y la app mobile también.
-- **Minimum password length:** 6 (el formulario ya valida `minLength=6`).
+- **Confirm email:** ON. El usuario confirma antes de poder iniciar sesión. Si
+  intenta entrar sin confirmar, la web le ofrece **reenviar el correo**.
+- **Secure email change:** ON (confirma en el correo viejo y en el nuevo).
+- **Secure password change:** ON.
+- **Minimum password length:** **8** (la web y la app exigen 8 en cuentas
+  nuevas; las cuentas antiguas con 6 siguen entrando).
 
-> **SMTP propio (producción):** el SMTP de Supabase tiene un límite bajo y baja
-> entregabilidad. Para producción configura un SMTP en **Authentication →
-> Emails → SMTP Settings** (p. ej. Resend, SendGrid o Postmark) con tu dominio
-> verificado. Así los correos HTML llegan bien y no a spam.
+### SMTP propio (necesario en producción) — Resend
+
+El SMTP incluido en Supabase solo envía unos pocos correos por hora y suele
+caer en spam: con él, el registro y la recuperación se bloquean enseguida.
+
+1. Crea una cuenta en [resend.com](https://resend.com) (plan gratis: ~3.000
+   correos/mes, 100/día).
+2. **Domains → Add domain**: añade tu dominio (p. ej. `wayio.app`) y crea en tu
+   DNS los registros que te muestra (SPF/DKIM). Espera a que quede **Verified**.
+3. **API Keys → Create API key** (permiso _Sending access_).
+4. Supabase → **Authentication → Emails → SMTP Settings → Enable custom SMTP**:
+   - Sender email: `no-reply@wayio.app` · Sender name: `Wayio`
+   - Host: `smtp.resend.com` · Port: `465`
+   - Username: `resend` · Password: la API key del paso 3
+5. Supabase → **Authentication → Rate Limits**: sube "emails per hour" a lo
+   que necesites (p. ej. 100).
+
+La web añade además su propio límite por IP a login, registro, recuperación y
+enlace mágico.
 
 ---
 
 ## 5. Google (login social)
 
-Solo si quieres el botón "Continuar con Google" (ya está en la web):
+El botón "Continuar con Google" ya está en la web. La vuelta usa el mismo
+dominio desde el que el usuario pulsó el botón (no hace falta ninguna variable
+de entorno extra).
 
-1. [Google Cloud Console](https://console.cloud.google.com/) → crea credenciales
-   **OAuth 2.0 Client ID** (tipo: Web application).
-2. **Authorized redirect URI:**
-   `https://<TU_PROJECT_REF>.supabase.co/auth/v1/callback`
-3. Supabase → **Authentication → Providers → Google:** pega Client ID + Secret,
-   actívalo.
+1. [Google Cloud Console](https://console.cloud.google.com/) → crea (o elige)
+   un proyecto.
+2. **APIs y servicios → Pantalla de consentimiento de OAuth**: tipo _Externo_,
+   nombre `Wayio`, correo de asistencia, logo opcional y, en **Dominios
+   autorizados**, tu dominio (`wayio.app`). Publica la app (o añade usuarios de
+   prueba mientras esté en modo prueba).
+3. **APIs y servicios → Credenciales → Crear credenciales → ID de cliente de
+   OAuth** → tipo **Aplicación web**:
+   - **Orígenes de JavaScript autorizados:** `https://wayio.app` (y
+     `http://localhost:3000` en el de desarrollo).
+   - **URI de redireccionamiento autorizados:**
+     `https://<TU_PROJECT_REF>.supabase.co/auth/v1/callback`
+4. Copia el **ID de cliente** y el **Secreto**.
+5. Supabase → **Authentication → Providers → Google:** actívalo y pega el
+   Client ID y el Client Secret.
 
-El flujo web ya está implementado en `src/lib/auth/actions.ts`
-(`signInWithGoogle`) → redirige a `/auth/callback`.
+Flujo: `signInWithGoogle` → Google → Supabase → `/auth/callback?next=...` →
+la página de la que venía el usuario (por ejemplo la invitación a un grupo).
 
 ---
 
 ## 6. App mobile (Expo) — deep linking
 
-La app usa `@supabase/supabase-js` con sesión en **AsyncStorage**
-(`mobile/src/lib/supabase/client.ts`). El **login y register con email/password
-ya funcionan** sin pasos extra: tras confirmar el email (el enlace abre la web),
-el usuario inicia sesión en la app con su contraseña.
+`mobile/app.json` ya declara `"scheme": "wayio"`, `ios.bundleIdentifier` y
+`android.package` (`com.wayio.app`). Los deep links necesitan un **build de
+desarrollo** (Expo Go no registra `wayio://`):
 
-Para que el correo de confirmación abra **directamente la app** (opcional, mejor
-UX nativa):
+```bash
+cd mobile
+npx expo install expo-dev-client
+npx expo run:android      # o: eas build --profile development
+```
 
-1. En `mobile/app.json` añade el esquema:
+Cómo funciona cada flujo en la app:
 
-   ```json
-   {
-     "expo": {
-       "scheme": "wayio"
-     }
-   }
-   ```
-
-2. Asegúrate de que `wayio://auth/callback` está en las **Redirect URLs**
-   (sección 2).
-
-3. Al registrar/recuperar desde la app, pasa el `redirectTo`:
-
-   ```ts
-   await getSupabase().auth.signUp({
-     email,
-     password,
-     options: {
-       data: { full_name: nombre },
-       emailRedirectTo: 'wayio://auth/callback',
-     },
-   })
-   ```
-
-   Y maneja el enlace entrante con `Linking` + `exchangeCodeForSession`
-   (o `setSession` con los tokens del fragmento).
-
-> Si no añades el deep link, todo sigue funcionando: el correo abre la web,
-> confirma la cuenta y el usuario vuelve a la app a iniciar sesión. El deep link
-> es solo para evitar ese salto.
+- **Registro:** `signUp` pide `emailRedirectTo: wayio://auth/callback`. El
+  correo abre `/auth/confirm` en la web, que lo pasa a `/auth/abrir-app`, y esa
+  página abre la app con el token; la app llama a `verifyOtp` y entra sola. Si
+  el correo se abre en un ordenador sin la app, el botón "continuar en la web"
+  confirma la cuenta allí.
+- **¿Olvidaste tu contraseña?:** la app envía el correo; la contraseña nueva se
+  elige en la web (`/auth/nueva-clave`) y después se inicia sesión en la app.
+- **Sin variables `EXPO_PUBLIC_SUPABASE_*`:** la app muestra "Configuración
+  incompleta" en lugar de cerrarse.
 
 ---
 
@@ -216,13 +267,16 @@ SUPABASE_SERVICE_ROLE_KEY=eyJ...            # service_role (solo backend)
 NEXT_PUBLIC_BASE_URL=http://localhost:3000  # en prod: https://wayio.app
 ```
 
+`NEXT_PUBLIC_SITE_URL` ya no es necesaria (si existe, se acepta como
+alternativa a `NEXT_PUBLIC_BASE_URL`).
+
 ### Mobile (`mobile/.env`)
 
 ```bash
 EXPO_PUBLIC_SUPABASE_URL=https://xxxx.supabase.co
 EXPO_PUBLIC_SUPABASE_ANON_KEY=eyJ...        # la MISMA anon key
 EXPO_PUBLIC_API_URL=http://192.168.1.50:3000  # IP LAN del PC para endpoints IA
-EXPO_PUBLIC_WEB_URL=http://localhost:3000
+EXPO_PUBLIC_WEB_URL=https://wayio.app       # web pública (recuperar contraseña, pagos)
 ```
 
 > En el móvil físico **no uses `localhost`** para `EXPO_PUBLIC_API_URL`: pon la
@@ -232,23 +286,32 @@ EXPO_PUBLIC_WEB_URL=http://localhost:3000
 
 ## 8. Comprobación rápida
 
-1. Web: `npm run dev` → `/login` → **Crear cuenta** → llega el correo HTML de
-   confirmación → confirmas → inicias sesión.
-2. Mobile: `expo start` → pantalla de Auth → **Crear cuenta** → confirmas por
-   correo → inicias sesión con la contraseña.
-3. En Supabase → **Authentication → Users** debe aparecer el usuario, y en
-   **Table editor**: una fila en `profiles`, una en `subscriptions` (`free`) y
-   una en `referrals`.
+1. **Registro en otro dispositivo:** `/login` → Crear cuenta → abre el correo
+   en el móvil → entra con la cuenta ya confirmada.
+2. **Volver a donde estabas:** abre `/login?redirect=/group/<link>` → inicia
+   sesión (con contraseña o con Google) → terminas en el grupo.
+3. **¿Olvidaste tu contraseña?:** `/login` → enlace → email → abre el correo →
+   `/auth/nueva-clave` → guarda una contraseña nueva (mínimo 8) → entra.
+4. **Enlace mágico:** `/login` → escribe tu email → "Prefiero recibir un
+   enlace por email" → abre el correo → entras sin contraseña.
+5. **Mobile:** Crear cuenta en la app → abre el correo en el mismo teléfono →
+   la app se abre con la sesión iniciada.
+6. En Supabase → **Authentication → Users** aparece el usuario, y en **Table
+   editor** hay una fila en `profiles`, una en `subscriptions` (`free`) y una
+   en `referrals`.
 
 ---
 
 ## Problemas comunes
 
-| Síntoma                                 | Causa / solución                                                                    |
-| --------------------------------------- | ----------------------------------------------------------------------------------- |
-| `?error=auth` tras confirmar            | Falta la URL en **Redirect URLs** (sección 2).                                      |
-| El correo no llega                      | SMTP por defecto saturado → configura SMTP propio (sección 4).                      |
-| "Email not confirmed" al iniciar sesión | `Confirm email` está ON y el usuario no confirmó. Reenvía el correo.                |
-| App: "Faltan EXPO*PUBLIC_SUPABASE*..."  | Falta el `.env` del móvil (sección 7). Reinicia Expo tras crearlo.                  |
-| No se crea `profiles`/`subscriptions`   | No corriste la migración de aprovisionamiento (sección 1, opción B o `schema.sql`). |
-| Login social falla                      | Redirect URI mal en Google Cloud (sección 5).                                       |
+| Síntoma                                                   | Causa / solución                                                                                  |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| El correo lleva a la portada sin iniciar sesión           | No pegaste las plantillas de `templates/` en el panel (sección 3).                                |
+| "El enlace no es válido o ya caducó"                      | Ya se usó (un solo uso), pasó más de 1 h, o un escáner de correo lo abrió antes. Pide otro.       |
+| Tras Google acabas en la portada o en `/login?error=auth` | Falta tu dominio con `/**` en **Redirect URLs** (sección 2) o el Client ID/Secret no es correcto. |
+| Google dice `redirect_uri_mismatch`                       | El URI en Google Cloud debe ser exactamente `https://<ref>.supabase.co/auth/v1/callback`.         |
+| El correo no llega                                        | SMTP por defecto saturado → configura Resend (sección 4) y revisa spam.                           |
+| "Todavía no confirmaste tu email"                         | `Confirm email` está ON y el usuario no confirmó. Usa "Reenviar el correo de confirmación".       |
+| La app no se abre desde el correo                         | Falta `wayio://**` en Redirect URLs, o estás en Expo Go (usa un build de desarrollo, sección 6).  |
+| App: "Configuración incompleta"                           | Falta `mobile/.env` con `EXPO_PUBLIC_SUPABASE_*` (sección 7). Reinicia Expo tras crearlo.         |
+| No se crea `profiles`/`subscriptions`                     | No corriste el esquema o la migración de aprovisionamiento (sección 1).                           |

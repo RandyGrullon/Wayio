@@ -1,9 +1,13 @@
 # ============================================================================
-# Wayio — Configuración del proyecto Supabase (CLI / local stack)
+# Wayio — Configuración del proyecto Supabase para la CLI (stack LOCAL)
 # ----------------------------------------------------------------------------
-# Esto controla `supabase start` (stack local) y `supabase db push` (migraciones).
-# Para el proyecto HOSTED (supabase.com), las plantillas de email y las URLs de
-# redirección se configuran en el Dashboard — ver supabase/CONFIGURACION-AUTH.md.
+# - `supabase start`   → levanta el stack local con TODO lo de este archivo
+#                        (auth, URLs, plantillas de email, Google...).
+# - `supabase db push` → SOLO aplica supabase/migrations/ al proyecto hosted.
+#                        NO sube nada de [auth] ni las plantillas.
+#
+# En el proyecto HOSTED (supabase.com) las URLs, el SMTP, las plantillas y
+# Google se configuran en el panel: ver supabase/CONFIGURACION-AUTH.md.
 # ============================================================================
 
 project_id = "wayio"
@@ -30,13 +34,18 @@ port = 54324
 
 [auth]
 enabled = true
-# URL base de la web. En producción: https://wayio.app
+# URL base de la web: la usan las plantillas como {{ .SiteURL }}.
+# En producción (panel): https://wayio.app
 site_url = "http://localhost:3000"
-# Destinos permitidos tras login/confirmación (web + deep link de la app mobile).
+# Destinos permitidos tras login/confirmación. Los comodines ** cubren
+# /auth/confirm, /auth/callback, /auth/nueva-clave y sus ?next=...
+# wayio://** es el deep link de la app móvil.
 additional_redirect_urls = [
-  "http://localhost:3000/auth/callback",
-  "https://wayio.app/auth/callback",
-  "wayio://auth/callback",
+  "http://localhost:3000/**",
+  "http://127.0.0.1:3000/**",
+  "http://localhost:3300/**",
+  "https://wayio.app/**",
+  "wayio://**",
 ]
 jwt_expiry = 3600
 enable_refresh_token_rotation = true
@@ -44,15 +53,25 @@ refresh_token_reuse_interval = 10
 # Permite registro de cuentas nuevas (login/register).
 enable_signup = true
 enable_anonymous_sign_ins = false
+# La web y la app exigen al menos 8 caracteres en cuentas nuevas.
+minimum_password_length = 8
 
 [auth.email]
 enable_signup = true
 # Exige confirmar el email antes de iniciar sesión (recomendado en producción).
 enable_confirmations = true
-# Permite restablecer contraseña y magic link.
+# Cambiar la contraseña con una sesión de más de 24 h exige reautenticarse.
+# El flujo de recuperación no se ve afectado (la sesión del enlace es nueva).
 secure_password_change = true
+# Doble confirmación al cambiar de email (al correo viejo y al nuevo).
+double_confirm_changes = true
+# Tiempo mínimo entre dos correos al mismo usuario.
+max_frequency = "60s"
+# Caducidad de los enlaces y códigos de email (1 h).
+otp_expiry = 3600
 
 # --- Plantillas de email personalizadas (las de supabase/templates/) ---
+# Enlaces: {{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=...
 [auth.email.template.confirmation]
 subject = "Confirma tu cuenta en Wayio ✈️"
 content_path = "./supabase/templates/confirmation.html"
@@ -82,5 +101,6 @@ content_path = "./supabase/templates/reauthentication.html"
 enabled = true
 client_id = "env(SUPABASE_AUTH_GOOGLE_CLIENT_ID)"
 secret = "env(SUPABASE_AUTH_GOOGLE_SECRET)"
-# Redirección que registras en Google Cloud Console.
+# Redirección del stack local que registras en Google Cloud Console (en el
+# proyecto hosted es https://<ref>.supabase.co/auth/v1/callback).
 redirect_uri = "http://localhost:54321/auth/v1/callback"
