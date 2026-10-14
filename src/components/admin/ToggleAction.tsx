@@ -1,36 +1,48 @@
 'use client'
 
-import { useTransition } from 'react'
+import { useOptimistic, useTransition } from 'react'
+import { Switch } from '@/components/ui/Switch'
 import type { ActionResult } from '@/types/admin'
+import { useAccion } from './useAccion'
 
+/**
+ * Switch que aplica una server action (docs/DISENO.md §5.13): cambia al
+ * instante con useOptimistic y vuelve atrás con un toast si falla.
+ */
 export function ToggleAction({
   enabled,
   action,
+  label,
+  exitoActivar,
+  exitoDesactivar,
+  error,
 }: {
   enabled: boolean
   action: (enabled: boolean) => Promise<ActionResult>
+  /** Nombre accesible: «Activar la función analisis_video». */
+  label: string
+  exitoActivar: string
+  exitoDesactivar: string
+  error: string
 }) {
-  const [pending, start] = useTransition()
+  const ejecutar = useAccion()
+  const [optimista, setOptimista] = useOptimistic(enabled)
+  const [pendiente, start] = useTransition()
 
   return (
-    <button
-      type="button"
-      disabled={pending}
-      onClick={() =>
+    <Switch
+      checked={optimista}
+      aria-label={label}
+      aria-busy={pendiente || undefined}
+      onCheckedChange={(valor) =>
         start(async () => {
-          await action(!enabled)
+          setOptimista(valor)
+          await ejecutar(() => action(valor), {
+            exito: valor ? exitoActivar : exitoDesactivar,
+            error,
+          })
         })
       }
-      className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${
-        enabled ? 'bg-green-500' : 'bg-gray-300'
-      }`}
-      aria-pressed={enabled}
-    >
-      <span
-        className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-          enabled ? 'translate-x-4' : 'translate-x-0.5'
-        }`}
-      />
-    </button>
+    />
   )
 }

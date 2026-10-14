@@ -1,50 +1,66 @@
-import type { Alert } from '@/types/alerts'
+'use client'
+
+import { MapPin, Ship } from 'lucide-react'
+import type { Alert, AlertAction } from '@/types/alerts'
 import { Button } from '@/components/ui/Button'
+import { Modal } from '@/components/ui/Modal'
 
 interface AlertLevel5CruiseProps {
   alert: Alert
+  /** «Ocultar por hoy» o cerrar: no debe reaparecer después. */
   onDismiss?: () => void
-  onAction?: (actionType: string) => void
+  /** 'navigate' = «Ver puerto en el mapa». */
+  onAction?: (actionType: AlertAction['type']) => void
 }
 
+/**
+ * Alerta de embarque del crucero (docs/DISENO.md §6.6): sheet con
+ * role="alert", icono Ship, el aviso con la hora del embarque y las acciones
+ * «Ver puerto en el mapa» y «Ocultar por hoy».
+ */
 export function AlertLevel5Cruise({
   alert,
   onDismiss,
   onAction,
 }: AlertLevel5CruiseProps) {
+  const cerrar = () => onDismiss?.()
   return (
-    <div className="fixed bottom-4 left-4 right-4 z-50 rounded-xl bg-purple-600 p-5 text-white shadow-xl sm:left-auto sm:right-4 sm:w-96">
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex-1">
-          <p className="text-xs font-medium uppercase tracking-wider text-purple-200">
-            On-Site Alert
-          </p>
-          <p className="mt-1 text-lg font-bold">{alert.title}</p>
-          <p className="mt-1 text-sm text-purple-100">{alert.message}</p>
-          {alert.actions ? (
-            <div className="mt-4 flex gap-2 flex-wrap">
-              {alert.actions.map((action) => (
-                <Button
-                  key={action.type}
-                  size="sm"
-                  variant="secondary"
-                  onClick={() => onAction?.(action.type)}
-                >
-                  {action.label}
-                </Button>
-              ))}
-            </div>
+    <Modal
+      open
+      onClose={cerrar}
+      variant="sheet"
+      title={
+        <span className="inline-flex items-center gap-2.5">
+          <Ship
+            aria-hidden="true"
+            strokeWidth={1.75}
+            className="size-6 shrink-0 text-warning"
+          />
+          {alert.title}
+        </span>
+      }
+      className="mx-auto max-w-[560px] sm:mb-4 sm:rounded-sheet"
+      footer={
+        <>
+          <Button variant="ghost" onClick={cerrar}>
+            Ocultar por hoy
+          </Button>
+          {onAction ? (
+            <Button
+              variant="primary"
+              icon={<MapPin />}
+              onClick={() => onAction('navigate')}
+              data-autofocus
+            >
+              Ver puerto en el mapa
+            </Button>
           ) : null}
-        </div>
-        {onDismiss ? (
-          <button
-            onClick={onDismiss}
-            className="text-purple-200 hover:text-white"
-          >
-            &times;
-          </button>
-        ) : null}
-      </div>
-    </div>
+        </>
+      }
+    >
+      <p role="alert" className="text-body text-fg">
+        {alert.message}
+      </p>
+    </Modal>
   )
 }

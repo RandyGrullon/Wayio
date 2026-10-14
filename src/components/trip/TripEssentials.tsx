@@ -1,14 +1,41 @@
 'use client'
 
-import { useMemo, useState } from 'react'
-import { Plane, Hotel, Car, Check, ExternalLink } from 'lucide-react'
-import type { Trip } from '@/types/trip'
-import { formatCurrency } from '@/lib/utils/formatters'
+import { useState } from 'react'
+import type { ReactNode } from 'react'
 import {
-  buildSkyscannerLink,
+  Car,
+  CircleAlert,
+  CircleCheck,
+  ExternalLink,
+  Hotel,
+  Plane,
+  TriangleAlert,
+} from 'lucide-react'
+import type { Trip } from '@/types/trip'
+import { Card, CardFranja } from '@/components/ui/Card'
+import { Switch } from '@/components/ui/Switch'
+import {
+  AFFILIATE_REL,
   buildBookingLink,
+  buildCarRentalLink,
+  describeFlightsLink,
 } from '@/constants/affiliateLinks'
-import { ReserveButton } from '@/components/trip/ReserveButton'
+import type {
+  ProveedorAfiliado,
+  CategoriaAfiliado,
+} from '@/lib/analytics/events'
+import { track } from '@/lib/analytics/events'
+import {
+  formatCurrency,
+  formatDias,
+  formatNoches,
+  formatViajeros,
+} from '@/lib/utils/formatters'
+import { cn } from '@/lib/utils/cn'
+import { Dinero } from './Dinero'
+import { calcularTotal, seleccionInicial } from './totalEstimado'
+import type { DesgloseTotal, SeleccionExtras } from './totalEstimado'
+import { monedaDelViaje } from './tripUtils'
 
 interface TripEssentialsProps {
   itinerary: Trip
@@ -16,37 +43,35 @@ interface TripEssentialsProps {
   personas: number
   fechaInicio: string
   fechaFin: string
-  moneda: string
+  /** @deprecated Se usa la moneda del viaje (trip.moneda). */
+  moneda?: string
+  /** Selección controlada desde fuera (el total aparece también en la franja). */
+  seleccion?: SeleccionExtras
+  onSeleccionChange?: (seleccion: SeleccionExtras) => void
+  /** Presupuesto del formulario, para el encaje. */
+  presupuesto?: { monto: number; moneda?: string | undefined } | null
+  /** Acción de reserva bajo el total (p. ej. ReserveButton). */
+  reserva?: ReactNode
+  /** Id guardado del viaje (analítica). */
+  tripId?: string
+  className?: string
 }
 
-type Tier = 'basico' | 'confort' | 'premium'
-
-// Per-tier estimates. Rough but transparent — the real booking links refine them.
-const FLIGHT_PP: Record<Tier, number> = {
-  basico: 480,
-  confort: 720,
-  premium: 1400,
-}
-const HOTEL_NIGHTLY: Record<Tier, number> = {
-  basico: 55,
-  confort: 120,
-  premium: 260,
-}
-const CAR_DAILY: Record<Tier, number> = { basico: 35, confort: 55, premium: 95 }
-
-function nightsBetween(inicio: string, fin: string): number {
-  const a = Date.parse(inicio)
-  const b = Date.parse(fin)
-  if (Number.isNaN(a) || Number.isNaN(b) || b <= a) return 1
-  return Math.max(1, Math.round((b - a) / 86_400_000))
+const COLOR_PARTIDA: Record<
+  DesgloseTotal['partidas'][number]['clave'],
+  string
+> = {
+  plan: 'bg-dia-2',
+  vuelo: 'bg-dia-7',
+  hospedaje: 'bg-dia-3',
+  carro: 'bg-dia-6',
 }
 
 /**
- * "Completa tu viaje": the AI itinerary covers what to *do*; this covers how to
- * get there and stay. The flight is included in the trip total by default
- * (you can't visit Tokyo without one), and the app proactively asks whether the
- * traveler already has lodging / needs a car, adding each as a priced extra and
- * linking to the real booking. Estimates are per-tier and clearly labelled.
+ * «Completa tu viaje» (docs/DISENO.md §6.5): vuelo, hospedaje y carro como
+ * boletos compactos (switch, estimación y enlace patrocinado) y UNA tarjeta
+ * «TOTAL ESTIMADO» con barra apilada, total por persona y encaje con el
+ * presupuesto. Sustituye a BudgetDisplay y a los totales contradictorios.
  */
 export function TripEssentials({
   itinerary,
@@ -54,267 +79,327 @@ export function TripEssentials({
   personas,
   fechaInicio,
   fechaFin,
-  moneda,
+  seleccion: seleccionControlada,
+  onSeleccionChange,
+  presupuesto = null,
+  reserva,
+  tripId,
+  className,
 }: TripEssentialsProps) {
-  const tier = (itinerary.paquete as Tier) ?? 'confort'
-  const nights = useMemo(
-    () => nightsBetween(fechaInicio, fechaFin),
-    [fechaInicio, fechaFin]
+  const [seleccionLocal, setSeleccionLocal] = useState<SeleccionExtras>(() =>
+    seleccionInicial(itinerary)
   )
-  const rooms = Math.max(1, Math.ceil(personas / 2))
+  const seleccion = seleccionControlada ?? seleccionLocal
+  const cambiar = (parcial: Partial<SeleccionExtras>) => {
+    const nueva = { ...seleccion, ...parcial }
+    if (onSeleccionChange) onSeleccionChange(nueva)
+    else setSeleccionLocal(nueva)
+  }
 
-  const flightEst = personas * FLIGHT_PP[tier]
-  const hotelEst = nights * rooms * HOTEL_NIGHTLY[tier]
-  const carEst = (nights + 1) * CAR_DAILY[tier]
-
-  // Flight is on by default; lodging/car start unanswered so we can *ask*.
-  const [flight, setFlight] = useState(true)
-  const [lodging, setLodging] = useState<'have' | 'add' | null>(null)
-  const [car, setCar] = useState<'add' | 'no' | null>(null)
-
-  const extras =
-    (flight ? flightEst : 0) +
-    (lodging === 'add' ? hotelEst : 0) +
-    (car === 'add' ? carEst : 0)
-  const total = itinerary.presupuestoTotal + extras
-  const perPerson = Math.round(total / Math.max(1, personas))
-
+  const trip: Trip = { ...itinerary, personas: personas || itinerary.personas }
+  const moneda = monedaDelViaje(itinerary)
+  const desglose = calcularTotal(trip, seleccion, presupuesto)
   const fmt = (n: number) => formatCurrency(n, moneda)
 
+  const vuelos = describeFlightsLink({
+    origen,
+    destino: itinerary.destino,
+    ida: fechaInicio,
+    vuelta: fechaFin,
+    personas: desglose.personas,
+  })
+  const hoteles = buildBookingLink(itinerary.destino, fechaInicio, {
+    checkOut: fechaFin,
+    adultos: desglose.personas,
+    habitaciones: Math.max(1, Math.ceil(desglose.personas / 2)),
+  })
+  const clic = (proveedor: ProveedorAfiliado, categoria: CategoriaAfiliado) =>
+    track('click_afiliado', {
+      proveedor,
+      categoria,
+      destino: itinerary.destino,
+      tripId,
+      ubicacion: 'completa-tu-viaje',
+    })
+
   return (
-    <div className="mb-6 rounded-3xl border border-border bg-surface p-5 shadow-[var(--shadow-soft)]">
-      <h3 className="text-base font-bold text-fg">Completa tu viaje</h3>
-      <p className="mt-0.5 text-sm text-fg-muted">
-        El itinerario cubre qué hacer. Esto cubre cómo llegar y dónde dormir —
-        ajusta el total a lo que de verdad vas a gastar.
+    <section
+      aria-labelledby="completa-tu-viaje"
+      className={cn('scroll-mt-24', className)}
+    >
+      <p className="kicker kicker-filete">Cómo llegar y dónde dormir</p>
+      <h2 id="completa-tu-viaje" className="mt-3 font-display text-h2 text-fg">
+        Completa tu viaje
+      </h2>
+      <p className="mt-2 max-w-[60ch] text-body-s text-fg-muted">
+        El itinerario cubre qué hacer. Ajusta el total a lo que de verdad vas a
+        gastar.
       </p>
 
-      <div className="mt-4 flex flex-col gap-3">
-        {/* Flight — included by default */}
-        <EssentialCard
-          icon={<Plane className="h-5 w-5 text-brand-500" />}
-          title="Vuelo (ida y vuelta)"
-          subtitle={`${personas} ${personas === 1 ? 'pasajero' : 'pasajeros'} · estimado`}
-          price={fmt(flightEst)}
-          active={flight}
-        >
-          <Toggle
-            on={flight}
-            onLabel="Incluido"
-            offLabel="Ya lo tengo"
-            onToggle={() => setFlight((v) => !v)}
-          />
-          <SearchLink
-            href={buildSkyscannerLink(origen, itinerary.destino, fechaInicio)}
-            label="Ver vuelos reales"
-          />
-        </EssentialCard>
+      <div className="mt-6 grid gap-4 md:grid-cols-3">
+        {/* Vuelo */}
+        <Boleto
+          franja="Vuelo · ida y vuelta"
+          icono={<Plane />}
+          valor={
+            desglose.vuelo === null
+              ? null
+              : desglose.vuelo === 0
+                ? 'No hace falta volar'
+                : fmt(desglose.vuelo)
+          }
+          detalle={
+            desglose.vuelo === null
+              ? 'Sin estimación para este viaje. Consulta el precio real.'
+              : desglose.vuelo === 0
+                ? 'Tu origen está cerca del destino.'
+                : `${fmt(desglose.vueloPorPersona ?? 0)} por persona · ${formatViajeros(desglose.personas)}`
+          }
+          control={
+            desglose.vuelo !== null && desglose.vuelo > 0 ? (
+              <Switch
+                checked={seleccion.vuelo}
+                onCheckedChange={(v) => cambiar({ vuelo: v })}
+                label="Sumar al total"
+                description={origen ? `Desde ${origen}` : undefined}
+              />
+            ) : null
+          }
+          enlace={{
+            href: vuelos.url,
+            texto: 'Ver vuelos',
+            onClick: () => clic(vuelos.proveedor, 'vuelo'),
+          }}
+        />
 
-        {/* Lodging — ask */}
-        <EssentialCard
-          icon={<Hotel className="h-5 w-5 text-coral-500" />}
-          title="Hospedaje"
-          subtitle={`${nights} ${nights === 1 ? 'noche' : 'noches'} · ${rooms} ${
-            rooms === 1 ? 'habitación' : 'habitaciones'
-          } · estimado`}
-          price={fmt(hotelEst)}
-          active={lodging === 'add'}
-        >
-          {lodging === null ? (
-            <Ask
-              question="¿Ya tienes hospedaje?"
-              yesLabel="Sí, ya tengo"
-              noLabel="No, agrégalo"
-              onYes={() => setLodging('have')}
-              onNo={() => setLodging('add')}
-            />
-          ) : (
-            <Toggle
-              on={lodging === 'add'}
-              onLabel="Agregado al total"
-              offLabel="Ya tengo"
-              onToggle={() => setLodging((v) => (v === 'add' ? 'have' : 'add'))}
-            />
-          )}
-          <SearchLink
-            href={buildBookingLink(itinerary.destino, fechaInicio)}
-            label="Ver hoteles reales"
-          />
-        </EssentialCard>
+        {/* Hospedaje */}
+        <Boleto
+          franja="Hospedaje"
+          icono={<Hotel />}
+          valor={desglose.hospedajeIncluido ? fmt(desglose.hospedaje) : null}
+          detalle={
+            desglose.hospedajeIncluido
+              ? `${formatNoches(desglose.noches)} · ya incluido en tu plan${desglose.hoteles[0] ? ` (${desglose.hoteles[0]})` : ''}`
+              : 'Busca dónde dormir según tus fechas.'
+          }
+          control={
+            desglose.hospedajeIncluido ? (
+              <Switch
+                checked={seleccion.hospedaje}
+                onCheckedChange={(v) => cambiar({ hospedaje: v })}
+                label="Sumar al total"
+                description="Desmárcalo si ya tienes dónde dormir."
+              />
+            ) : null
+          }
+          enlace={{
+            href: hoteles,
+            texto: 'Ver hoteles',
+            onClick: () => clic('booking', 'hotel'),
+          }}
+        />
 
-        {/* Car — ask */}
-        <EssentialCard
-          icon={<Car className="h-5 w-5 text-brand-500" />}
-          title="Alquiler de carro"
-          subtitle={`${nights + 1} ${nights + 1 === 1 ? 'día' : 'días'} · estimado`}
-          price={fmt(carEst)}
-          active={car === 'add'}
-        >
-          {car === null ? (
-            <Ask
-              question="¿Necesitas carro?"
-              yesLabel="Sí, agrégalo"
-              noLabel="No hace falta"
-              onYes={() => setCar('add')}
-              onNo={() => setCar('no')}
+        {/* Carro */}
+        <Boleto
+          franja="Alquiler de carro"
+          icono={<Car />}
+          valor={fmt(desglose.carro)}
+          detalle={`${formatDias(desglose.dias)} · estimación orientativa`}
+          control={
+            <Switch
+              checked={seleccion.carro}
+              onCheckedChange={(v) => cambiar({ carro: v })}
+              label="Sumar al total"
             />
-          ) : (
-            <Toggle
-              on={car === 'add'}
-              onLabel="Agregado al total"
-              offLabel="No hace falta"
-              onToggle={() => setCar((v) => (v === 'add' ? 'no' : 'add'))}
-            />
-          )}
-          <SearchLink
-            href={`https://www.booking.com/cars/index.html?aid=TU_ID&ss=${encodeURIComponent(
-              itinerary.destino
-            )}`}
-            label="Ver carros reales"
-          />
-        </EssentialCard>
-      </div>
-
-      {/* Live total */}
-      <div className="mt-5 flex flex-col gap-3 rounded-2xl bg-surface-muted p-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <p className="text-xs font-medium uppercase tracking-wide text-fg-subtle">
-            Total estimado del viaje
-          </p>
-          <p className="mt-0.5 text-2xl font-extrabold text-fg">{fmt(total)}</p>
-          <p className="text-xs text-fg-muted">
-            {fmt(perPerson)} / persona · incluye{' '}
-            {[
-              'plan',
-              flight ? 'vuelo' : null,
-              lodging === 'add' ? 'hospedaje' : null,
-              car === 'add' ? 'carro' : null,
-            ]
-              .filter(Boolean)
-              .join(' + ')}
-          </p>
-        </div>
-        <ReserveButton
-          tripId={itinerary.id}
-          destino={itinerary.destino}
-          presupuestoTotal={total}
-          moneda={moneda}
+          }
+          enlace={{
+            href: buildCarRentalLink(),
+            texto: 'Ver carros',
+            onClick: () => clic('booking_cars', 'carro'),
+          }}
         />
       </div>
-    </div>
+
+      <TotalEstimado desglose={desglose} reserva={reserva} className="mt-6" />
+    </section>
   )
 }
 
-function EssentialCard({
-  icon,
-  title,
-  subtitle,
-  price,
-  active,
-  children,
+function Boleto({
+  franja,
+  icono,
+  valor,
+  detalle,
+  control,
+  enlace,
 }: {
-  icon: React.ReactNode
-  title: string
-  subtitle: string
-  price: string
-  active: boolean
-  children: React.ReactNode
+  franja: string
+  icono: ReactNode
+  valor: string | null
+  detalle: string
+  control: ReactNode
+  enlace: { href: string; texto: string; onClick: () => void }
 }) {
   return (
-    <div
-      className={`rounded-2xl border p-3.5 transition-colors ${
-        active
-          ? 'border-brand-300 bg-brand-50/60 dark:border-brand-500/40 dark:bg-brand-500/10'
-          : 'border-border bg-bg'
-      }`}
-    >
-      <div className="flex items-start gap-3">
-        <div className="mt-0.5">{icon}</div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-baseline justify-between gap-2">
-            <p className="font-semibold text-fg">{title}</p>
-            <span className="shrink-0 text-sm font-bold text-fg">{price}</span>
-          </div>
-          <p className="text-xs text-fg-muted">{subtitle}</p>
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            {children}
+    <Card variant="boleto" className="flex flex-col">
+      <CardFranja extra={valor ? 'Estimado' : undefined}>{franja}</CardFranja>
+      <div className="flex flex-1 flex-col gap-3 p-5">
+        <div className="flex items-start gap-3">
+          <span
+            aria-hidden="true"
+            className="mt-1 inline-flex text-fg-subtle [&_svg]:size-5 [&_svg]:stroke-[1.75]"
+          >
+            {icono}
+          </span>
+          <div className="min-w-0">
+            <p className="font-display text-[22px] leading-tight text-fg tnum">
+              {valor ?? 'Precio real'}
+            </p>
+            <p className="mt-1 text-caption text-fg-muted">{detalle}</p>
           </div>
         </div>
+        {control ? (
+          <div className="border-t border-border pt-3">{control}</div>
+        ) : null}
+        <a
+          href={enlace.href}
+          target="_blank"
+          rel={AFFILIATE_REL}
+          onClick={enlace.onClick}
+          className="mt-auto inline-flex w-fit items-center gap-1.5 rounded-sm text-[14px] font-semibold text-accent underline decoration-1 underline-offset-[3px] hover:text-accent-hover"
+        >
+          {enlace.texto}
+          <ExternalLink
+            aria-hidden="true"
+            strokeWidth={1.75}
+            className="size-4"
+          />
+          <span className="sr-only">
+            (enlace patrocinado, se abre en otra pestaña)
+          </span>
+        </a>
       </div>
-    </div>
+    </Card>
   )
 }
 
-function Ask({
-  question,
-  yesLabel,
-  noLabel,
-  onYes,
-  onNo,
+const ICONO_ENCAJE = {
+  success: CircleCheck,
+  warning: TriangleAlert,
+  danger: CircleAlert,
+} as const
+
+const TONO_ENCAJE = {
+  success: { texto: 'text-success-fg', barra: 'bg-success' },
+  warning: { texto: 'text-warning-fg', barra: 'bg-warning' },
+  danger: { texto: 'text-danger-fg', barra: 'bg-danger' },
+} as const
+
+/** La tarjeta única «TOTAL ESTIMADO» (también se usa en otros contextos). */
+export function TotalEstimado({
+  desglose,
+  reserva,
+  className,
 }: {
-  question: string
-  yesLabel: string
-  noLabel: string
-  onYes: () => void
-  onNo: () => void
+  desglose: DesgloseTotal
+  reserva?: ReactNode
+  className?: string
 }) {
+  const { moneda, partidas, total, porPersona, encaje } = desglose
+  const fmt = (n: number) => formatCurrency(n, moneda)
+  const IconoEncaje = encaje ? ICONO_ENCAJE[encaje.tono] : null
   return (
-    <div className="flex flex-wrap items-center gap-2">
-      <span className="text-xs font-medium text-fg-muted">{question}</span>
-      <button
-        type="button"
-        onClick={onNo}
-        className="rounded-lg bg-brand-600 px-2.5 py-1 text-xs font-semibold text-white transition-colors hover:bg-brand-700"
-      >
-        {noLabel}
-      </button>
-      <button
-        type="button"
-        onClick={onYes}
-        className="rounded-lg border border-border-strong px-2.5 py-1 text-xs font-medium text-fg-muted transition-colors hover:bg-surface-muted"
-      >
-        {yesLabel}
-      </button>
-    </div>
-  )
-}
-
-function Toggle({
-  on,
-  onLabel,
-  offLabel,
-  onToggle,
-}: {
-  on: boolean
-  onLabel: string
-  offLabel: string
-  onToggle: () => void
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onToggle}
-      className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors ${
-        on
-          ? 'bg-brand-600 text-white hover:bg-brand-700'
-          : 'border border-border-strong text-fg-muted hover:bg-surface-muted'
-      }`}
+    <Card
+      variant="elevated"
+      as="section"
+      aria-labelledby="total-estimado"
+      className={cn('grid gap-6 lg:grid-cols-2 lg:gap-10', className)}
     >
-      {on ? <Check className="h-3.5 w-3.5" /> : null}
-      {on ? onLabel : offLabel}
-    </button>
-  )
-}
+      <div>
+        <h3 id="total-estimado" className="kicker">
+          Total estimado
+        </h3>
+        <p className="mt-2 text-num-xl text-fg">
+          <Dinero valor={total} moneda={moneda} />
+        </p>
+        <p className="mt-1 text-body-s text-fg-muted">
+          <span className="tnum">{fmt(porPersona)}</span> por persona ·{' '}
+          {formatViajeros(desglose.personas)}
+        </p>
 
-function SearchLink({ href, label }: { href: string; label: string }) {
-  return (
-    <a
-      href={href}
-      target="_blank"
-      rel="noopener noreferrer sponsored"
-      className="inline-flex items-center gap-1 text-xs font-medium text-brand-600 transition-colors hover:text-brand-700"
-    >
-      {label} <ExternalLink className="h-3 w-3" />
-    </a>
+        {encaje && IconoEncaje ? (
+          <div className="mt-5">
+            <p
+              className={cn(
+                'flex items-center gap-2 text-[15px] font-semibold',
+                TONO_ENCAJE[encaje.tono].texto
+              )}
+            >
+              <IconoEncaje
+                aria-hidden="true"
+                strokeWidth={1.75}
+                className="size-5 shrink-0"
+              />
+              {encaje.texto}
+            </p>
+            <div
+              aria-hidden="true"
+              className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-surface-2"
+            >
+              <div
+                className={cn(
+                  'h-full rounded-full transition-[width] duration-(--dur-slow) ease-papel',
+                  TONO_ENCAJE[encaje.tono].barra
+                )}
+                style={{ width: `${Math.min(100, encaje.porcentaje)}%` }}
+              />
+            </div>
+          </div>
+        ) : null}
+
+        {reserva ? <div className="mt-6">{reserva}</div> : null}
+      </div>
+
+      <div>
+        <div
+          aria-hidden="true"
+          className="flex h-2 w-full gap-0.5 overflow-hidden rounded-full bg-surface-2"
+        >
+          {partidas
+            .filter((p) => p.valor > 0)
+            .map((p) => (
+              <span
+                key={p.clave}
+                className={cn('wy-tramo-total h-full', COLOR_PARTIDA[p.clave])}
+                style={{ flexGrow: p.valor, flexBasis: 0 }}
+              />
+            ))}
+        </div>
+        <dl className="mt-4 divide-y divide-border">
+          {partidas.map((p) => (
+            <div
+              key={p.clave}
+              className="flex items-center justify-between gap-4 py-2.5 text-body-s"
+            >
+              <dt className="flex items-center gap-2 text-fg-muted">
+                <span
+                  aria-hidden="true"
+                  className={cn(
+                    'size-2.5 rounded-full',
+                    COLOR_PARTIDA[p.clave]
+                  )}
+                />
+                {p.etiqueta}
+              </dt>
+              <dd className="font-semibold text-fg tnum">{fmt(p.valor)}</dd>
+            </div>
+          ))}
+        </dl>
+        <p className="mt-3 text-caption text-fg-subtle">
+          Estimación orientativa en {moneda}. Los precios reales se confirman al
+          reservar.
+        </p>
+      </div>
+    </Card>
   )
 }

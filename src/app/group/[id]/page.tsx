@@ -2,132 +2,210 @@
 
 import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import Link from 'next/link'
-import { Users } from 'lucide-react'
+import { ArrowRight } from 'lucide-react'
 import { GroupRoom } from '@/components/group/GroupRoom'
-import { TripMap } from '@/components/map/TripMap'
-import { Logo } from '@/components/ui/Logo'
-import { ThemeToggle } from '@/components/ui/ThemeToggle'
+import { SiteHeader } from '@/components/layout/SiteHeader'
+import { Button, ButtonLink } from '@/components/ui/Button'
+import { EmptyState } from '@/components/ui/EmptyState'
+import {
+  SkeletonMapa,
+  SkeletonPortada,
+  SkeletonRegion,
+  SkeletonText,
+} from '@/components/ui/Skeleton'
 import { useUser } from '@/hooks/useUser'
+import { isSupabaseConfigured } from '@/lib/supabase/config'
 import type { Trip } from '@/types/trip'
 import type { TripRow } from '@/types/database'
 
-export default function GroupPage() {
-  const params = useParams()
-  const grupoLink = params['id'] as string
-  const router = useRouter()
+type Carga =
+  | { tipo: 'cargando' }
+  | { tipo: 'ok'; tripId: string; trip: Trip }
+  | { tipo: 'error'; mensaje: string; titulo: string; reintentable: boolean }
 
-  const { user, loading: userLoading } = useUser()
-  const [trip, setTrip] = useState<Trip | null>(null)
-  const [tripId, setTripId] = useState<string | null>(null)
-  const [pageLoading, setPageLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+async function mensajeDe(res: Response, porDefecto: string): Promise<string> {
+  try {
+    const body = (await res.json()) as { error?: unknown }
+    return typeof body.error === 'string' && body.error
+      ? body.error
+      : porDefecto
+  } catch {
+    return porDefecto
+  }
+}
 
-  useEffect(() => {
-    if (userLoading) return
-    if (!user) {
-      router.push(`/login?redirect=/group/${grupoLink}`)
-      return
-    }
-
-    const joinAndLoad = async () => {
-      try {
-        // Join the group (upsert member)
-        const joinRes = await fetch(`/api/groups/${grupoLink}`, {
-          method: 'POST',
-        })
-        if (!joinRes.ok) {
-          const { error: joinErr } = (await joinRes.json()) as { error: string }
-          throw new Error(joinErr)
-        }
-        const { tripId: tid } = (await joinRes.json()) as { tripId: string }
-        setTripId(tid)
-
-        // Load trip data
-        const tripRes = await fetch(`/api/trips/${tid}`)
-        if (!tripRes.ok) throw new Error('No se pudo cargar el viaje')
-        const { trip: row } = (await tripRes.json()) as { trip: TripRow }
-        setTrip(row.data)
-      } catch (err) {
-        setError(
-          err instanceof Error ? err.message : 'Error al unirte al grupo'
-        )
-      } finally {
-        setPageLoading(false)
+/** Unirse por el enlace y cargar el viaje. Nunca lanza. */
+async function unirseYCargar(grupoLink: string): Promise<Carga> {
+  try {
+    const joinRes = await fetch(
+      `/api/groups/join/${encodeURIComponent(grupoLink)}`,
+      { method: 'POST' }
+    )
+    if (!joinRes.ok) {
+      // 404 enlace inválido y 403 cuenta bloqueada: reintentar no ayuda.
+      const definitivo = joinRes.status === 404 || joinRes.status === 403
+      return {
+        tipo: 'error',
+        titulo:
+          joinRes.status === 404
+            ? 'Este enlace de grupo no existe'
+            : 'No pudimos abrir la sala',
+        mensaje: await mensajeDe(
+          joinRes,
+          'No pudimos unirte al grupo. Inténtalo de nuevo.'
+        ),
+        reintentable: !definitivo,
       }
     }
+    const { tripId } = (await joinRes.json()) as { tripId: string }
 
-    joinAndLoad()
-  }, [user, userLoading, grupoLink, router])
+    const tripRes = await fetch(`/api/trips/${tripId}`)
+    if (!tripRes.ok) {
+      return {
+        tipo: 'error',
+        titulo: 'No pudimos abrir la sala',
+        mensaje: await mensajeDe(
+          tripRes,
+          'No pudimos cargar el viaje del grupo. Inténtalo de nuevo.'
+        ),
+        reintentable: tripRes.status !== 404 && tripRes.status !== 403,
+      }
+    }
+    const { trip: row } = (await tripRes.json()) as { trip: TripRow }
+    return { tipo: 'ok', tripId, trip: row.data }
+  } catch {
+    return {
+      tipo: 'error',
+      titulo: 'No pudimos abrir la sala',
+      mensaje: 'Revisa tu conexión e inténtalo de nuevo.',
+      reintentable: true,
+    }
+  }
+}
 
-  if (userLoading || pageLoading) {
+/**
+ * Sala del grupo /group/[enlace]. Se une con POST /api/groups/join/[link]
+ * → { tripId, member } (idempotente), carga el viaje con GET /api/trips/[id]
+ * y monta GroupRoom. Sin sesión, al login con ?redirect a esta sala.
+ */
+export default function GroupPage() {
+  const params = useParams<{ id: string }>()
+  const grupoLink = params.id
+  const router = useRouter()
+  const demo = !isSupabaseConfigured()
+
+  const { user, loading: userLoading } = useUser()
+  const [carga, setCarga] = useState<Carga>({ tipo: 'cargando' })
+
+  const hayUsuario = Boolean(user)
+  useEffect(() => {
+    if (demo || userLoading) return
+    if (!hayUsuario) {
+      router.push(
+        `/login?redirect=${encodeURIComponent(`/group/${grupoLink}`)}`
+      )
+      return
+    }
+    let vivo = true
+    void unirseYCargar(grupoLink).then((c) => {
+      if (vivo) setCarga(c)
+    })
+    return () => {
+      vivo = false
+    }
+  }, [demo, hayUsuario, userLoading, grupoLink, router])
+
+  const reintentar = () => {
+    setCarga({ tipo: 'cargando' })
+    void unirseYCargar(grupoLink).then(setCarga)
+  }
+
+  if (demo) {
     return (
-      <main className="bg-aurora flex min-h-screen items-center justify-center">
-        <div className="text-center">
-          <div className="mx-auto mb-3 h-2 w-48 overflow-hidden rounded-full bg-surface-muted">
-            <div className="grad-brand h-full w-1/2 animate-pulse rounded-full" />
+      <>
+        <SiteHeader variant="app" />
+        <main id="contenido" className="flex-1">
+          <div className="mx-auto max-w-content px-4 py-16 md:px-6 lg:px-8">
+            <EmptyState
+              headingLevel="h1"
+              title="Los viajes en grupo no están disponibles ahora"
+              description="Las salas de grupo necesitan una cuenta, y las cuentas todavía no están listas. Mientras tanto puedes trazar tu viaje y compartirlo."
+              action={
+                <ButtonLink
+                  href="/planificar"
+                  variant="primary"
+                  size="lg"
+                  iconEnd={<ArrowRight />}
+                >
+                  Planificar un viaje
+                </ButtonLink>
+              }
+            />
           </div>
-          <p className="text-sm text-fg-muted">Cargando sala grupal...</p>
-        </div>
-      </main>
+        </main>
+      </>
     )
   }
 
-  if (error || !trip || !tripId || !user) {
+  if (carga.tipo === 'ok' && user) {
     return (
-      <main className="bg-aurora flex min-h-screen items-center justify-center px-4">
-        <div className="text-center">
-          <p className="font-medium text-red-600">
-            {error ?? 'Error al cargar el grupo'}
-          </p>
-          <Link
-            href="/"
-            className="mt-4 inline-block text-sm font-semibold text-brand-600 hover:underline"
-          >
-            ← Volver al inicio
-          </Link>
-        </div>
-      </main>
+      <GroupRoom
+        tripId={carga.tripId}
+        trip={carga.trip}
+        currentUser={user}
+        grupoLink={grupoLink}
+      />
+    )
+  }
+
+  if (carga.tipo === 'error') {
+    return (
+      <>
+        <SiteHeader variant="app" />
+        <main id="contenido" className="flex-1">
+          <div className="mx-auto max-w-content px-4 py-16 md:px-6 lg:px-8">
+            <EmptyState
+              headingLevel="h1"
+              illustration="error"
+              title={carga.titulo}
+              description={carga.mensaje}
+              action={
+                carga.reintentable ? (
+                  <Button variant="primary" size="lg" onClick={reintentar}>
+                    Reintentar
+                  </Button>
+                ) : (
+                  <ButtonLink href="/viajes" variant="primary" size="lg">
+                    Ir a Mis viajes
+                  </ButtonLink>
+                )
+              }
+            />
+          </div>
+        </main>
+      </>
     )
   }
 
   return (
-    <main className="min-h-screen bg-bg">
-      <header className="sticky top-0 z-40 border-b border-border bg-surface/80 backdrop-blur">
-        <div className="mx-auto flex max-w-4xl items-center justify-between px-4 py-3 sm:px-6">
-          <Link href="/" aria-label="Inicio">
-            <Logo />
-          </Link>
-          <ThemeToggle />
-        </div>
-      </header>
-
-      <div className="mx-auto max-w-4xl px-4 py-6 sm:px-6 sm:py-8">
-        <div className="mb-6 flex items-center gap-3">
-          <span className="grad-brand flex h-11 w-11 items-center justify-center rounded-2xl text-white">
-            <Users className="h-5 w-5" />
-          </span>
-          <div>
-            <h1 className="text-2xl font-extrabold tracking-tight text-fg">
-              {trip.destino}
-            </h1>
-            <p className="text-sm text-fg-muted">
-              Sala grupal · {trip.personas} viajero
-              {trip.personas !== 1 ? 's' : ''}
-            </p>
+    <>
+      <SiteHeader variant="app" />
+      <main id="contenido" className="flex-1">
+        <SkeletonRegion
+          label="Abriendo la sala del grupo…"
+          className="mx-auto max-w-content px-4 pt-8 pb-20 md:px-6 md:pt-12 lg:px-8"
+        >
+          <SkeletonPortada />
+          <div className="mt-10 lg:grid lg:grid-cols-12 lg:gap-8">
+            <div className="hidden lg:col-span-5 lg:block">
+              <SkeletonMapa className="h-80" />
+            </div>
+            <div className="rounded-card border border-border p-4 lg:col-span-7">
+              <SkeletonText lines={5} />
+            </div>
           </div>
-        </div>
-
-        {/* Map with group */}
-        <div className="mb-6 h-64 overflow-hidden rounded-3xl border border-border shadow-[var(--shadow-soft)]">
-          <TripMap dias={trip.dias} />
-        </div>
-
-        {/* Group room */}
-        <div className="rounded-3xl border border-border bg-surface p-4 shadow-[var(--shadow-soft)] sm:p-6">
-          <GroupRoom tripId={tripId} trip={trip} currentUser={user} />
-        </div>
-      </div>
-    </main>
+        </SkeletonRegion>
+      </main>
+    </>
   )
 }

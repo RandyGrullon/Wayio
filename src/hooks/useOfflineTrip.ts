@@ -55,28 +55,36 @@ export function useOfflineTrip(tripId?: string): UseOfflineTripReturn {
   useEffect(() => {
     let active = true
     const lookup = tripId ? getTripRecord(tripId) : Promise.resolve(null)
-    void lookup.then((record) => {
-      if (active) setSavedAt(record?.savedAt ?? null)
-    })
+    void lookup
+      .catch(() => null)
+      .then((record) => {
+        if (active) setSavedAt(record?.savedAt ?? null)
+      })
     return () => {
       active = false
     }
   }, [tripId])
 
+  // El almacenamiento local puede fallar (cuota llena, modo privado, IndexedDB
+  // bloqueada): el modo offline es best-effort y nunca debe romper la pantalla.
   const cacheTrip = useCallback(async (trip: Trip): Promise<void> => {
-    await saveTrip(trip)
-    await saveActiveTripId(trip.id)
-    const record = await getTripRecord(trip.id)
-    setSavedAt(record?.savedAt ?? null)
+    try {
+      await saveTrip(trip)
+      await saveActiveTripId(trip.id)
+      const record = await getTripRecord(trip.id)
+      setSavedAt(record?.savedAt ?? null)
+    } catch {
+      /* sin copia offline esta vez */
+    }
   }, [])
 
   const readCachedTrip = useCallback(
-    (id: string): Promise<Trip | null> => loadTrip(id),
+    (id: string): Promise<Trip | null> => loadTrip(id).catch(() => null),
     []
   )
 
   const getActiveTripId = useCallback(
-    (): Promise<string | null> => loadActiveTripId(),
+    (): Promise<string | null> => loadActiveTripId().catch(() => null),
     []
   )
 

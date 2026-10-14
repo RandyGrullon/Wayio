@@ -10,34 +10,44 @@ interface Faltante {
   ciudad: string
 }
 
+/** /api/geocode acepta como máximo 10 lugares por petición. */
+const LOTE = 10
+const MAX_LUGARES = 40
+
 /**
- * Rellena en background las coordenadas de las actividades que la IA no ancló.
+ * Completa en segundo plano las coordenadas de las actividades que el servidor
+ * no verificó (coordsVerificadas !== true), para que el mapa y el "Llegar"
+ * apunten al lugar real y no a la estimación de la IA.
  *
- * /api/generate solo geocodifica las primeras ~6 actividades inline (para no
- * bloquear la respuesta con el rate-limit de Nominatim). Este hook detecta el
- * resto —las que quedaron en lat/lng 0— y las geocodifica tras mostrar el
- * resultado, mezclando las coords en el trip mostrado para que aparezcan en el
- * mapa. Best-effort: si falla, el itinerario sigue siendo válido.
+ * - Va por lotes y mezcla cada resultado con setTrip funcional, así que no
+ *   pierde nada aunque el usuario edite el viaje mientras tanto.
+ * - Se ejecuta una vez por id de viaje (se reintenta si falla).
+ * Best-effort: si falla, el itinerario sigue siendo válido.
  */
 export function useBackgroundGeocode(
   trip: Trip | null,
   setTrip: Dispatch<SetStateAction<Trip | null>>
 ): void {
-  // Evita re-geocodificar el mismo viaje en cada render.
   const hechoRef = useRef<string | null>(null)
+  const tripRef = useRef(trip)
+  // Último trip disponible para el efecto sin re-ejecutarlo en cada edición.
+  useEffect(() => {
+    tripRef.current = trip
+  })
+  const tripId = trip?.id ?? null
 
   useEffect(() => {
-    if (!trip) return
-    if (hechoRef.current === trip.id) return
+    const actual = tripRef.current
+    if (!actual || !tripId || hechoRef.current === tripId) return
 
     const faltantes: Faltante[] = []
-    for (const dia of trip.dias) {
+    for (const dia of actual.dias) {
       for (const act of dia.actividades) {
         if (
           act.tipo !== 'traslado' &&
+          !act.coordsVerificadas &&
           act.nombre.trim() &&
-          act.lat === 0 &&
-          act.lng === 0
+          !/check-?in|check-?out/i.test(act.nombre)
         ) {
           faltantes.push({
             actId: act.id,
@@ -47,57 +57,59 @@ export function useBackgroundGeocode(
         }
       }
     }
+    if (faltantes.length === 0) {
+      hechoRef.current = tripId
+      return
+    }
 
-    hechoRef.current = trip.id
-    if (faltantes.length === 0) return
-
-    let cancelado = false
+    const controller = new AbortController()
     void (async () => {
       try {
-        const res = await fetch('/api/geocode', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            items: faltantes.map((f) => ({
-              nombre: f.nombre,
-              ciudad: f.ciudad,
-            })),
-          }),
-        })
-        if (!res.ok || cancelado) return
-
-        const { results } = (await res.json()) as {
-          results: ({ lat: number; lng: number } | null)[]
-        }
-        if (cancelado) return
-
-        const coords = new Map<string, { lat: number; lng: number }>()
-        faltantes.forEach((f, i) => {
-          const r = results[i]
-          if (r) coords.set(f.actId, r)
-        })
-        if (coords.size === 0) return
-
-        setTrip((prev) => {
-          if (!prev) return prev
-          return {
-            ...prev,
-            dias: prev.dias.map((d) => ({
-              ...d,
-              actividades: d.actividades.map((a) => {
-                const c = coords.get(a.id)
-                return c ? { ...a, ...c } : a
-              }),
-            })),
+        const pendientes = faltantes.slice(0, MAX_LUGARES)
+        for (let i = 0; i < pendientes.length; i += LOTE) {
+          const lote = pendientes.slice(i, i + LOTE)
+          const res = await fetch('/api/geocode', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              items: lote.map((f) => ({ nombre: f.nombre, ciudad: f.ciudad })),
+            }),
+            signal: controller.signal,
+          })
+          if (!res.ok) return
+          const { results } = (await res.json()) as {
+            results: ({ lat: number; lng: number } | null)[]
           }
-        })
+          const coords = new Map<string, { lat: number; lng: number }>()
+          lote.forEach((f, j) => {
+            const r = results[j]
+            if (r && Number.isFinite(r.lat) && Number.isFinite(r.lng)) {
+              coords.set(f.actId, r)
+            }
+          })
+          if (coords.size > 0) {
+            setTrip((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    dias: prev.dias.map((d) => ({
+                      ...d,
+                      actividades: d.actividades.map((a) => {
+                        const c = coords.get(a.id)
+                        return c ? { ...a, ...c, coordsVerificadas: true } : a
+                      }),
+                    })),
+                  }
+                : prev
+            )
+          }
+        }
+        hechoRef.current = tripId
       } catch {
-        // Background best-effort: ignoramos errores.
+        // Background best-effort: ignoramos errores (y la cancelación).
       }
     })()
 
-    return () => {
-      cancelado = true
-    }
-  }, [trip, setTrip])
+    return () => controller.abort()
+  }, [tripId, setTrip])
 }

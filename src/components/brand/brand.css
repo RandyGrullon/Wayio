@@ -1,0 +1,130 @@
+/* ───────────────────────────────────────────────────────────────────────────
+   CSS de marca: entrada de los sellos y colores por tema de las postales.
+   (La intro tiene su propio intro.css.)
+   ─────────────────────────────────────────────────────────────────────────── */
+
+/* Sello: entra una sola vez («se estampa»). La rotación fija va en la
+   propiedad `rotate`, así la animación de `transform` se compone con ella. */
+.wy-sello-in {
+  animation: wy-sello-in 260ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+@keyframes wy-sello-in {
+  0% {
+    opacity: 0;
+    transform: scale(1.3) rotate(-6deg);
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .wy-sello-in {
+    animation: none;
+  }
+}
+
+/* Logo: el punto de la i salta −4 px y vuelve (spring 600/20, §7.4) en el
+   hover/foco del enlace que lo envuelve y al guardar. Fuera de esto el logo
+   no se anima. Disparadores admitidos (todos dan la MISMA animación):
+   - hover/foco del <a> que envuelve el logo (o de .wy-logo-salto, la clase
+     del enlace del SiteHeader);
+   - [data-salto] en el propio logo (saltarPuntoDelLogo(), brand/salto.ts,
+     que lo quita a los 600 ms). En un SVG los px del transform son unidades
+     del viewBox (156×62); el svg del header lleva overflow-visible para que
+     el punto no se recorte al subir. */
+.wy-logo-punto {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+}
+a:hover [data-wy-logo] circle.wy-logo-punto,
+a:focus-visible [data-wy-logo] circle.wy-logo-punto,
+.wy-logo-salto:hover [data-wy-logo] circle.wy-logo-punto,
+.wy-logo-salto:focus-visible [data-wy-logo] circle.wy-logo-punto,
+[data-wy-logo][data-salto] circle.wy-logo-punto {
+  /* 8 u del viewBox ≈ 4 px con el logo a 30 px de alto */
+  animation: wy-punto-salto 460ms linear both;
+}
+@keyframes wy-punto-salto {
+  0% {
+    transform: none;
+    animation-timing-function: cubic-bezier(0.2, 0.7, 0.4, 1);
+  }
+  20% {
+    transform: translateY(-8px);
+    animation-timing-function: cubic-bezier(0.5, 0, 0.6, 1);
+  }
+  46% {
+    transform: translateY(1.8px) scale(1.06, 0.94);
+    animation-timing-function: cubic-bezier(0.4, 0, 0.6, 1);
+  }
+  70% {
+    transform: translateY(-0.6px);
+    animation-timing-function: cubic-bezier(0.4, 0, 0.6, 1);
+  }
+  100% {
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  a:hover [data-wy-logo] circle.wy-logo-punto,
+  a:focus-visible [data-wy-logo] circle.wy-logo-punto,
+  .wy-logo-salto:hover [data-wy-logo] circle.wy-logo-punto,
+  .wy-logo-salto:focus-visible [data-wy-logo] circle.wy-logo-punto,
+  [data-wy-logo][data-salto] circle.wy-logo-punto {
+    animation: none;
+  }
+}
+
+/* Postal generativa: cada instancia define --pl-* (claro) y --pd-* (oscuro);
+   aquí se elige según html.dark. */
+.wy-postal-arte {
+  --p-cielo: var(--pl-cielo);
+  --p-bruma: var(--pl-bruma);
+  --p-bruma2: var(--pl-bruma2);
+  --p-astro: var(--pl-astro);
+  --p-reticula: var(--pl-reticula);
+  --p-c1: var(--pl-c1);
+  --p-c2: var(--pl-c2);
+  --p-c3: var(--pl-c3);
+  --p-c4: var(--pl-c4);
+  --p-suelo: var(--pl-suelo);
+  --p-espuma: var(--pl-espuma);
+  --p-linea: var(--pl-linea);
+  --p-ruta: var(--pl-ruta);
+  --p-detalle: var(--pl-detalle);
+}
+.dark .wy-postal-arte {
+  --p-cielo: var(--pd-cielo);
+  --p-bruma: var(--pd-bruma);
+  --p-bruma2: var(--pd-bruma2);
+  --p-astro: var(--pd-astro);
+  --p-reticula: var(--pd-reticula);
+  --p-c1: var(--pd-c1);
+  --p-c2: var(--pd-c2);
+  --p-c3: var(--pd-c3);
+  --p-c4: var(--pd-c4);
+  --p-suelo: var(--pd-suelo);
+  --p-espuma: var(--pd-espuma);
+  --p-linea: var(--pd-linea);
+  --p-ruta: var(--pd-ruta);
+  --p-detalle: var(--pd-detalle);
+}
+@media print {
+  .dark .wy-postal-arte {
+    --p-cielo: var(--pl-cielo);
+    --p-bruma: var(--pl-bruma);
+    --p-bruma2: var(--pl-bruma2);
+    --p-astro: var(--pl-astro);
+    --p-reticula: var(--pl-reticula);
+    --p-c1: var(--pl-c1);
+    --p-c2: var(--pl-c2);
+    --p-c3: var(--pl-c3);
+    --p-c4: var(--pl-c4);
+    --p-suelo: var(--pl-suelo);
+    --p-espuma: var(--pl-espuma);
+    --p-linea: var(--pl-linea);
+    --p-ruta: var(--pl-ruta);
+    --p-detalle: var(--pl-detalle);
+  }
+}

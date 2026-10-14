@@ -1,44 +1,49 @@
-import { cn } from '@/lib/utils/cn'
+'use client'
+
+import { Segmented } from '@/components/ui/Segmented'
+import { NIVELES, ORDEN_PAQUETES } from '@/components/planner/catalogo'
 import type { TripForm } from '@/lib/validations/tripForm'
 
-const PACKAGES: {
-  value: TripForm['paquete']
-  label: string
-  desc: string
-}[] = [
-  { value: 'basico', label: 'Básico', desc: '3★ · Eco · Transporte público' },
-  { value: 'confort', label: 'Confort', desc: '4★ · Turista+ · Taxi/Uber' },
-  {
-    value: 'premium',
-    label: 'Premium',
-    desc: '5★ · Business · Tours privados',
-  },
-]
+type Paquete = TripForm['paquete']
+
+const OPCIONES = ORDEN_PAQUETES.map((p) => ({
+  value: p,
+  label: `${NIVELES[p].label} ${NIVELES[p].estrellas}★`,
+  ariaLabel: `${NIVELES[p].label}, hoteles de ${NIVELES[p].estrellas} estrellas`,
+}))
 
 interface PackageSelectorProps {
-  value: TripForm['paquete']
-  onChange: (type: TripForm['paquete']) => void
+  value: Paquete
+  onChange: (paquete: Paquete) => void
+  /** Nombre accesible del grupo (o labelledBy). */
+  label?: string
+  labelledBy?: string
+  fullWidth?: boolean
+  className?: string
 }
 
-export function PackageSelector({ value, onChange }: PackageSelectorProps) {
+/**
+ * Nivel preferido (docs/DISENO.md §6.2, estación 05, y §6.4 en móvil):
+ * Segmented «Básico 3★ | Confort 4★ | Premium 5★». Seleccionado = superficie
+ * con thumb deslizante; radiogroup con flechas.
+ */
+export function PackageSelector({
+  value,
+  onChange,
+  label,
+  labelledBy,
+  fullWidth = false,
+  className,
+}: PackageSelectorProps) {
   return (
-    <div className="grid grid-cols-3 gap-2">
-      {PACKAGES.map((pkg) => (
-        <button
-          key={pkg.value}
-          type="button"
-          onClick={() => onChange(pkg.value)}
-          className={cn(
-            'rounded-xl border p-3 text-center transition-all',
-            value === pkg.value
-              ? 'border-brand-500 bg-brand-50 text-brand-700 shadow-[0_4px_12px_-4px_rgba(20,184,166,0.5)] dark:bg-brand-500/15 dark:text-brand-300'
-              : 'border-border bg-surface text-fg-muted hover:border-brand-300 hover:text-fg'
-          )}
-        >
-          <p className="text-sm font-bold">{pkg.label}</p>
-          <p className="mt-0.5 text-xs text-fg-subtle">{pkg.desc}</p>
-        </button>
-      ))}
-    </div>
+    <Segmented
+      options={OPCIONES}
+      value={value}
+      onValueChange={onChange}
+      fullWidth={fullWidth}
+      {...(label ? { label } : {})}
+      {...(labelledBy ? { labelledBy } : {})}
+      {...(className ? { className } : {})}
+    />
   )
 }

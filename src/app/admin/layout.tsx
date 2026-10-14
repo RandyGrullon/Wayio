@@ -1,23 +1,32 @@
+import type { Metadata } from 'next'
 import type { ReactNode } from 'react'
-import { requireAdmin } from '@/lib/admin/auth'
-import { Sidebar } from '@/components/admin/Sidebar'
+import { AdminShell } from '@/components/admin/AdminShell'
+import { PanelNoDisponible } from '@/components/admin/PanelNoDisponible'
+import { exigirAdmin } from './_lib/acceso'
 
 // El panel siempre se renderiza en runtime (usa auth + service role)
 export const dynamic = 'force-dynamic'
+
+export const metadata: Metadata = {
+  // Un title de texto en este layout cortaría la plantilla de la raíz para
+  // las secciones hijas: se repite aquí para obtener «Usuarios · Admin | Wayio».
+  title: { default: 'Admin', template: '%s | Wayio' },
+  robots: { index: false, follow: false },
+}
 
 export default async function AdminLayout({
   children,
 }: {
   children: ReactNode
 }) {
-  const ctx = await requireAdmin()
+  // Redirige a /login o a / si no hay sesión de admin. Cada página vuelve a
+  // comprobarlo (los layouts y las páginas se renderizan en paralelo).
+  const sesion = await exigirAdmin()
+  if (!sesion) return <PanelNoDisponible />
 
   return (
-    <div className="flex min-h-screen bg-gray-50">
-      <Sidebar email={ctx.email} />
-      <main className="min-w-0 flex-1">
-        <div className="mx-auto max-w-6xl p-6">{children}</div>
-      </main>
-    </div>
+    <AdminShell email={sesion.email} userId={sesion.userId} demo={sesion.demo}>
+      {children}
+    </AdminShell>
   )
 }

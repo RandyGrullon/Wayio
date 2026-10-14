@@ -1,0 +1,37 @@
+/*
+ * Piezas locales del itinerario (docs/DISENO.md §6.5 y §7.4).
+ */
+
+/* Resaltado de lo que cambió tras un ajuste con IA: primary-soft que se
+   desvanece en 1,2 s. Con movimiento reducido la regla global lo acorta. */
+@keyframes wy-resaltar {
+  from {
+    background-color: var(--primary-soft);
+  }
+  to {
+    background-color: transparent;
+  }
+}
+.wy-resaltado {
+  animation: wy-resaltar 1200ms var(--ease-papel) both;
+}
+
+/* Barra apilada del total: los tramos crecen al cambiar los extras. */
+.wy-tramo-total {
+  transition: flex-grow var(--dur-slow) var(--ease-papel);
+}
+
+@media print {
+  /* Lo que entra con whileInView se imprime siempre visible. */
+  [data-wy-revelar] {
+    opacity: 1 !important;
+    transform: none !important;
+  }
+  .wy-resaltado {
+    display: none;
+  }
+  /* Títulos de día en Newsreader y sin cortes dentro de una actividad. */
+  [data-print='page'] li {
+    break-inside: avoid;
+  }
+}

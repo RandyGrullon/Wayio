@@ -1,33 +1,46 @@
 import type { MetadataRoute } from 'next'
 import { DESTINOS } from '@/lib/seo/destinos'
+import { getBaseUrl } from '@/lib/utils/baseUrl'
 
-const BASE_URL = process.env['NEXT_PUBLIC_BASE_URL'] ?? 'https://wayio.app'
-
+/**
+ * Sitemap público: home, planificador, precios, páginas legales y las
+ * landings de destinos. Las páginas privadas (cuenta, viajes, grupos, admin)
+ * no se publican aquí.
+ */
 export default function sitemap(): MetadataRoute.Sitemap {
+  const base = getBaseUrl()
+  const ahora = new Date()
+
   const staticPages: MetadataRoute.Sitemap = [
     {
-      url: BASE_URL,
-      lastModified: new Date(),
+      url: base,
+      lastModified: ahora,
       changeFrequency: 'weekly',
       priority: 1,
     },
     {
-      url: `${BASE_URL}/precios`,
-      lastModified: new Date(),
+      url: `${base}/precios`,
+      lastModified: ahora,
       changeFrequency: 'monthly',
       priority: 0.8,
     },
     {
-      url: `${BASE_URL}/dashboard`,
-      lastModified: new Date(),
-      changeFrequency: 'weekly',
-      priority: 0.6,
+      url: `${base}/planificar`,
+      lastModified: ahora,
+      changeFrequency: 'monthly',
+      priority: 0.8,
     },
+    ...['privacidad', 'terminos', 'contacto'].map((ruta) => ({
+      url: `${base}/${ruta}`,
+      lastModified: ahora,
+      changeFrequency: 'yearly' as const,
+      priority: 0.3,
+    })),
   ]
 
   const destinoPages: MetadataRoute.Sitemap = DESTINOS.map((d) => ({
-    url: `${BASE_URL}/viaje/${d.slug}`,
-    lastModified: new Date(),
+    url: `${base}/viaje/${d.slug}`,
+    lastModified: ahora,
     changeFrequency: 'monthly' as const,
     priority: 0.9,
   }))

@@ -1,18 +1,20 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
 import {
-  Check,
-  Pencil,
-  Share2,
-  RefreshCw,
+  Bookmark,
   CalendarPlus,
-  Printer,
+  Check,
+  Ellipsis,
   Layers,
+  Pencil,
   Plus,
-  MoreHorizontal,
+  Printer,
+  RefreshCw,
+  Share2,
 } from 'lucide-react'
-import { Button } from '@/components/ui/Button'
+import { Button, buttonClasses } from '@/components/ui/Button'
+import { Menu } from '@/components/ui/Menu'
+import { cn } from '@/lib/utils/cn'
 
 interface ResultActionsProps {
   isAuthed: boolean
@@ -27,12 +29,15 @@ interface ResultActionsProps {
   onCalendar: () => void
   onPrint: () => void
   onNewTrip: () => void
+  className?: string
 }
 
 /**
- * Compact result toolbar: the two primary actions (Guardar, Editar) stay
- * visible; everything secondary collapses into a "Más" overflow menu so the
- * header reads clean instead of a wall of buttons.
+ * Acciones de la portada del resultado (docs/DISENO.md §6.5): primary
+ * «Guardar viaje» (sin sesión: «Guardar e iniciar sesión»), outline
+ * «Compartir», ghost «Editar» y el menú «Más» (calendario, PDF, otra
+ * versión, cambiar versión y nuevo viaje). En móvil el primario ocupa todo el
+ * ancho y el resto va en una fila.
  */
 export function ResultActions({
   isAuthed,
@@ -47,131 +52,94 @@ export function ResultActions({
   onCalendar,
   onPrint,
   onNewTrip,
+  className,
 }: ResultActionsProps) {
-  const [open, setOpen] = useState(false)
-  const menuRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!open) return
-    const onDocClick = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setOpen(false)
-      }
-    }
-    const onEsc = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false)
-    document.addEventListener('mousedown', onDocClick)
-    document.addEventListener('keydown', onEsc)
-    return () => {
-      document.removeEventListener('mousedown', onDocClick)
-      document.removeEventListener('keydown', onEsc)
-    }
-  }, [open])
-
-  const run = (fn: () => void) => () => {
-    setOpen(false)
-    fn()
-  }
-
   return (
-    <div className="flex items-center gap-2">
-      <Button onClick={onSave} loading={saving} size="sm">
-        {isAuthed ? 'Guardar viaje' : 'Guardar (inicia sesión)'}
-      </Button>
-
+    <div
+      data-print="hide"
+      className={cn(
+        'flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center',
+        className
+      )}
+    >
       <Button
-        variant={editing ? 'primary' : 'outline'}
-        size="sm"
-        onClick={onToggleEdit}
-        title="Editar el itinerario antes de guardar"
+        variant="primary"
+        size="lg"
+        icon={<Bookmark />}
+        loading={saving}
+        loadingText="Guardando…"
+        onClick={onSave}
+        className="w-full sm:w-auto"
       >
-        {editing ? (
-          <>
-            <Check className="h-4 w-4" /> Listo
-          </>
-        ) : (
-          <>
-            <Pencil className="h-4 w-4" /> Editar
-          </>
-        )}
+        {isAuthed ? 'Guardar viaje' : 'Guardar e iniciar sesión'}
       </Button>
 
-      <div className="relative" ref={menuRef}>
+      <div className="flex items-center gap-2">
         <Button
           variant="outline"
-          size="sm"
-          onClick={() => setOpen((o) => !o)}
-          aria-haspopup="menu"
-          aria-expanded={open}
-          title="Más acciones"
+          icon={<Share2 />}
+          loading={sharing}
+          loadingText="Preparando…"
+          onClick={onShare}
+          className="flex-1 sm:flex-none"
         >
-          <MoreHorizontal className="h-4 w-4" /> Más
+          Compartir
         </Button>
-
-        {open ? (
-          <div
-            role="menu"
-            className="absolute right-0 z-50 mt-2 w-56 overflow-hidden rounded-2xl border border-border bg-surface p-1.5 shadow-[var(--shadow-lg,0_10px_30px_rgba(0,0,0,0.18))]"
-          >
-            <MenuItem
-              icon={<Layers className="h-4 w-4" />}
-              label="Cambiar paquete"
-              onClick={run(onChangePackage)}
+        <Button
+          variant="ghost"
+          icon={editing ? <Check /> : <Pencil />}
+          aria-pressed={editing}
+          onClick={onToggleEdit}
+          className="flex-1 sm:flex-none"
+        >
+          {editing ? 'Listo' : 'Editar'}
+        </Button>
+        <Menu
+          label="Más acciones"
+          trigger={
+            <Ellipsis
+              aria-hidden="true"
+              strokeWidth={1.75}
+              className="size-[18px]"
             />
-            <MenuItem
-              icon={<Share2 className="h-4 w-4" />}
-              label={isAuthed ? 'Compartir' : 'Compartir (inicia sesión)'}
-              onClick={run(onShare)}
-              loading={sharing}
-            />
-            <MenuItem
-              icon={<RefreshCw className="h-4 w-4" />}
-              label="Otra versión"
-              onClick={run(onRegenerate)}
-            />
-            <MenuItem
-              icon={<CalendarPlus className="h-4 w-4" />}
-              label="Añadir a calendario"
-              onClick={run(onCalendar)}
-            />
-            <MenuItem
-              icon={<Printer className="h-4 w-4" />}
-              label="Exportar PDF"
-              onClick={run(onPrint)}
-            />
-            <div className="my-1 h-px bg-border" />
-            <MenuItem
-              icon={<Plus className="h-4 w-4" />}
-              label="Nuevo viaje"
-              onClick={run(onNewTrip)}
-            />
-          </div>
-        ) : null}
+          }
+          triggerClassName={buttonClasses({ variant: 'outline', size: 'icon' })}
+          items={[
+            {
+              key: 'calendario',
+              label: 'Añadir al calendario',
+              icon: <CalendarPlus />,
+              onSelect: onCalendar,
+            },
+            {
+              key: 'pdf',
+              label: 'Exportar PDF',
+              icon: <Printer />,
+              onSelect: onPrint,
+            },
+            {
+              key: 'otra',
+              label: 'Otra versión',
+              icon: <RefreshCw />,
+              onSelect: onRegenerate,
+              separatorBefore: true,
+            },
+            {
+              key: 'cambiar',
+              label: 'Cambiar versión',
+              icon: <Layers />,
+              onSelect: onChangePackage,
+            },
+            {
+              key: 'nuevo',
+              label: 'Nuevo viaje',
+              icon: <Plus />,
+              onSelect: onNewTrip,
+              separatorBefore: true,
+            },
+          ]}
+        />
       </div>
     </div>
-  )
-}
-
-function MenuItem({
-  icon,
-  label,
-  onClick,
-  loading,
-}: {
-  icon: React.ReactNode
-  label: string
-  onClick: () => void
-  loading?: boolean
-}) {
-  return (
-    <button
-      type="button"
-      role="menuitem"
-      onClick={onClick}
-      disabled={loading}
-      className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left text-sm font-medium text-fg transition-colors hover:bg-surface-muted disabled:opacity-60"
-    >
-      <span className="text-fg-muted">{icon}</span>
-      {label}
-    </button>
   )
 }

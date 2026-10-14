@@ -1,0 +1,403 @@
+/* ───────────────────────────────────────────────────────────────────────────
+   Intro «La ruta llega» (docs/DISENO.md §9.3–§9.8)
+
+   El estado lo pone el bootScript del <head> en html[data-intro]:
+     play  → se reproduce (CSS desde el primer paint)
+     skip  → fundido de 200 ms y luego done
+     done  → oculto
+   html[data-intro-js] lo pone IntroHandoff al hidratar: desactiva el
+   fallback CSS y toma el relevo (FLIP + portal) con framer-motion.
+
+   Los tiempos de cada elemento se generan desde timeline.ts (keyframes.ts)
+   y van en el <style> de IntroSplash. Aquí solo hay presentación, estados y
+   @keyframes estáticos. Las curvas van en literal para no depender de que
+   Tailwind emita las variables --ease-* del @theme.
+   ─────────────────────────────────────────────────────────────────────────── */
+
+/* Radio animable del portal (también está en globals.css; repetirlo es inocuo) */
+@property --wy-r {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+
+/* ── Estados ─────────────────────────────────────────────────────────────── */
+.wy-intro {
+  display: none;
+}
+html[data-intro='play'] .wy-intro,
+html[data-intro='skip'] .wy-intro {
+  display: grid;
+}
+html[data-intro='play'] .wy-intro {
+  animation: wy-clock 2100ms linear both;
+}
+/* Sin hidratación: el propio CSS desvanece el overlay entre 2150 y 2470 ms */
+html[data-intro='play']:not([data-intro-js]) .wy-intro {
+  animation:
+    wy-clock 2100ms linear both,
+    wy-intro-out 320ms cubic-bezier(0.4, 0, 1, 1) 2150ms forwards;
+}
+html[data-intro='skip'] .wy-intro {
+  animation: wy-intro-out 200ms cubic-bezier(0.4, 0, 1, 1) forwards;
+  pointer-events: none;
+}
+
+/* Logo real del header: oculto mientras el clon de la intro está en escena */
+html[data-intro='play'] [data-wy-logo] {
+  opacity: 0;
+}
+html[data-intro='play']:not([data-intro-js]) [data-wy-logo] {
+  animation: wy-hide-until 2450ms step-end both;
+}
+
+/* Hero: pintado y opaco desde el primer paint (LCP = H1 real); solo se
+   revela con transform. */
+:root .wy-hero-item {
+  transition: transform 520ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition-delay: calc(var(--i, 0) * 60ms);
+}
+html[data-intro='play'] .wy-hero-item {
+  transform: translateY(16px);
+}
+/* Con JS: IntroHandoff pone data-intro-reveal a los 2250 ms */
+html[data-intro='play'][data-intro-reveal] .wy-hero-item {
+  transform: none;
+}
+/* Sin hidratación: el CSS sube el hero a los 2250 ms */
+html[data-intro='play']:not([data-intro-js]) .wy-hero-item {
+  animation: wy-hero-in 520ms cubic-bezier(0.22, 1, 0.36, 1)
+    calc(2250ms + var(--i, 0) * 60ms) both;
+}
+
+/* ── Overlay ─────────────────────────────────────────────────────────────── */
+.wy-intro {
+  /* Fallbacks por si los tokens semánticos aún no están definidos */
+  --wy-i-dot: var(--primary, #c21a66);
+  --wy-i-rule: var(--rule, #c9c1b2);
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-intro, 100);
+  place-items: center;
+  overflow: hidden;
+  color: var(--fg, #0f1e2e);
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.dark .wy-intro {
+  --wy-i-dot: var(--primary, #f55a9a);
+  --wy-i-rule: var(--rule, #2e4760);
+}
+
+.wy-intro__paper {
+  position: absolute;
+  inset: 0;
+  background: var(--bg, #f7f4ee);
+  --wy-r: 0px;
+}
+/* El portal se abre en círculo desde el centro del punto (solo al relevo) */
+.wy-intro__paper[data-portal] {
+  -webkit-mask: radial-gradient(
+    circle at var(--wy-x, 50%) var(--wy-y, 50%),
+    transparent var(--wy-r),
+    #000 calc(var(--wy-r) + 1px)
+  );
+  mask: radial-gradient(
+    circle at var(--wy-x, 50%) var(--wy-y, 50%),
+    transparent var(--wy-r),
+    #000 calc(var(--wy-r) + 1px)
+  );
+}
+
+.wy-intro__grid {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.wy-intro__grid-in {
+  opacity: 0;
+  transform-box: view-box;
+  transform-origin: 50% 50%;
+}
+.wy-intro__grid g {
+  stroke: var(--wy-i-rule);
+}
+/* Hijo animado de cada texto decorativo (ver keyframes.ts) */
+.wy-intro__in {
+  display: inline-block;
+}
+
+.wy-intro__stage {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 22px;
+}
+.wy-intro [data-wy-intro-mark] {
+  width: clamp(240px, 46vw, 420px);
+  transform-origin: 50% 50%;
+  will-change: transform;
+}
+.wy-intro [data-wy-intro-mark] > svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.wy-intro__tag {
+  margin: 0;
+  font-family:
+    var(--font-sans, var(--font-instrument, ui-sans-serif)), system-ui,
+    sans-serif;
+  font-size: 12px;
+  line-height: 1.2;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  font-stretch: 85%;
+  color: var(--fg-muted, #46525f);
+}
+.wy-intro__coords {
+  position: absolute;
+  bottom: calc(32px + env(safe-area-inset-bottom, 0px));
+  inset-inline: 0;
+  margin: 0;
+  text-align: center;
+  font-family:
+    var(--font-mono, var(--font-geist-mono, ui-monospace)), ui-monospace,
+    monospace;
+  font-size: 12px;
+  line-height: 1;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-subtle, #56626f);
+}
+.wy-intro__hint {
+  position: absolute;
+  bottom: calc(32px + env(safe-area-inset-bottom, 0px));
+  right: 24px;
+  margin: 0;
+  font-family:
+    var(--font-sans, var(--font-instrument, ui-sans-serif)), system-ui,
+    sans-serif;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--fg-subtle, #56626f);
+}
+/* En móvil el hint sube para no pisar las coordenadas */
+@media (max-width: 47.99rem) {
+  .wy-intro__hint {
+    right: 0;
+    left: 0;
+    bottom: calc(60px + env(safe-area-inset-bottom, 0px));
+    text-align: center;
+  }
+}
+
+/* ── Piezas del SVG ──────────────────────────────────────────────────────── */
+.wy-intro .s {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  /* el hueco de 200 evita puntos fantasma con remates redondos */
+  stroke-dasharray: 100 200;
+  stroke-dashoffset: 100;
+}
+.wy-intro .ghost {
+  fill: none;
+  stroke: var(--wy-i-rule);
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 0.1 4.2;
+  opacity: 0;
+}
+.wy-intro .dot-squash {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+}
+.wy-intro .dot-pop {
+  fill: var(--wy-i-dot);
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.wy-intro .wy-ring {
+  fill: none;
+  stroke: var(--wy-i-dot);
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+  vector-effect: non-scaling-stroke;
+}
+.wy-intro .wy-trail {
+  fill: var(--wy-i-dot);
+  opacity: 0;
+}
+
+/* ── @keyframes estáticos (los de la w y el punto se generan) ───────────── */
+@keyframes wy-clock {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes wy-intro-out {
+  to {
+    opacity: 0;
+    visibility: hidden;
+  }
+}
+@keyframes wy-hide-until {
+  0% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+@keyframes wy-hero-in {
+  from {
+    transform: translateY(16px);
+  }
+  to {
+    transform: none;
+  }
+}
+@keyframes wy-grid {
+  from {
+    opacity: 0;
+    transform: scale(1.03);
+  }
+  to {
+    opacity: 0.55;
+    transform: none;
+  }
+}
+@keyframes wy-draw {
+  from {
+    stroke-dashoffset: 100;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@keyframes wy-ghost {
+  0% {
+    opacity: 0;
+  }
+  17% {
+    opacity: 0.9;
+  }
+  70% {
+    opacity: 0.9;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes wy-pop {
+  from {
+    transform: scale(0);
+  }
+  to {
+    transform: scale(1);
+  }
+}
+@keyframes wy-squash {
+  0% {
+    transform: scale(1, 1);
+  }
+  30% {
+    transform: scale(1.22, 0.78);
+  }
+  62% {
+    transform: scale(0.94, 1.06);
+  }
+  100% {
+    transform: scale(1, 1);
+  }
+}
+@keyframes wy-ring-a {
+  0% {
+    opacity: 0.45;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(2.6);
+  }
+}
+@keyframes wy-ring-b {
+  0% {
+    opacity: 0.55;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(3.4);
+  }
+}
+@keyframes wy-ring-c {
+  0% {
+    opacity: 0.35;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(2.4);
+  }
+}
+@keyframes wy-trail {
+  0% {
+    opacity: 0;
+  }
+  1% {
+    opacity: 0.6;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes wy-rise8 {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes wy-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* ── Movimiento reducido e impresión: la intro no existe ────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .wy-intro {
+    display: none !important;
+  }
+  .wy-hero-item {
+    transform: none !important;
+    animation: none !important;
+  }
+}
+@media print {
+  .wy-intro {
+    display: none !important;
+  }
+}

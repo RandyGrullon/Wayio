@@ -1,35 +1,35 @@
-import { createServerClient } from '@supabase/ssr'
-import { cookies } from 'next/headers'
 import { NextResponse } from 'next/server'
+import type { NextRequest } from 'next/server'
+import { createClient } from '@/lib/supabase/server'
+import { isSupabaseConfigured } from '@/lib/supabase/config'
+import { NUEVA_CLAVE_PATH } from '@/lib/auth/constants'
+import { destinoSeguro } from '@/lib/auth/redirect'
+import { marcarRecuperacion } from '@/lib/auth/server'
 
-const SUPABASE_URL = process.env['NEXT_PUBLIC_SUPABASE_URL'] ?? ''
-const SUPABASE_ANON_KEY = process.env['NEXT_PUBLIC_SUPABASE_ANON_KEY'] ?? ''
+/**
+ * Vuelta de Google OAuth (y de enlaces de email PKCE con las plantillas por
+ * defecto de Supabase): canjea el `code` por sesión y redirige a `next`
+ * validado (solo rutas internas: sin open redirect).
+ */
+export async function GET(request: NextRequest): Promise<NextResponse> {
+  const { searchParams, origin } = request.nextUrl
+  const ir = (path: string): NextResponse =>
+    NextResponse.redirect(new URL(path, origin))
 
-export async function GET(request: Request): Promise<NextResponse> {
-  const { searchParams, origin } = new URL(request.url)
-  const code = searchParams.get('code')
-  const next = searchParams.get('next') ?? '/'
-
-  if (code) {
-    const cookieStore = await cookies()
-    const supabase = createServerClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-      cookies: {
-        getAll() {
-          return cookieStore.getAll()
-        },
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value, options }) =>
-            cookieStore.set(name, value, options)
-          )
-        },
-      },
-    })
-
-    const { error } = await supabase.auth.exchangeCodeForSession(code)
-    if (!error) {
-      return NextResponse.redirect(`${origin}${next}`)
-    }
+  // El proveedor devolvió un error (p. ej. el usuario canceló en Google).
+  if (searchParams.get('error') || searchParams.get('error_code')) {
+    return ir('/login?error=oauth')
   }
+  if (!isSupabaseConfigured()) return ir('/login?error=config')
 
-  return NextResponse.redirect(`${origin}/login?error=auth`)
+  const code = searchParams.get('code')
+  if (!code) return ir('/login?error=auth')
+
+  const next = destinoSeguro(searchParams.get('next'))
+  const supabase = await createClient()
+  const { data, error } = await supabase.auth.exchangeCodeForSession(code)
+  if (error || !data.user) return ir('/login?error=auth')
+
+  if (next === NUEVA_CLAVE_PATH) await marcarRecuperacion(data.user.id)
+  return ir(next)
 }

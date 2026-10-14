@@ -1,297 +1,873 @@
 @import 'tailwindcss';
 
-/* Dark mode is class-driven (html.dark) so we can also respect the system
-   preference via a tiny inline script in the root layout. */
+/* ═════════════════════════════════════════════════════════════════════════
+   Wayio · sistema «Cuaderno de Ruta» (docs/DISENO.md §2.1)
+   Papel, tinta, un solo acento (Rosa de Bayahíbe) y la línea y el punto.
+   ═════════════════════════════════════════════════════════════════════════ */
+
+/* Dark mode por clase (html.dark), mismo mecanismo que hoy */
 @custom-variant dark (&:where(.dark, .dark *));
 
-/* ─────────────────────────────────────────────────────────────────────────
-   Design tokens — Wayio "vibrant travel" system
-   Brand = teal (trust / action) · Coral (energy / accent) · Amber (sun)
-   ───────────────────────────────────────────────────────────────────────── */
+/* Radio animable del portal de la intro */
+@property --wy-r {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+
 @theme {
+  /* ── Familias (variables que inyecta next/font en <html>) ───────────── */
+  --font-display:
+    var(--font-newsreader), 'Iowan Old Style', 'Palatino Linotype', Georgia,
+    serif;
   --font-sans:
-    var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, sans-serif;
-  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+    var(--font-instrument), ui-sans-serif, system-ui, -apple-system, 'Segoe UI',
+    sans-serif;
+  --font-mono:
+    var(--font-geist-mono), ui-monospace, 'SFMono-Regular', Menlo, monospace;
 
-  /* Brand — teal/ocean */
-  --color-brand-50: #effdfa;
-  --color-brand-100: #c9f7ef;
-  --color-brand-200: #95efe0;
-  --color-brand-300: #5ce0ce;
-  --color-brand-400: #2cc6b6;
-  --color-brand-500: #14b8a6;
-  --color-brand-600: #0a9488;
-  --color-brand-700: #0c766e;
-  --color-brand-800: #105e58;
-  --color-brand-900: #124e49;
-  --color-brand-950: #042f2c;
+  /* ── ROSA · Rosa de Bayahíbe (acción, destino, la marca) ────────────── */
+  --color-rosa-50: #fff0f6;
+  --color-rosa-100: #ffddeb;
+  --color-rosa-200: #ffbad6;
+  --color-rosa-300: #ff8ab8;
+  --color-rosa-400: #f55a9a;
+  --color-rosa-500: #e0307d; /* solo gráfico: nunca con texto encima */
+  --color-rosa-600: #c21a66;
+  --color-rosa-700: #a11254;
+  --color-rosa-800: #800f45;
+  --color-rosa-900: #640e39;
+  --color-rosa-950: #3d0520;
 
-  /* Coral — sunset accent */
-  --color-coral-50: #fff5f3;
-  --color-coral-100: #ffe7e1;
-  --color-coral-200: #ffcabe;
-  --color-coral-300: #ffa492;
-  --color-coral-400: #ff7458;
-  --color-coral-500: #fb5234;
-  --color-coral-600: #ec3a1c;
-  --color-coral-700: #c42c15;
-  --color-coral-800: #a22817;
-  --color-coral-900: #86271a;
-  --color-coral-950: #491008;
+  /* ── MAR · verde-azul profundo (enlaces, info, foco) ────────────────── */
+  --color-mar-50: #eff7f5;
+  --color-mar-100: #d6ece8;
+  --color-mar-200: #aed8d1;
+  --color-mar-300: #7fbfb6;
+  --color-mar-400: #519f96;
+  --color-mar-500: #33827a;
+  --color-mar-600: #246b66;
+  --color-mar-700: #1e5a57;
+  --color-mar-800: #1a4a48;
+  --color-mar-900: #173e3c;
+  --color-mar-950: #0b2423;
 
-  /* Sun — warm amber */
-  --color-sun-50: #fffbeb;
-  --color-sun-100: #fef2c7;
-  --color-sun-200: #fde488;
-  --color-sun-300: #fcd049;
-  --color-sun-400: #fbbd23;
-  --color-sun-500: #f59e0b;
-  --color-sun-600: #d97706;
-  --color-sun-700: #b45309;
-  --color-sun-800: #924012;
-  --color-sun-900: #783512;
+  /* ── TINTA · texto y estructura ─────────────────────────────────────── */
+  --color-tinta-50: #f2f5f8;
+  --color-tinta-100: #e1e8ef;
+  --color-tinta-200: #b6c2ce;
+  --color-tinta-300: #9aaabb;
+  --color-tinta-400: #7088a0;
+  --color-tinta-500: #767d86;
+  --color-tinta-600: #56626f;
+  --color-tinta-700: #46525f;
+  --color-tinta-800: #2c4258;
+  --color-tinta-900: #142435;
+  --color-tinta-950: #0f1e2e;
 
-  /* Radius scale */
-  --radius-xl: 1rem;
-  --radius-2xl: 1.25rem;
-  --radius-3xl: 1.75rem;
+  /* ── NOCHE · superficies del modo oscuro ────────────────────────────── */
+  --color-noche-600: #2e4760;
+  --color-noche-700: #22384d;
+  --color-noche-800: #1f344a;
+  --color-noche-850: #18293b;
+  --color-noche-900: #112131;
+  --color-noche-950: #0b1622;
 
-  /* Signature shadows (soft, colored) */
-  --shadow-soft:
-    0 1px 2px rgb(15 23 42 / 0.04), 0 8px 24px -8px rgb(15 23 42 / 0.12);
-  --shadow-glow: 0 10px 30px -8px rgb(20 184 166 / 0.45);
-  --shadow-coral: 0 10px 30px -8px rgb(251 82 52 / 0.45);
+  /* ── PAPEL · neutros cálidos de superficie (no para texto) ──────────── */
+  --color-papel-50: #fbf9f5;
+  --color-papel-100: #f7f4ee;
+  --color-papel-150: #f1eee8;
+  --color-papel-200: #efeae1;
+  --color-papel-300: #e2dcd0;
+  --color-papel-400: #c9c1b2;
+  --color-papel-500: #a39b8c;
+  --color-papel-600: #7d7668;
+  --color-papel-700: #5e584d;
+  --color-papel-800: #403c35;
+  --color-papel-900: #2a2723;
 
-  /* Easing */
-  --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
+  /* ── LATÓN · premium (casi siempre gráfico) ─────────────────────────── */
+  --color-laton-50: #faf5ea;
+  --color-laton-100: #f2e6ca;
+  --color-laton-200: #e6cd95;
+  --color-laton-300: #d9b468;
+  --color-laton-400: #c79a45;
+  --color-laton-500: #b08a3e;
+  --color-laton-600: #9a7531;
+  --color-laton-700: #7e5f22;
+  --color-laton-800: #654b1e;
+  --color-laton-900: #533e1c;
+  --color-laton-950: #2e210d;
+
+  /* ── Estados ────────────────────────────────────────────────────────── */
+  --color-verde-50: #edf5ee;
+  --color-verde-200: #a8e8c4;
+  --color-verde-300: #93d6a6;
+  --color-verde-600: #2e6b3f;
+  --color-verde-700: #23582f;
+  --color-verde-950: #15302a;
+  --color-ambar-50: #fbf1d9;
+  --color-ambar-200: #fbd48c;
+  --color-ambar-300: #f2c76e;
+  --color-ambar-700: #7a5200;
+  --color-ambar-800: #6b4800;
+  --color-ambar-950: #2d2c22;
+  --color-rojo-50: #fdeeec;
+  --color-rojo-200: #ffc2b5;
+  --color-rojo-300: #ff9c85;
+  --color-rojo-600: #b42318;
+  --color-rojo-700: #912018;
+  --color-rojo-950: #35212a;
+
+  /* ── Días del mapa: base (mapa claro) y luz (mapa oscuro) ───────────── */
+  --color-dia-base-1: #a63f26; /* Terracota */
+  --color-dia-luz-1: #e58a68;
+  --color-dia-base-2: #1e5a57; /* Mar */
+  --color-dia-luz-2: #6fb8ae;
+  --color-dia-base-3: #7e5f22; /* Latón */
+  --color-dia-luz-3: #d9b468;
+  --color-dia-base-4: #3b4c8c; /* Índigo */
+  --color-dia-luz-4: #8e9ee0;
+  --color-dia-base-5: #7a3b69; /* Ciruela */
+  --color-dia-luz-5: #d08bc0;
+  --color-dia-base-6: #4f6427; /* Oliva */
+  --color-dia-luz-6: #a9c26b;
+  --color-dia-base-7: #1f6f95; /* Azul Caribe */
+  --color-dia-luz-7: #6cb8de;
+  --color-dia-base-8: #8a2f3c; /* Burdeos */
+  --color-dia-luz-8: #e07f8c;
+  --color-dia-base-9: #4a5560; /* Pizarra */
+  --color-dia-luz-9: #a9b6c2;
+  --color-dia-base-10: #9a5b13; /* Ocre */
+  --color-dia-luz-10: #e3a15a;
+
+  /* ── TEMPORAL: alias de escalas viejas → nuevas (borrar tras el codemod) */
+  --color-brand-50: #eff7f5;
+  --color-brand-100: #d6ece8;
+  --color-brand-200: #aed8d1;
+  --color-brand-300: #7fbfb6;
+  --color-brand-400: #519f96;
+  --color-brand-500: #33827a;
+  --color-brand-600: #246b66;
+  --color-brand-700: #1e5a57;
+  --color-brand-800: #1a4a48;
+  --color-brand-900: #173e3c;
+  --color-brand-950: #0b2423;
+  --color-coral-50: #fff0f6;
+  --color-coral-100: #ffddeb;
+  --color-coral-200: #ffbad6;
+  --color-coral-300: #ff8ab8;
+  --color-coral-400: #f55a9a;
+  --color-coral-500: #e0307d;
+  --color-coral-600: #c21a66;
+  --color-coral-700: #a11254;
+  --color-coral-800: #800f45;
+  --color-coral-900: #640e39;
+  --color-coral-950: #3d0520;
+  --color-sun-50: #faf5ea;
+  --color-sun-100: #f2e6ca;
+  --color-sun-200: #e6cd95;
+  --color-sun-300: #d9b468;
+  --color-sun-400: #c79a45;
+  --color-sun-500: #b08a3e;
+  --color-sun-600: #9a7531;
+  --color-sun-700: #7e5f22;
+  --color-sun-800: #654b1e;
+  --color-sun-900: #533e1c;
+
+  /* ── Tipos (text-<rol>) ─────────────────────────────────────────────── */
+  --text-display-xl: clamp(2.75rem, 1.6rem + 4.8vw, 5.5rem);
+  --text-display-xl--line-height: 0.98;
+  --text-display-xl--letter-spacing: -0.03em;
+  --text-display-xl--font-weight: 500;
+  --text-display-l: clamp(2.25rem, 1.5rem + 3.2vw, 3.75rem);
+  --text-display-l--line-height: 1.02;
+  --text-display-l--letter-spacing: -0.025em;
+  --text-display-l--font-weight: 500;
+  --text-h1: clamp(1.875rem, 1.5rem + 1.6vw, 2.5rem);
+  --text-h1--line-height: 1.1;
+  --text-h1--letter-spacing: -0.02em;
+  --text-h1--font-weight: 600;
+  --text-h2: clamp(1.5rem, 1.3rem + 0.9vw, 1.875rem);
+  --text-h2--line-height: 1.15;
+  --text-h2--letter-spacing: -0.015em;
+  --text-h2--font-weight: 600;
+  --text-h3: 1.25rem;
+  --text-h3--line-height: 1.25;
+  --text-h3--letter-spacing: -0.01em;
+  --text-h3--font-weight: 600;
+  --text-title: 1.0625rem;
+  --text-title--line-height: 1.35;
+  --text-title--letter-spacing: -0.005em;
+  --text-title--font-weight: 600;
+  --text-lead: clamp(1.125rem, 1.05rem + 0.3vw, 1.25rem);
+  --text-lead--line-height: 1.55;
+  --text-body: 1rem;
+  --text-body--line-height: 1.6;
+  --text-body-s: 0.9375rem;
+  --text-body-s--line-height: 1.5;
+  --text-label: 0.875rem;
+  --text-label--line-height: 1.3;
+  --text-label--font-weight: 600;
+  --text-caption: 0.8125rem;
+  --text-caption--line-height: 1.4;
+  --text-caption--letter-spacing: 0.01em;
+  --text-caption--font-weight: 500;
+  --text-overline: 0.75rem;
+  --text-overline--line-height: 1.2;
+  --text-overline--letter-spacing: 0.14em;
+  --text-overline--font-weight: 600;
+  --text-data: 0.8125rem;
+  --text-data--line-height: 1.4;
+  --text-data--letter-spacing: 0.02em;
+  --text-data--font-weight: 500;
+  --text-num-xl: clamp(2.25rem, 2rem + 1vw, 2.75rem);
+  --text-num-xl--line-height: 1;
+  --text-num-xl--letter-spacing: -0.02em;
+  --text-num-xl--font-weight: 600;
+  --text-num-l: 1.75rem;
+  --text-num-l--line-height: 1.1;
+  --text-num-l--letter-spacing: -0.015em;
+  --text-num-l--font-weight: 600;
+
+  /* ── Radios (se ELIMINAN los overrides de --radius-xl/2xl/3xl) ──────── */
+  --radius-stamp: 0.25rem; /* 4: badges, sellos rectangulares */
+  --radius-control: 0.75rem; /* 12: inputs, selects, textarea, toasts, popups */
+  --radius-card: 1rem; /* 16: tarjetas, mapa embebido */
+  --radius-sheet: 1.5rem; /* 24: modales, sheets, postal del hero */
+  /* botones, chips, avatares, pistas de segmented y switches: rounded-full */
+
+  /* ── Curvas (no se pisan las ease-in/out por defecto de TW4) ────────── */
+  --ease-papel: cubic-bezier(0.22, 1, 0.36, 1); /* entradas */
+  --ease-salida: cubic-bezier(0.4, 0, 1, 1); /* salidas */
+  --ease-tinta: cubic-bezier(
+    0.65,
+    0,
+    0.35,
+    1
+  ); /* trazos, desplazamientos A→B */
+  --ease-sello: cubic-bezier(0.34, 1.56, 0.64, 1); /* aterrizajes y sellos */
+  --ease-portal: cubic-bezier(0.76, 0, 0.24, 1); /* revelados de pantalla */
+  --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1); /* TEMPORAL: alias legado */
+
+  /* ── Animaciones ────────────────────────────────────────────────────── */
+  --animate-shimmer: wy-shimmer 1.4s linear infinite;
+  --animate-hormigas: wy-hormigas 1.2s linear infinite;
+  --animate-sello: wy-sello 260ms var(--ease-sello) both;
+  --animate-ping-gps: wy-ping 2s var(--ease-papel) 3;
+  --animate-rise: wy-rise 420ms var(--ease-papel) both;
+  @keyframes wy-shimmer {
+    from {
+      background-position: 200% 0;
+    }
+    to {
+      background-position: -200% 0;
+    }
+  }
+  @keyframes wy-hormigas {
+    to {
+      stroke-dashoffset: -20;
+    }
+  }
+  @keyframes wy-sello {
+    0% {
+      opacity: 0;
+      transform: scale(1.3) rotate(-12deg);
+    }
+    100% {
+      opacity: 1;
+      transform: scale(1) rotate(-6deg);
+    }
+  }
+  @keyframes wy-ping {
+    0% {
+      opacity: 0.35;
+      transform: scale(1);
+    }
+    100% {
+      opacity: 0;
+      transform: scale(2.4);
+    }
+  }
+  @keyframes wy-rise {
+    from {
+      opacity: 0;
+      transform: translateY(12px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  /* ── Alturas y medidas (h-control-md, w-sidebar, …) ─────────────────── */
+  --spacing-control-sm: 2.25rem; /* 36: admin y terciarios (área táctil ampliada) */
+  --spacing-control-md: 2.75rem; /* 44: por defecto, objetivo táctil */
+  --spacing-control-lg: 3.25rem; /* 52: inputs públicos y CTA de formulario */
+  --spacing-control-xl: 3.75rem; /* 60: CTA del hero */
+  --spacing-header: 4rem; /* 64 desktop */
+  --spacing-header-sm: 3.5rem; /* 56 móvil */
+  --spacing-bottombar: 4.5rem; /* 72 (+ safe-area) */
+  --spacing-sidebar: 15.5rem; /* 248 admin */
+
+  /* ── Contenedores (max-w-content, …) ────────────────────────────────── */
+  --container-content: 77.5rem; /* 1240 */
+  --container-prose: 42rem; /* ~68ch */
+  --container-form: 40rem; /* 640 */
+  --container-admin: 90rem; /* 1440 */
+
+  --breakpoint-xs: 22.5rem; /* 360 */
+  --blur-header: 10px;
 }
 
-/* ── Semantic surface tokens (light) ─────────────────────────────────────── */
+/* ── Semánticos: CLARO ──────────────────────────────────────────────────── */
 :root {
-  --bg: #f7f8fa;
-  --bg-elev: #ffffff;
+  color-scheme: light;
+  --bg: #f7f4ee;
   --surface: #ffffff;
-  --surface-muted: #f1f3f6;
-  --fg: #0f172a;
-  --fg-muted: #64748b;
-  --fg-subtle: #94a3b8;
-  --border: #e6e9ef;
-  --border-strong: #d3d8e0;
-  --glass: rgb(255 255 255 / 0.7);
-  --glass-border: rgb(255 255 255 / 0.55);
+  --surface-2: #efeae1;
+  --surface-raised: #ffffff;
+  --surface-inverse: #142435;
+  --surface-inverse-hover: #22384d;
+  --fg: #0f1e2e;
+  --fg-muted: #46525f;
+  --fg-subtle: #56626f;
+  --fg-inverse: #f7f4ee;
+  --border: #e2dcd0; /* filete decorativo */
+  --rule: #c9c1b2; /* filete medio: rieles, hover de tarjeta */
+  --border-strong: #767d86; /* controles ≥3:1 (inputs, chips, outline) */
+  --primary: #c21a66;
+  --primary-hover: #a11254;
+  --primary-pressed: #800f45;
+  --primary-fg: #ffffff;
+  --primary-soft: #fff0f6;
+  --primary-soft-fg: #800f45;
+  --primary-text: #a11254;
+  --accent: #1e5a57;
+  --accent-hover: #1a4a48;
+  --accent-fg: #ffffff;
+  --accent-soft: #eff7f5;
+  --accent-soft-fg: #1a4a48;
+  --brass: #9a7531;
+  --brass-text: #7e5f22;
+  --brass-soft: #faf5ea;
+  --brass-soft-fg: #654b1e;
+  --success: #2e6b3f;
+  --success-bg: #edf5ee;
+  --success-fg: #23582f;
+  --warning: #7a5200;
+  --warning-bg: #fbf1d9;
+  --warning-fg: #6b4800;
+  --danger: #b42318;
+  --danger-hover: #912018;
+  --on-danger: #ffffff;
+  --danger-bg: #fdeeec;
+  --danger-fg: #912018;
+  --info: #1e5a57;
+  --info-bg: #eff7f5;
+  --info-fg: #1a4a48;
+  --ring: #246b66;
+  --ring-inverse: #7fbfb6;
+  --overlay: rgb(11 22 34 / 0.55);
+  --selection: #ffddeb;
+  --shimmer: #f7f4ee;
+  --toast-success: #9ae0b4;
+  --toast-danger: #ffa899;
+  --toast-action: #ff8ab8;
+  --gps: #c21a66;
+  --gps-ring: #ffffff;
+  --map-casing: #ffffff;
+  --map-label: #46525f;
+  --dia-1: #a63f26;
+  --dia-2: #1e5a57;
+  --dia-3: #7e5f22;
+  --dia-4: #3b4c8c;
+  --dia-5: #7a3b69;
+  --dia-6: #4f6427;
+  --dia-7: #1f6f95;
+  --dia-8: #8a2f3c;
+  --dia-9: #4a5560;
+  --dia-10: #9a5b13;
+  --dia-num: #ffffff;
+  --sh-card: 0 1px 0 rgb(15 30 46 / 0.04), 0 1px 3px rgb(15 30 46 / 0.06);
+  --sh-elev:
+    0 2px 4px -2px rgb(15 30 46 / 0.06), 0 14px 32px -12px rgb(15 30 46 / 0.18);
+  --sh-float:
+    0 10px 20px -10px rgb(15 30 46 / 0.14),
+    0 28px 64px -20px rgb(15 30 46 / 0.3);
+  /* duraciones: duration-(--dur-fast) */
+  --dur-instant: 80ms;
+  --dur-fast: 140ms;
+  --dur-base: 200ms;
+  --dur-medium: 280ms;
+  --dur-slow: 420ms;
+  --dur-page: 520ms;
+  /* capas: z-(--z-header) */
+  --z-base: 0;
+  --z-sticky: 20;
+  --z-header: 30;
+  --z-dropdown: 40;
+  --z-sheet: 50;
+  --z-modal: 60;
+  --z-toast: 70;
+  --z-tooltip: 90;
+  --z-intro: 100;
 }
 
+/* ── Semánticos: OSCURO (noche de carta) ───────────────────────────────── */
 .dark {
-  --bg: #070b14;
-  --bg-elev: #0e1422;
-  --surface: #111827;
-  --surface-muted: #1a2335;
-  --fg: #f1f5f9;
-  --fg-muted: #94a3b8;
-  --fg-subtle: #64748b;
-  --border: #1e293b;
-  --border-strong: #2c3a52;
-  --glass: rgb(17 24 39 / 0.6);
-  --glass-border: rgb(255 255 255 / 0.08);
+  color-scheme: dark;
+  --bg: #0b1622;
+  --surface: #112131;
+  --surface-2: #18293b;
+  --surface-raised: #1f344a;
+  --surface-inverse: #f1eee8;
+  --surface-inverse-hover: #e2dcd0;
+  --fg: #f1eee8;
+  --fg-muted: #b6c2ce;
+  --fg-subtle: #9aaabb;
+  --fg-inverse: #0f1e2e;
+  --border: #22384d;
+  --rule: #2e4760;
+  --border-strong: #7088a0;
+  --primary: #f55a9a;
+  --primary-hover: #ff8ab8;
+  --primary-pressed: #ffbad6;
+  --primary-fg: #0b1622;
+  --primary-soft: #3a1d35;
+  --primary-soft-fg: #ffbad6;
+  --primary-text: #ff8ab8;
+  --accent: #7fbfb6;
+  --accent-hover: #aed8d1;
+  --accent-fg: #0b1622;
+  --accent-soft: #133038;
+  --accent-soft-fg: #aed8d1;
+  --brass: #d9b468;
+  --brass-text: #e9c88a;
+  --brass-soft: #2c2a24;
+  --brass-soft-fg: #e9c88a;
+  --success: #93d6a6;
+  --success-bg: #15302a;
+  --success-fg: #a8e8c4;
+  --warning: #f2c76e;
+  --warning-bg: #2d2c22;
+  --warning-fg: #fbd48c;
+  --danger: #ff9c85;
+  --danger-hover: #ffc2b5;
+  --on-danger: #0b1622;
+  --danger-bg: #35212a;
+  --danger-fg: #ffc2b5;
+  --info: #7fbfb6;
+  --info-bg: #133038;
+  --info-fg: #aed8d1;
+  --ring: #7fbfb6;
+  --ring-inverse: #1e5a57;
+  --overlay: rgb(3 8 14 / 0.7);
+  --selection: #6b1440;
+  --shimmer: #1f344a;
+  --toast-success: #23582f;
+  --toast-danger: #b42318;
+  --toast-action: #a11254;
+  --gps: #f55a9a;
+  --gps-ring: #0b1622;
+  --map-casing: #0b1622;
+  --map-label: #b6c2ce;
+  --dia-1: #e58a68;
+  --dia-2: #6fb8ae;
+  --dia-3: #d9b468;
+  --dia-4: #8e9ee0;
+  --dia-5: #d08bc0;
+  --dia-6: #a9c26b;
+  --dia-7: #6cb8de;
+  --dia-8: #e07f8c;
+  --dia-9: #a9b6c2;
+  --dia-10: #e3a15a;
+  --dia-num: #0b1622;
+  --sh-card: 0 0 0 1px rgb(255 255 255 / 0.02);
+  --sh-elev: 0 2px 4px rgb(0 0 0 / 0.3), 0 14px 32px -12px rgb(0 0 0 / 0.6);
+  --sh-float:
+    0 10px 24px -10px rgb(0 0 0 / 0.5), 0 28px 64px -20px rgb(0 0 0 / 0.7);
 }
 
-/* Expose semantic tokens to Tailwind utilities (bg-surface, text-fg, …) */
+/* ── Utilidades semánticas (bg-surface, text-fg-muted, ring-ring, bg-dia-3…) */
 @theme inline {
   --color-bg: var(--bg);
-  --color-bg-elev: var(--bg-elev);
   --color-surface: var(--surface);
-  --color-surface-muted: var(--surface-muted);
+  --color-surface-2: var(--surface-2);
+  --color-surface-raised: var(--surface-raised);
+  --color-surface-inverse: var(--surface-inverse);
+  --color-surface-inverse-hover: var(--surface-inverse-hover);
+  --color-surface-muted: var(--surface-2); /* alias legado */
+  --color-bg-elev: var(--surface-raised); /* alias legado */
   --color-fg: var(--fg);
   --color-fg-muted: var(--fg-muted);
   --color-fg-subtle: var(--fg-subtle);
+  --color-fg-inverse: var(--fg-inverse);
   --color-border: var(--border);
+  --color-rule: var(--rule);
   --color-border-strong: var(--border-strong);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-pressed: var(--primary-pressed);
+  --color-primary-fg: var(--primary-fg);
+  --color-primary-soft: var(--primary-soft);
+  --color-primary-soft-fg: var(--primary-soft-fg);
+  --color-primary-text: var(--primary-text);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-soft-fg: var(--accent-soft-fg);
+  --color-brass: var(--brass);
+  --color-brass-text: var(--brass-text);
+  --color-brass-soft: var(--brass-soft);
+  --color-brass-soft-fg: var(--brass-soft-fg);
+  --color-success: var(--success);
+  --color-success-bg: var(--success-bg);
+  --color-success-fg: var(--success-fg);
+  --color-warning: var(--warning);
+  --color-warning-bg: var(--warning-bg);
+  --color-warning-fg: var(--warning-fg);
+  --color-danger: var(--danger);
+  --color-danger-hover: var(--danger-hover);
+  --color-on-danger: var(--on-danger);
+  --color-danger-bg: var(--danger-bg);
+  --color-danger-fg: var(--danger-fg);
+  --color-info: var(--info);
+  --color-info-bg: var(--info-bg);
+  --color-info-fg: var(--info-fg);
+  --color-ring: var(--ring);
+  --color-ring-inverse: var(--ring-inverse);
+  --color-overlay: var(--overlay);
+  --color-gps: var(--gps);
+  --color-toast-success: var(--toast-success);
+  --color-toast-danger: var(--toast-danger);
+  --color-toast-action: var(--toast-action);
+  --color-dia-1: var(--dia-1);
+  --color-dia-2: var(--dia-2);
+  --color-dia-3: var(--dia-3);
+  --color-dia-4: var(--dia-4);
+  --color-dia-5: var(--dia-5);
+  --color-dia-6: var(--dia-6);
+  --color-dia-7: var(--dia-7);
+  --color-dia-8: var(--dia-8);
+  --color-dia-9: var(--dia-9);
+  --color-dia-10: var(--dia-10);
+  --color-dia-num: var(--dia-num);
+  --shadow-card: var(--sh-card);
+  --shadow-elev: var(--sh-elev);
+  --shadow-float: var(--sh-float);
+  --shadow-soft: var(--sh-card); /* alias legado */
+  --shadow-lg: var(--sh-float); /* repara var(--shadow-lg) de ResultActions */
 }
 
 @layer base {
-  * {
+  *,
+  ::before,
+  ::after {
     border-color: var(--border);
   }
   html {
     -webkit-tap-highlight-color: transparent;
+    text-size-adjust: 100%;
+    /* Las anclas no quedan bajo el header sticky */
+    scroll-padding-top: calc(var(--spacing-header) + 1rem);
   }
   body {
     background: var(--bg);
     color: var(--fg);
     font-family: var(--font-sans);
+    font-size: 1rem;
+    line-height: 1.6;
+    font-optical-sizing: auto;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
-    /* Tints native controls: the selected day in date pickers, checkboxes,
-       radios, range sliders, etc. — applies app-wide. */
-    accent-color: var(--color-brand-500);
+    accent-color: var(--primary);
+  }
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+  p,
+  li {
+    text-wrap: pretty;
   }
   ::selection {
-    background: color-mix(in oklab, var(--color-brand-500) 30%, transparent);
+    background: var(--selection);
+    color: var(--fg);
   }
-  /* Native date/time pickers follow the active theme */
-  :root {
-    color-scheme: light;
-  }
-  .dark {
-    color-scheme: dark;
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
   }
   input[type='date']::-webkit-calendar-picker-indicator {
     cursor: pointer;
     border-radius: 6px;
     padding: 2px;
-    opacity: 0.6;
-    transition: opacity 0.15s;
+    opacity: 0.7;
+    transition: opacity 140ms;
   }
   input[type='date']::-webkit-calendar-picker-indicator:hover {
     opacity: 1;
-    background: color-mix(in oklab, var(--color-brand-500) 18%, transparent);
   }
   ::-webkit-scrollbar {
     width: 10px;
     height: 10px;
   }
   ::-webkit-scrollbar-thumb {
-    background: var(--border-strong);
+    background: var(--rule);
     border-radius: 999px;
     border: 2px solid transparent;
     background-clip: content-box;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: var(--color-fg-subtle);
+    background: var(--fg-subtle);
     background-clip: content-box;
   }
 }
 
-/* ─────────────────────────────────────────────────────────────────────────
-   Utilities
-   ───────────────────────────────────────────────────────────────────────── */
-@utility glass {
-  background: var(--glass);
-  backdrop-filter: blur(16px) saturate(180%);
-  -webkit-backdrop-filter: blur(16px) saturate(180%);
-  border: 1px solid var(--glass-border);
+/* ── Utilidades propias ─────────────────────────────────────────────────── */
+@utility tnum {
+  font-variant-numeric: tabular-nums lining-nums;
 }
 
-@utility text-gradient {
-  background-image: linear-gradient(
-    100deg,
-    var(--color-brand-500),
-    var(--color-coral-500) 55%,
-    var(--color-sun-500)
-  );
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+@utility kicker {
+  font-family: var(--font-sans);
+  font-size: 0.75rem;
+  line-height: 1.2;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-stretch: 85%;
+  color: var(--fg-muted);
+}
+@utility kicker-filete {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.625rem;
+  &::before {
+    content: '';
+    width: 1.5rem;
+    height: 1px;
+    background: var(--brass);
+  }
 }
 
-@utility bg-aurora {
-  background:
-    radial-gradient(
-      60% 70% at 12% 0%,
-      color-mix(in oklab, var(--color-brand-400) 28%, transparent),
-      transparent 60%
-    ),
-    radial-gradient(
-      55% 65% at 95% 12%,
-      color-mix(in oklab, var(--color-coral-400) 26%, transparent),
-      transparent 60%
-    ),
-    radial-gradient(
-      60% 80% at 60% 100%,
-      color-mix(in oklab, var(--color-sun-300) 22%, transparent),
-      transparent 60%
-    ),
-    var(--bg);
+/* Filetes finos (papel antes que pantalla): separadores de filas y franjas */
+@utility hairline {
+  border-bottom: 1px solid var(--border);
+}
+@utility hairline-t {
+  border-top: 1px solid var(--border);
 }
 
+@utility reticula {
+  position: relative;
+  isolation: isolate;
+  &::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background-color: var(--rule);
+    opacity: 0.45;
+    -webkit-mask:
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cpath d='M0 .5H160M.5 0V160' stroke='%23000' fill='none'/%3E%3C/svg%3E")
+        0 0 / 160px 160px,
+      radial-gradient(ellipse at 50% 30%, #000 0%, transparent 70%);
+    -webkit-mask-composite: source-in;
+    mask:
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cpath d='M0 .5H160M.5 0V160' stroke='%23000' fill='none'/%3E%3C/svg%3E")
+        0 0 / 160px 160px,
+      radial-gradient(ellipse at 50% 30%, #000 0%, transparent 70%);
+    mask-composite: intersect;
+  }
+}
+
+/* Divisor de boleto con muescas (la tarjeta padre lleva overflow-hidden) */
+@utility perforado {
+  position: relative;
+  height: 1.25rem;
+  background-image: linear-gradient(to right, var(--rule) 50%, transparent 0);
+  background-size: 8px 1px;
+  background-repeat: repeat-x;
+  background-position: 0 50%;
+  &::before,
+  &::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    width: 1.25rem;
+    height: 1.25rem;
+    margin-top: -0.625rem;
+    border-radius: 999px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+  }
+  &::before {
+    left: -0.6875rem;
+  }
+  &::after {
+    right: -0.6875rem;
+  }
+}
+
+/* Sello informativo: legible, 12 px, SIN rotación */
+@utility sello {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  height: 1.5rem;
+  padding-inline: 0.5rem;
+  border-radius: var(--radius-stamp);
+  border: 1.5px solid currentColor;
+  background: transparent;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-stretch: 85%;
+}
+
+/* ── TEMPORAL: utilidades legadas para no romper durante la migración ──── */
 @utility grad-brand {
-  background-image: linear-gradient(
-    120deg,
-    var(--color-brand-600),
-    var(--color-brand-500) 40%,
-    var(--color-coral-500)
-  );
+  background-color: var(--primary);
+}
+@utility text-gradient {
+  color: var(--fg);
+}
+@utility bg-aurora {
+  background-color: var(--bg);
+}
+@utility glass {
+  background-color: var(--surface);
+  border: 1px solid var(--border);
 }
 
-/* ── Animations ──────────────────────────────────────────────────────────── */
-@keyframes wy-float {
-  0%,
-  100% {
-    transform: translateY(0);
-  }
-  50% {
-    transform: translateY(-10px);
-  }
+/* El salto del punto del logo (§7.4) vive en src/components/brand/brand.css. */
+
+/* ── Intro (la lógica completa está en la sección 9) ───────────────────── */
+.wy-intro {
+  display: none;
 }
-@keyframes wy-rise {
+html[data-intro='play'] .wy-intro,
+html[data-intro='skip'] .wy-intro {
+  display: grid;
+}
+html[data-intro='play'] .wy-intro {
+  animation: wy-clock 2100ms linear both;
+}
+html[data-intro='play']:not([data-intro-js]) .wy-intro {
+  animation:
+    wy-clock 2100ms linear both,
+    wy-intro-out 320ms var(--ease-salida) 2150ms forwards;
+}
+html[data-intro='skip'] .wy-intro {
+  animation: wy-intro-out 200ms var(--ease-salida) forwards;
+  pointer-events: none;
+}
+html[data-intro='play'] [data-wy-logo] {
+  opacity: 0;
+}
+html[data-intro='play']:not([data-intro-js]) [data-wy-logo] {
+  animation: wy-hide-until 2450ms step-end both;
+}
+/* Salvaguarda: si la página no monta el overlay (.wy-intro), el logo del
+   header no se oculta (no hay nada que lo tape ni relevo que esperar). */
+html[data-intro='play']:not(:has(.wy-intro)) [data-wy-logo] {
+  opacity: 1;
+  animation: none;
+}
+html[data-intro='play'] .wy-hero-item {
+  transform: translateY(16px);
+}
+.wy-hero-item {
+  transition: transform var(--dur-page) var(--ease-papel);
+  transition-delay: calc(var(--i, 0) * 60ms);
+}
+@keyframes wy-clock {
   from {
-    opacity: 0;
-    transform: translateY(14px);
+    opacity: 1;
   }
   to {
     opacity: 1;
-    transform: translateY(0);
   }
 }
-@keyframes wy-pulse-ring {
-  0% {
-    box-shadow: 0 0 0 0
-      color-mix(in oklab, var(--color-brand-500) 60%, transparent);
-  }
-  70% {
-    box-shadow: 0 0 0 12px transparent;
-  }
-  100% {
-    box-shadow: 0 0 0 0 transparent;
-  }
-}
-
-@utility animate-float {
-  animation: wy-float 6s var(--ease-out-soft) infinite;
-}
-@utility animate-rise {
-  animation: wy-rise 0.6s var(--ease-out-soft) both;
-}
-@utility animate-pulse-ring {
-  animation: wy-pulse-ring 2s ease-out infinite;
-}
-
-/* ── 3D loader ───────────────────────────────────────────────────────────── */
-@keyframes wy-spin3d {
-  from {
-    transform: rotateY(0deg) rotateX(10deg);
-  }
+@keyframes wy-intro-out {
   to {
-    transform: rotateY(360deg) rotateX(10deg);
+    opacity: 0;
+    visibility: hidden;
   }
 }
-@keyframes wy-icon-pop {
+@keyframes wy-hide-until {
   0% {
     opacity: 0;
-    transform: scale(0.35) rotateY(-100deg);
-  }
-  55% {
-    opacity: 1;
-    transform: scale(1.12) rotateY(14deg);
   }
   100% {
     opacity: 1;
-    transform: scale(1) rotateY(0deg);
   }
 }
-@utility loader3d-spin {
-  animation: wy-spin3d 2.6s linear infinite;
-}
-@utility loader3d-pop {
-  animation: wy-icon-pop 0.6s var(--ease-out-soft) both;
-}
 
+/* El overlay de la intro (§9.7: marcado, piezas del SVG y keyframes por
+   elemento) vive en src/components/brand/intro/intro.css + el <style> que
+   genera IntroSplash. Aquí solo van los estados de §2.1. */
+
+/* Fundido corto de UI (mensajes de error de campo, 160 ms) */
+@keyframes wy-aparece {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+/* ── Movimiento reducido: se conserva el feedback de color/opacidad ────── */
 @media (prefers-reduced-motion: reduce) {
   *,
-  *::before,
-  *::after {
+  ::before,
+  ::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+    transition-property:
+      opacity, color, background-color, border-color, outline-color, fill,
+      stroke !important;
+    transition-duration: 120ms !important;
+    transition-delay: 0s !important;
+  }
+  .wy-intro {
+    display: none !important;
+  }
+  .wy-hero-item {
+    transform: none !important;
+  }
+}
+
+/* ── Impresión (Exportar PDF) ──────────────────────────────────────────── */
+@media print {
+  :root,
+  .dark {
+    --bg: #fff;
+    --surface: #fff;
+    --surface-2: #fff;
+    --fg: #0f1e2e;
+    --fg-muted: #46525f;
+  }
+  body {
+    background: #fff;
+    color: #0f1e2e;
+    font-size: 11pt;
+  }
+  [data-print='hide'] {
+    display: none !important;
+  }
+  [data-print='page'] {
+    break-before: page;
+  }
+  a {
+    color: inherit;
+    text-decoration: none;
   }
 }

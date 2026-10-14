@@ -1,102 +1,220 @@
-import Link from 'next/link'
-import { listUsers } from '@/lib/admin/queries'
-import { SearchBar } from '@/components/admin/SearchBar'
+import type { Metadata } from 'next'
+import { Ban } from 'lucide-react'
+import { DataTable } from '@/components/admin/DataTable'
+import type { Columna } from '@/components/admin/DataTable'
+import { Encabezado } from '@/components/admin/Encabezado'
+import { FiltrosChips } from '@/components/admin/FiltrosChips'
 import { Pagination } from '@/components/admin/Pagination'
-import { Badge } from '@/components/ui/Badge'
+import { SearchBar } from '@/components/admin/SearchBar'
+import {
+  ETIQUETA_NIVEL,
+  ETIQUETA_ROL,
+  cantidad,
+  etiqueta,
+  fecha,
+} from '@/components/admin/etiquetas'
+import { Avatar, indiceDesdeId } from '@/components/ui/Avatar'
+import { Badge, EstadoBadge } from '@/components/ui/Badge'
+import { ButtonLink } from '@/components/ui/Button'
+import { EmptyState } from '@/components/ui/EmptyState'
+import type { UserListItem } from '@/lib/admin/queries'
+import { formatNumero } from '@/lib/utils/formatters'
+import { exigirAdmin } from '../_lib/acceso'
+import { datosUsuarios } from '../_lib/datos'
+import { hrefCon, pagina, param, planos } from '../_lib/listas'
+import type { ParamsBusqueda } from '../_lib/listas'
+
+export const metadata: Metadata = { title: 'Usuarios · Admin' }
+
+const BASE = '/admin/users'
+
+const ROLES = [
+  { valor: 'all', label: 'Todos' },
+  { valor: 'user', label: 'Usuarios' },
+  { valor: 'admin', label: 'Admins' },
+] as const
+
+function Persona({ item }: { item: UserListItem }) {
+  const p = item.profile
+  const nombre = p.full_name?.trim()
+  return (
+    <span className="flex min-w-0 items-center gap-3">
+      <Avatar name={nombre || p.email} index={indiceDesdeId(p.id)} decorative />
+      <span className="min-w-0">
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="truncate font-medium text-fg">
+            {nombre || p.email || 'Sin email'}
+          </span>
+          {p.is_banned ? (
+            <Badge variant="error">
+              <Ban aria-hidden="true" />
+              Baneado
+            </Badge>
+          ) : null}
+        </span>
+        {nombre && p.email ? (
+          <span className="block truncate text-caption text-fg-muted">
+            {p.email}
+          </span>
+        ) : null}
+      </span>
+    </span>
+  )
+}
+
+const COLUMNAS: readonly Columna<UserListItem>[] = [
+  {
+    id: 'usuario',
+    encabezado: 'Usuario',
+    tarjeta: 'titulo',
+    className: 'min-w-[260px]',
+    celda: (u) => <Persona item={u} />,
+  },
+  {
+    id: 'rol',
+    encabezado: 'Rol',
+    tarjeta: 'meta',
+    celda: (u) => (
+      <Badge variant={u.profile.role === 'admin' ? 'brand' : 'default'}>
+        {etiqueta(ETIQUETA_ROL, u.profile.role)}
+      </Badge>
+    ),
+  },
+  {
+    id: 'plan',
+    encabezado: 'Plan',
+    tarjeta: 'meta',
+    celda: (u) => (
+      <span className="inline-flex flex-wrap items-center gap-1.5">
+        <Badge variant={u.tier === 'free' ? 'default' : 'success'}>
+          {etiqueta(ETIQUETA_NIVEL, u.tier)}
+        </Badge>
+        {u.status && u.status !== 'active' ? (
+          <EstadoBadge tipo="suscripcion" estado={u.status} />
+        ) : null}
+      </span>
+    ),
+  },
+  {
+    id: 'viajes',
+    encabezado: 'Viajes',
+    alinear: 'fin',
+    tarjeta: 'meta',
+    celda: (u) => formatNumero(u.tripCount),
+    celdaTarjeta: (u) => cantidad(u.tripCount, 'viaje', 'viajes'),
+  },
+  {
+    id: 'registro',
+    encabezado: 'Registro',
+    className: 'whitespace-nowrap text-fg-muted',
+    celda: (u) => fecha(u.profile.created_at),
+  },
+]
 
 export default async function UsersPage({
   searchParams,
 }: {
-  searchParams: Promise<{ search?: string; role?: string; page?: string }>
+  searchParams: Promise<ParamsBusqueda>
 }) {
+  if (!(await exigirAdmin())) return null
   const sp = await searchParams
-  const page = Number(sp.page ?? '1') || 1
-  const { items, total, pageSize } = await listUsers({
-    search: sp.search,
-    role: sp.role,
-    page,
+  const actuales = planos(sp)
+  const search = param(sp, 'search')
+  const pedido = param(sp, 'role') ?? 'all'
+  const rol = ROLES.some((r) => r.valor === pedido) ? pedido : 'all'
+
+  const { items, total, page, pageSize, conteos } = await datosUsuarios({
+    search,
+    role: rol,
+    page: pagina(sp),
   })
-  const base = `/admin/users${sp.search ? `?search=${encodeURIComponent(sp.search)}` : ''}`
+
+  const vacio = search ? (
+    <EmptyState
+      illustration="sello"
+      title={`Ningún resultado para «${search}»`}
+      description="Prueba con otra parte del email."
+      action={
+        <ButtonLink
+          href={hrefCon(BASE, actuales, { search: null })}
+          variant="outline"
+        >
+          Limpiar búsqueda
+        </ButtonLink>
+      }
+    />
+  ) : rol !== 'all' ? (
+    <EmptyState
+      illustration="sello"
+      title={rol === 'admin' ? 'No hay admins' : 'No hay usuarios con ese rol'}
+      action={
+        <ButtonLink
+          href={hrefCon(BASE, actuales, { role: null })}
+          variant="outline"
+        >
+          Ver todos
+        </ButtonLink>
+      }
+    />
+  ) : (
+    <EmptyState
+      title="Aún no hay usuarios"
+      description="Cuando alguien cree su cuenta en la web o en la app, aparecerá aquí."
+    />
+  )
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-2xl font-bold text-gray-900">Usuarios</h1>
+    <div className="space-y-6">
+      <Encabezado
+        titulo="Usuarios"
+        descripcion="Cuentas registradas en la web y en la app."
+      />
+
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <SearchBar
-          basePath="/admin/users"
+          basePath={BASE}
+          actuales={actuales}
+          etiqueta="Buscar usuarios por email"
           placeholder="Buscar por email…"
-          defaultValue={sp.search}
+        />
+        <FiltrosChips
+          etiqueta="Filtrar por rol"
+          activo={rol}
+          opciones={ROLES.map((r) => ({
+            valor: r.valor,
+            label: r.label,
+            count: conteos[r.valor] ?? (r.valor === rol ? total : undefined),
+          }))}
+          hrefDe={(v) =>
+            hrefCon(BASE, actuales, { role: v === 'all' ? null : v })
+          }
         />
       </div>
 
-      <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
-        <table className="w-full text-sm">
-          <thead className="border-b border-gray-100 bg-gray-50 text-left text-xs uppercase text-gray-500">
-            <tr>
-              <th className="px-4 py-2">Usuario</th>
-              <th className="px-4 py-2">Rol</th>
-              <th className="px-4 py-2">Plan</th>
-              <th className="px-4 py-2">Viajes</th>
-              <th className="px-4 py-2">Registro</th>
-              <th className="px-4 py-2"></th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-50">
-            {items.map(({ profile, tier, tripCount }) => (
-              <tr key={profile.id} className="hover:bg-gray-50">
-                <td className="px-4 py-2">
-                  <p className="font-medium text-gray-900">
-                    {profile.full_name ?? '—'}
-                    {profile.is_banned ? (
-                      <Badge variant="error" className="ml-2">
-                        baneado
-                      </Badge>
-                    ) : null}
-                  </p>
-                  <p className="text-xs text-gray-400">{profile.email}</p>
-                </td>
-                <td className="px-4 py-2">
-                  <Badge
-                    variant={profile.role === 'admin' ? 'brand' : 'default'}
-                  >
-                    {profile.role}
-                  </Badge>
-                </td>
-                <td className="px-4 py-2">
-                  <Badge variant={tier === 'free' ? 'default' : 'success'}>
-                    {tier}
-                  </Badge>
-                </td>
-                <td className="px-4 py-2 text-gray-600">{tripCount}</td>
-                <td className="px-4 py-2 text-gray-500">
-                  {new Date(profile.created_at).toLocaleDateString()}
-                </td>
-                <td className="px-4 py-2 text-right">
-                  <Link
-                    href={`/admin/users/${profile.id}`}
-                    className="text-xs font-medium text-blue-600 hover:underline"
-                  >
-                    Ver
-                  </Link>
-                </td>
-              </tr>
-            ))}
-            {items.length === 0 ? (
-              <tr>
-                <td colSpan={6} className="px-4 py-8 text-center text-gray-400">
-                  Sin usuarios.
-                </td>
-              </tr>
-            ) : null}
-          </tbody>
-        </table>
-      </div>
-
-      <Pagination
-        page={page}
-        pageSize={pageSize}
-        total={total}
-        basePath={base}
+      <DataTable
+        etiqueta="Usuarios"
+        cabecera={
+          <span className="tnum">
+            {cantidad(total, 'usuario', 'usuarios')}
+            {search ? ` para «${search}»` : ''}
+          </span>
+        }
+        columnas={COLUMNAS}
+        filas={items}
+        clave={(u) => u.profile.id}
+        href={(u) => `/admin/users/${u.profile.id}`}
+        etiquetaEnlace={(u) =>
+          `Ver la ficha de ${u.profile.full_name?.trim() || u.profile.email || 'este usuario'}`
+        }
+        vacio={vacio}
+        pie={
+          <Pagination
+            page={page}
+            pageSize={pageSize}
+            total={total}
+            hrefPagina={(p) => hrefCon(BASE, actuales, { page: String(p) })}
+          />
+        }
       />
     </div>
   )

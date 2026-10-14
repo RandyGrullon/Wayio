@@ -1,0 +1,244 @@
+/*
+ * Piezas DOM del mapa (docs/DISENO.md §10.3): marcadores, punto GPS y fichas.
+ * Usan los tokens semánticos, así que cambian solas con el tema (html.dark).
+ * El transform del elemento raíz lo gestiona MapLibre: las animaciones van en
+ * un hijo para no pisarlo.
+ */
+
+/* ── Marcador de actividad ───────────────────────────────────────────────── */
+.wy-marcador {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  cursor: pointer;
+  border-radius: 999px;
+  transition: opacity var(--dur-base) var(--ease-papel);
+}
+.wy-marcador:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.wy-marcador[data-atenuado] {
+  opacity: 0.4;
+}
+.wy-marcador__punto {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: var(--wy-c, var(--dia-1));
+  color: var(--dia-num);
+  border: 2px solid var(--map-casing);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.35);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums lining-nums;
+  transition:
+    width var(--dur-base) var(--ease-papel),
+    height var(--dur-base) var(--ease-papel);
+  animation: wy-marcador-in 280ms var(--ease-sello) both;
+  animation-delay: var(--wy-retraso, 0ms);
+}
+.wy-marcador[data-activo] .wy-marcador__punto {
+  width: 32px;
+  height: 32px;
+}
+/* Primera parada del día: aro de origen, como el aro del isotipo. */
+.wy-marcador[data-inicio] .wy-marcador__punto {
+  background: var(--map-casing);
+  color: var(--wy-c, var(--dia-1));
+  border: 3px solid var(--wy-c, var(--dia-1));
+}
+
+/* Etiqueta «hora · nombre»: aparece al pasar el cursor o con foco.
+   OJO: no poner position en .wy-marcador; MapLibre lo posiciona en absolute
+   (y un elemento absolute ya es contenedor de la etiqueta). */
+.wy-marcador__etiqueta {
+  position: absolute;
+  left: calc(100% + 4px);
+  top: 50%;
+  translate: 0 -50%;
+  max-width: 220px;
+  padding: 4px 8px;
+  border-radius: var(--radius-stamp);
+  background: var(--surface-raised);
+  color: var(--fg);
+  box-shadow: var(--sh-card, 0 1px 3px rgb(0 0 0 / 0.2));
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateX(-4px);
+  transition:
+    opacity var(--dur-fast, 120ms) var(--ease-papel),
+    transform var(--dur-fast, 120ms) var(--ease-papel);
+}
+.wy-marcador:hover .wy-marcador__etiqueta,
+.wy-marcador:focus-visible .wy-marcador__etiqueta {
+  opacity: 1;
+  transform: none;
+}
+.wy-marcador[data-ficha] .wy-marcador__etiqueta {
+  opacity: 0;
+}
+.wy-marcador:hover {
+  z-index: 2;
+}
+
+/* Puerto del crucero: cuadrado redondeado en tinta invertida con un ancla. */
+.wy-marcador--puerto .wy-marcador__punto {
+  border-radius: 8px;
+  background: var(--surface-inverse);
+  color: var(--fg-inverse);
+}
+.wy-marcador__punto svg {
+  width: 16px;
+  height: 16px;
+}
+
+@keyframes wy-marcador-in {
+  from {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ── Miembro del grupo (avatar-pin, §6.8) ────────────────────────────────── */
+.wy-miembro {
+  display: grid;
+  justify-items: center;
+  pointer-events: auto;
+}
+.wy-miembro__avatar {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  background: var(--wy-c, var(--dia-1));
+  color: var(--dia-num);
+  border: 2px solid var(--map-casing);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.35);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1;
+}
+/* Punta del pin: un rombo pequeño bajo el avatar. */
+.wy-miembro::after {
+  content: '';
+  width: 8px;
+  height: 8px;
+  margin-top: -5px;
+  rotate: 45deg;
+  background: var(--wy-c, var(--dia-1));
+  border-right: 2px solid var(--map-casing);
+  border-bottom: 2px solid var(--map-casing);
+}
+
+/* ── Punto GPS («estás aquí») ────────────────────────────────────────────── */
+.wy-gps {
+  position: relative;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: var(--gps);
+  box-shadow:
+    0 0 0 3px var(--gps-ring),
+    0 1px 4px rgb(0 0 0 / 0.3);
+}
+.wy-gps__halo {
+  position: absolute;
+  inset: -3px;
+  border-radius: 999px;
+  background: var(--gps);
+  opacity: 0;
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  /* El halo queda estático al 20 % (§7.5). */
+  .wy-gps__halo {
+    animation: none !important;
+    opacity: 0.2;
+    transform: scale(1.8);
+  }
+}
+
+/* ── Ficha (popup) ───────────────────────────────────────────────────────── */
+.wy-popup .maplibregl-popup-content {
+  background: var(--surface-raised);
+  color: var(--fg);
+  border-radius: var(--radius-control);
+  box-shadow: var(--sh-float);
+  padding: 14px;
+  font-family: var(--font-sans);
+}
+.dark .wy-popup .maplibregl-popup-content {
+  border: 1px solid var(--border);
+}
+.wy-popup.maplibregl-popup-anchor-bottom .maplibregl-popup-tip,
+.wy-popup.maplibregl-popup-anchor-bottom-left .maplibregl-popup-tip,
+.wy-popup.maplibregl-popup-anchor-bottom-right .maplibregl-popup-tip {
+  border-top-color: var(--surface-raised);
+}
+.wy-popup.maplibregl-popup-anchor-top .maplibregl-popup-tip,
+.wy-popup.maplibregl-popup-anchor-top-left .maplibregl-popup-tip,
+.wy-popup.maplibregl-popup-anchor-top-right .maplibregl-popup-tip {
+  border-bottom-color: var(--surface-raised);
+}
+.wy-popup.maplibregl-popup-anchor-left .maplibregl-popup-tip {
+  border-right-color: var(--surface-raised);
+}
+.wy-popup.maplibregl-popup-anchor-right .maplibregl-popup-tip {
+  border-left-color: var(--surface-raised);
+}
+.wy-popup .maplibregl-popup-close-button {
+  top: 6px;
+  right: 6px;
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  color: var(--fg-muted);
+  font-size: 20px;
+  line-height: 1;
+}
+.wy-popup .maplibregl-popup-close-button:hover {
+  background: var(--surface-2);
+  color: var(--fg);
+}
+.wy-popup .maplibregl-popup-close-button:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 0;
+}
+
+/* ── Créditos del mapa ───────────────────────────────────────────────────── */
+.wy-mapa .maplibregl-ctrl-attrib {
+  background: color-mix(in oklab, var(--surface) 88%, transparent);
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+.wy-mapa .maplibregl-ctrl-attrib a {
+  color: var(--fg-muted);
+}
+.wy-mapa .maplibregl-ctrl-attrib-button:focus-visible,
+.wy-mapa .maplibregl-canvas:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+.dark .wy-mapa .maplibregl-ctrl-attrib-button {
+  filter: invert(1);
+}
