@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wdth,wght@75..100,400..700&family=Geist+Mono:wght@500&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#F7F4EE;--fg:#0F1E2E;--fg-muted:#46525F;--fg-subtle:#56626F;--rule:#C9C1B2;--dot:#C21A66}
+.dark{--bg:#0B1622;--fg:#F1EEE8;--fg-muted:#B6C2CE;--fg-subtle:#9AAABB;--rule:#2E4760;--dot:#F55A9A}
+html,body{margin:0;height:100%;background:var(--bg);font-family:'Instrument Sans',system-ui}
+.wy-intro{position:fixed;inset:0;background:var(--bg);color:var(--fg);display:grid;place-items:center;overflow:hidden}
+.wy-intro__grid{position:absolute;inset:0;width:100%;height:100%;opacity:0;animation:wy-grid 260ms cubic-bezier(.22,1,.36,1) 0ms both}
+@keyframes wy-grid{from{opacity:0;transform:scale(1.03)}to{opacity:.55;transform:scale(1)}}
+.wy-intro__stage{display:flex;flex-direction:column;align-items:center;gap:22px}
+.wy-intro__mark{width:clamp(240px,46vw,420px);overflow:visible;display:block}
+.wy-intro__tag{font-size:12px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;font-stretch:85%;color:var(--fg-muted);animation:wy-rise8 340ms cubic-bezier(.22,1,.36,1) 1560ms both}
+.wy-intro__coords{position:absolute;bottom:32px;left:0;right:0;text-align:center;font:500 12px/1 'Geist Mono',ui-monospace,monospace;letter-spacing:.08em;color:var(--fg-subtle);animation:wy-rise8 340ms cubic-bezier(.22,1,.36,1) 1640ms both}
+@keyframes wy-rise8{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.s{fill:none;stroke:currentColor;stroke-width:7;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:100 200;stroke-dashoffset:100}
+@keyframes wy-draw{from{stroke-dashoffset:100}to{stroke-dashoffset:0}}
+.ghost{fill:none;stroke:var(--rule);stroke-width:2.2;stroke-linecap:round;stroke-dasharray:.1 4.2;animation:wy-ghost 840ms linear 60ms both}
+@keyframes wy-ghost{0%{opacity:0}17%{opacity:.9}70%{opacity:.9}100%{opacity:0}}
+.dot-move{animation:wy-dot-path 1100ms linear 160ms both}
+.dot-squash{transform-box:fill-box;transform-origin:50% 100%;animation:wy-squash 240ms linear 1260ms both}
+.dot-pop{transform-box:fill-box;transform-origin:50% 50%;animation:wy-pop 160ms cubic-bezier(.34,1.56,.64,1) 0ms both}
+@keyframes wy-pop{from{transform:scale(0)}to{transform:scale(1)}}
+@keyframes wy-squash{0%{transform:scale(1,1)}30%{transform:scale(1.22,.78)}62%{transform:scale(.94,1.06)}100%{transform:scale(1,1)}}
+.ring{fill:none;stroke:var(--dot);transform-box:fill-box;transform-origin:50% 50%;vector-effect:non-scaling-stroke}
+.ping{stroke-width:1.5;animation:wy-ring 520ms cubic-bezier(.22,1,.36,1) 0ms both}
+.rip1{stroke-width:1.5;animation:wy-ring2 600ms cubic-bezier(.22,1,.36,1) 1280ms both}
+.rip2{stroke-width:1;animation:wy-ring3 540ms cubic-bezier(.22,1,.36,1) 1420ms both}
+@keyframes wy-ring{0%{opacity:.45;transform:scale(1)}100%{opacity:0;transform:scale(2.6)}}
+@keyframes wy-ring2{0%{opacity:.55;transform:scale(1)}100%{opacity:0;transform:scale(3.4)}}
+@keyframes wy-ring3{0%{opacity:.35;transform:scale(1)}100%{opacity:0;transform:scale(2.4)}}
+.trail{fill:var(--dot)}
+@keyframes wy-trail{0%{opacity:0}1%{opacity:.6}100%{opacity:0}}
+</style></head><body>
+<div class="wy-intro" aria-hidden="true">
+ <svg class="wy-intro__grid" viewBox="0 0 1000 600" preserveAspectRatio="xMidYMid slice">
+  <defs><radialGradient id="fade"><stop offset="0" stop-color="#fff"/><stop offset=".55" stop-color="#fff" stop-opacity=".6"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient><mask id="m"><rect width="1000" height="600" fill="url(#fade)"/></mask></defs>
+  <g mask="url(#m)" fill="none" stroke="var(--rule)" stroke-width="1" vector-effect="non-scaling-stroke">
+   <path d="M180 0 Q120 300 180 600"/><path d="M340 0 Q310 300 340 600"/><path d="M500 0 V600"/><path d="M660 0 Q690 300 660 600"/><path d="M820 0 Q880 300 820 600"/>
+   <path d="M0 150 Q500 120 1000 150"/><path d="M0 300 Q500 280 1000 300"/><path d="M0 450 Q500 440 1000 450"/>
+  </g>
+ </svg>
+ <div class="wy-intro__stage">
+  <svg class="wy-intro__mark" viewBox="0 0 156 62">
+   <path class="ghost" d="M4.5 20 L11.5 44 L18.5 27 L25.5 44 L32.5 20"/>
+   <path class="s" pathLength="100" d="M4.5 20 L11.5 44 L18.5 27 L25.5 44 L32.5 20" style="animation:wy-w 680ms linear 160ms both"/>
+   <path class="s" pathLength="100" d="M68.5 32 A12 12 0 1 0 44.5 32 A12 12 0 1 0 68.5 32" style="animation:wy-draw 160ms cubic-bezier(.22,1,.36,1) 900ms both"/>
+   <path class="s" pathLength="100" d="M68.5 20 V44" style="animation:wy-draw 80ms cubic-bezier(.22,1,.36,1) 1020ms both"/>
+   <path class="s" pathLength="100" d="M80 20 L91 44" style="animation:wy-draw 80ms cubic-bezier(.22,1,.36,1) 980ms both"/>
+   <path class="s" pathLength="100" d="M102 20 L85.5 56" style="animation:wy-draw 140ms cubic-bezier(.22,1,.36,1) 1040ms both"/>
+   <path class="s" pathLength="100" d="M115 20 V44" style="animation:wy-draw 160ms cubic-bezier(.22,1,.36,1) 1260ms both"/>
+   <path class="s" pathLength="100" d="M139 20 A12 12 0 1 0 139 44 A12 12 0 1 0 139 20" style="animation:wy-draw 280ms cubic-bezier(.16,1,.3,1) 1340ms both"/>
+   <circle class="ring ping" cx="4.5" cy="20" r="5.25"/>
+   <circle class="ring rip1" cx="115" cy="8" r="5.25"/>
+   <circle class="ring rip2" cx="115" cy="8" r="5.25"/>
+   <g id="trail"></g>
+   <g class="dot-move"><g class="dot-squash"><circle class="dot-pop" cx="0" cy="0" r="5.25" fill="var(--dot)"/></g></g>
+  </svg>
+  <div class="wy-intro__tag">Traza tu viaje · Vive el camino</div>
+ </div>
+ <div class="wy-intro__coords">18.4861° N · 69.9312° O</div>
+</div>
+<script>
+// ===== generator (same logic as src/components/brand/intro/keyframes.ts) =====
+function bezierEase(p1x,p1y,p2x,p2y){
+  const cx=3*p1x,bx=3*(p2x-p1x)-cx,ax=1-cx-bx, cy=3*p1y,by=3*(p2y-p1y)-cy,ay=1-cy-by;
+  const X=t=>((ax*t+bx)*t+cx)*t, Y=t=>((ay*t+by)*t+cy)*t, dX=t=>(3*ax*t+2*bx)*t+cx;
+  return x=>{let t=x;for(let i=0;i<8;i++){const e=X(t)-x;if(Math.abs(e)<1e-6)break;const d=dX(t);if(Math.abs(d)<1e-6)break;t-=e/d}
+    let lo=0,hi=1;for(let i=0;i<30&&Math.abs(X(t)-x)>1e-6;i++){if(X(t)<x)lo=t;else hi=t;t=(lo+hi)/2}return Y(t)}
+}
+const V=[[4.5,20],[11.5,44],[18.5,27],[25.5,44],[32.5,20]];
+const W_START=160,W_DUR=680,FLY_START=840,FLY_DUR=420,DOT_START=160,DOT_END=1260;
+const segLen=V.slice(1).map((p,i)=>Math.hypot(p[0]-V[i][0],p[1]-V[i][1]));
+const total=segLen.reduce((a,b)=>a+b,0);
+const seg='cubic-bezier(.45,0,.55,1)';
+// w stroke keyframes (dashoffset at vertices, same per-segment easing)
+let acc=0,wk=['0%{stroke-dashoffset:100;animation-timing-function:'+seg+'}'];
+segLen.forEach((L,i)=>{acc+=L;const pct=(acc/total*100);wk.push(pct.toFixed(3)+'%{stroke-dashoffset:'+(100-pct).toFixed(3)+';animation-timing-function:'+seg+'}')});
+// dot keyframes over [DOT_START, DOT_END]
+const span=DOT_END-DOT_START, pct=ms=>((ms-DOT_START)/span*100).toFixed(3)+'%';
+let dk=[];acc=0;
+dk.push(pct(W_START)+'{transform:translate('+V[0][0]+'px,'+V[0][1]+'px);animation-timing-function:'+seg+'}');
+segLen.forEach((L,i)=>{acc+=L;const t=W_START+acc/total*W_DUR;const p=V[i+1];dk.push(pct(t)+'{transform:translate('+p[0]+'px,'+p[1]+'px);animation-timing-function:'+(i<3?seg:'linear')+'}')});
+const P0=[32.5,20],C=[73.75,-30],P2=[115,8],ease=bezierEase(.65,0,.35,1),N=24;
+const B=t=>[(1-t)*(1-t)*P0[0]+2*t*(1-t)*C[0]+t*t*P2[0],(1-t)*(1-t)*P0[1]+2*t*(1-t)*C[1]+t*t*P2[1]];
+for(let i=1;i<=N;i++){const tau=i/N,t=ease(tau),p=B(t),s=1-0.1*Math.sin(Math.PI*t);dk.push(pct(FLY_START+tau*FLY_DUR)+'{transform:translate('+p[0].toFixed(3)+'px,'+p[1].toFixed(3)+'px) scale('+s.toFixed(3)+')}')}
+// trail
+const inv=y=>{let lo=0,hi=1;for(let i=0;i<40;i++){const m=(lo+hi)/2;if(ease(m)<y)lo=m;else hi=m}return (lo+hi)/2};
+let tr='';for(let k=1;k<=6;k++){const t=k/7,p=B(t),tau=inv(t);tr+='<circle class="trail" cx="'+p[0].toFixed(2)+'" cy="'+p[1].toFixed(2)+'" r="1.4" style="animation:wy-trail 460ms linear '+Math.round(FLY_START+tau*FLY_DUR)+'ms both"/>'}
+document.getElementById('trail').innerHTML=tr;
+const st=document.createElement('style');
+st.textContent='@keyframes wy-w{'+wk.join('')+'}@keyframes wy-dot-path{'+dk.join('')+'}';
+document.head.appendChild(st);
+// freeze at ?t=
+const q=new URLSearchParams(location.search);
+if(q.get('dark'))document.documentElement.classList.add('dark');
+if(q.get('t')){const t=+q.get('t');requestAnimationFrame(()=>{document.getAnimations().forEach(a=>{a.pause();a.currentTime=t})})}
+</script>
+</body></html>

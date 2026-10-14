@@ -13,7 +13,9 @@
     "format:check": "prettier --check .",
     "validate": "npm run type-check && npm run lint && npm run format:check",
     "pre-deploy": "npm run validate && npm run build",
-    "prepare": "husky"
+    "prepare": "husky",
+    "eval:ia": "node scripts/eval-ia/run.mjs",
+    "verificar": "node scripts/verificar-servicios.mjs"
   },
   "lint-staged": {
     "*.{ts,tsx}": [
@@ -25,8 +27,9 @@
     ]
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.98.0",
+    "@anthropic-ai/sdk": "0.128.0",
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
+    "@sentry/nextjs": "^10.54.0",
     "@stripe/react-stripe-js": "^6.4.0",
     "@stripe/stripe-js": "^9.7.0",
     "@supabase/ssr": "^0.10.3",
@@ -41,13 +44,13 @@
     "posthog-node": "^5.21.2",
     "react": "19.2.4",
     "react-dom": "19.2.4",
+    "server-only": "0.0.1",
     "stripe": "^22.1.1",
     "tailwind-merge": "^3.6.0",
     "yt-dlp-exec": "^1.0.2",
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@sentry/nextjs": "^10.54.0",
     "@tailwindcss/postcss": "^4",
     "@types/fluent-ffmpeg": "^2.1.28",
     "@types/node": "^20",

@@ -5,12 +5,16 @@ app mobile (Supabase + API routes).
 
 ## Activación (3 pasos)
 
-### 1. Crear las tablas
+### 1. Crear las tablas y aplicar la seguridad
 
-Pega `supabase/schema.sql` completo en **Supabase → SQL Editor → Run**.
-Crea todas las tablas de la app + las del panel (perfiles con rol, logs de IA,
-feature flags, anuncios, tokens de push, auditoría, settings), con RLS, índices
-y datos por defecto. Es idempotente.
+Si el proyecto ya tenía el esquema, pega
+`supabase/migrations/20261008120000_seguridad_y_flujos.sql` completo en
+**Supabase → SQL Editor → Run**. Si está vacío, pega `supabase/schema.sql` (ya
+la incluye). Ambos son idempotentes.
+
+> ⚠️ Esa migración cierra un hueco crítico: antes cualquier usuario podía
+> hacerse admin editando su propio perfil desde el navegador. Después de
+> aplicarla, revisa `select id, email from public.profiles where role = 'admin';`.
 
 ### 2. Configurar la SERVICE ROLE key (imprescindible)
 
@@ -40,19 +44,24 @@ Entra a `/admin`. Si no eres admin te redirige a la home; si no hay sesión, al 
 
 ## Qué controla
 
-| Sección       | Ruta                   | Qué hace                                                                 |
-| ------------- | ---------------------- | ------------------------------------------------------------------------ |
-| Dashboard     | `/admin`               | Métricas: usuarios, viajes, MRR, costo de IA, gráficas                   |
-| Usuarios      | `/admin/users`         | Buscar, ver detalle, cambiar rol, banear, otorgar/revocar plan, eliminar |
-| Viajes        | `/admin/trips`         | Listar/filtrar, ver itinerario+grupo, cambiar estado, borrar             |
-| Suscripciones | `/admin/subscriptions` | MRR/ARR, tiers, lista con datos de Stripe                                |
-| Grupos        | `/admin/groups`        | Moderar mensajes y gastos de los viajes en grupo                         |
-| Referidos     | `/admin/referrals`     | Códigos, conversiones, leaderboard                                       |
-| Uso de IA     | `/admin/ai`            | Tokens, costo, latencia y éxito por proveedor/modelo                     |
-| Feature Flags | `/admin/flags`         | Activar/desactivar funciones en web y mobile                             |
-| Anuncios      | `/admin/announcements` | Publicar banners para web y mobile                                       |
-| Auditoría     | `/admin/audit`         | Registro de todas las acciones de admin                                  |
-| Settings      | `/admin/settings`      | Modo mantenimiento y proveedor de IA                                     |
+| Sección       | Ruta                   | Qué hace                                                                                                         |
+| ------------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| Dashboard     | `/admin`               | Métricas: usuarios, viajes, MRR, costo de IA, gráficas                                                           |
+| Usuarios      | `/admin/users`         | Buscar, ver detalle, cambiar rol, banear, otorgar/revocar plan, eliminar                                         |
+| Viajes        | `/admin/trips`         | Listar/filtrar, ver itinerario+grupo, cambiar estado, borrar                                                     |
+| Suscripciones | `/admin/subscriptions` | MRR/ARR (solo planes cobrados en Stripe; los concedidos a mano se marcan «Concedido» y no cuentan), tiers, lista |
+| Grupos        | `/admin/groups`        | Moderar mensajes y gastos de los viajes en grupo                                                                 |
+| Referidos     | `/admin/referrals`     | Códigos, conversiones, leaderboard                                                                               |
+| Uso de IA     | `/admin/ai`            | Tokens, costo, latencia y éxito por proveedor/modelo                                                             |
+| Feature Flags | `/admin/flags`         | Guardar flags por plataforma (⚠️ la web y la app aún no las leen: ver abajo)                                     |
+| Anuncios      | `/admin/announcements` | Publicar banners para web y mobile                                                                               |
+| Auditoría     | `/admin/audit`         | Registro de todas las acciones de admin                                                                          |
+| Settings      | `/admin/settings`      | Modo mantenimiento (⚠️ aún no lo lee nadie) y proveedor de IA (⚠️ manda la variable `AI_PROVIDER` del servidor)  |
+
+> Pendiente de producto: hoy solo los **anuncios** tienen efecto real. Las flags,
+> el modo mantenimiento y el selector de proveedor de IA se guardan pero ni la
+> web ni la app los consultan todavía (hace falta un hook `useRemoteConfig` en
+> cada cliente y que `src/lib/ai/config.ts` lea `app_settings`).
 
 ## Control de la app mobile
 
@@ -77,6 +86,9 @@ POST /api/devices   { token, platform: 'ios' | 'android' | 'web' }
 
 ## Monitoreo de costos de IA
 
-Cada llamada a la IA (web y mobile, vía `aiClient`) se registra automáticamente
-en `ai_logs` con proveedor, modelo, tokens, costo estimado y latencia. No
-requiere configuración extra: aparece en `/admin/ai`.
+Cada llamada a la IA (web y mobile, vía `aiGenerate` en `src/lib/ai/client.ts`)
+se registra automáticamente en `ai_logs` con proveedor, modelo, endpoint
+(`generate`, `generate:bloque`, `interpret`, `adjust`…), usuario, tokens, costo
+estimado (`src/lib/ai/pricing.ts`) y latencia. Los truncamientos
+(`max_tokens`) quedan como `success=false` con error `max_tokens`. Requiere la
+service role key; aparece en `/admin/ai`.

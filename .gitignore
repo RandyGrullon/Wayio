@@ -43,3 +43,6 @@ next-env.d.ts
 
 # graphify (knowledge graph, generado por la tool — no se versiona)
 graphify-out/
+
+# resultados de la evaluación de IA (scripts/eval-ia)
+scripts/eval-ia/resultados/

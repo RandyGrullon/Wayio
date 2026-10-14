@@ -7,15 +7,72 @@ const nextConfig: NextConfig = {
     'fluent-ffmpeg',
     'yt-dlp-exec',
   ],
+  async redirects() {
+    // Enlaces antiguos de la landing. Se resuelven aquí (307 real, antes de
+    // renderizar) para que «/» no lea searchParams y quede estática. La query
+    // original pasa sola al destino.
+    return [
+      {
+        source: '/',
+        has: [{ type: 'query', key: 'destino', value: '(?<destino>.*\\S.*)' }],
+        destination: '/planificar',
+        permanent: false,
+      },
+      {
+        // «Restaurar tras el login» (DA-14): el flujo vive en /planificar.
+        source: '/',
+        has: [{ type: 'query', key: 'restaurar', value: '1' }],
+        destination: '/planificar?paso=itinerario',
+        permanent: false,
+      },
+    ]
+  },
+  async headers() {
+    return [
+      {
+        // El service worker nunca se cachea: así cada despliegue llega enseguida
+        // a los usuarios y una versión rota no se queda pegada.
+        source: '/sw.js',
+        headers: [
+          {
+            key: 'Content-Type',
+            value: 'application/javascript; charset=utf-8',
+          },
+          {
+            key: 'Cache-Control',
+            value: 'no-cache, no-store, must-revalidate',
+          },
+          { key: 'Service-Worker-Allowed', value: '/' },
+        ],
+      },
+    ]
+  },
 }
 
-const sentryOrg = process.env['SENTRY_ORG']
-const sentryProject = process.env['SENTRY_PROJECT']
+const env = (name: string): string | undefined => {
+  const v = process.env[name]?.trim()
+  return v ? v : undefined
+}
+
+const sentryOrg = env('SENTRY_ORG')
+const sentryProject = env('SENTRY_PROJECT')
+const sentryAuthToken = env('SENTRY_AUTH_TOKEN')
+
+// Los sourcemaps solo se suben si hay token, organización y proyecto. Sin
+// ellos el build funciona igual (los errores llegan, pero sin código legible).
+const subirSourcemaps = Boolean(sentryAuthToken && sentryOrg && sentryProject)
 
 export default withSentryConfig(nextConfig, {
   ...(sentryOrg !== undefined ? { org: sentryOrg } : {}),
   ...(sentryProject !== undefined ? { project: sentryProject } : {}),
-  silent: true,
+  ...(sentryAuthToken !== undefined ? { authToken: sentryAuthToken } : {}),
+  silent: !process.env['CI'],
   telemetry: false,
-  sourcemaps: { disable: !process.env['SENTRY_DSN'] },
+  widenClientFileUpload: subirSourcemaps,
+  sourcemaps: {
+    disable: !subirSourcemaps,
+    deleteSourcemapsAfterUpload: true,
+  },
+  // Un fallo al subir sourcemaps no debe tumbar el despliegue.
+  errorHandler: () => {},
 })

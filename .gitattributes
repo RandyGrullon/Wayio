@@ -1,0 +1,13 @@
+# Fuerza LF en el repo y en el checkout (Prettier usa endOfLine: lf).
+# Sin esto, en Windows con core.autocrlf=true todos los archivos fallan
+# `prettier --check` y el hook de pre-commit.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.woff binary
+*.woff2 binary

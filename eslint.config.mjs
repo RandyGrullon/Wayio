@@ -28,8 +28,21 @@ const eslintConfig = defineConfig([
       eqeqeq: ['error', 'always'],
     },
   },
+  {
+    // Scripts de línea de comandos (evaluación de la IA, utilidades): la
+    // consola es su salida natural.
+    files: ['scripts/**'],
+    rules: { 'no-console': 'off' },
+  },
   prettier,
-  globalIgnores(['.next/**', 'out/**', 'build/**', 'next-env.d.ts']),
+  globalIgnores([
+    '.next/**',
+    'out/**',
+    'build/**',
+    'next-env.d.ts',
+    'mobile/**',
+    'scripts/eval-ia/resultados/**',
+  ]),
 ])
 
 export default eslintConfig

@@ -1,99 +1,109 @@
-# Wayio — Pendiente para mañana
+# Wayio — estado y pasos para terminar
 
-> Estado al 2026-06-14. Lo que ya funciona vs. lo que queda.
+> Actualizado el 2026-10-09, tras el análisis completo, la reconstrucción de la IA, los arreglos de seguridad, el rediseño y la integración final. Los detalles de cada servicio están en [API-KEYS-GUIA.md](API-KEYS-GUIA.md).
 
-## 🔴 Crítico (hacer primero, bloquea producción)
+## ✅ Hecho en esta ronda (rama `rediseno-ui-ia`)
 
-- [x] **`SUPABASE_SERVICE_ROLE_KEY`** corregida en `.env.local` (ya es la
-      `service_role` real, no la anon). Desbloquea panel admin y guardado
-      server-side.
-- [ ] **Configurar una API key de IA con cuota real** para producción
-      (`ANTHROPIC_API_KEY` + `AI_PROVIDER=anthropic`), o subir el plan de Groq.
-      El plan gratis de Groq (100k tokens/día, 6k/min) se agota rápido. - Alternativa rápida de prueba: `GROQ_MODEL=llama-3.1-8b-instant` (más cuota).
+**IA: generación fiable con cualquier descripción**
 
-## 🟢 Quick wins (alto valor, poco esfuerzo)
+- Nuevo campo de **descripción libre** («cuéntanos tu viaje ideal») y `POST /api/interpret`: convierte un texto como «Japón 10 días en abril con mi esposa, 6000 dólares» en los campos del formulario y pregunta solo lo que falta.
+- **Salida estructurada** (JSON garantizado por esquema) en vez de texto que había que «reparar». Validación y normalización de todo lo que devuelve el modelo: ids únicos, horas sin solapes, números válidos y coordenadas lejanas descartadas.
+- **Viajes largos**: primero un esqueleto (ciudades por día, hoteles por paquete y presupuesto) y después bloques de 2 días generados **en paralelo**. Antes, con `max_tokens=4096`, los viajes de más de unos 3 días se truncaban y caían en silencio al demo de Tokio.
+- **Errores honestos**: si la IA falla, el usuario ve un error con «Reintentar». Solo se muestra el ejemplo cuando la instalación no tiene IA.
+- **Contexto real**: pronóstico de las fechas si el viaje empieza en ≤ 5 días, geocoding con límite global y caché, coordenadas verificadas y tiempos de traslado estimados sin APIs de pago.
+- **Presupuesto**: vuelo estimado aparte, aviso automático si el plan se sale del presupuesto, paquetes básico/confort/premium que cambian de verdad hoteles, restaurantes y experiencias, y moneda guardada en el viaje.
+- **Modelos y SDK**: `claude-opus-5-5` (itinerario) y `claude-haiku-5-5` (tareas rápidas), streaming, `effort`, _fallback_ ante rechazos, SDK 0.128 y modelos de Groq vigentes. Registro de uso por endpoint y usuario en `ai_logs`.
+- **Rutas de IA secundarias**: ajuste por chat que conserva el progreso del viaje, reagendado con huecos reales, validación sin el _polling_ de 30 s que costaba dinero, alertas sin «proxy abierto» y video con anti-SSRF y _feature flag_.
+- **Batería de evaluación**: `npm run eval:ia` (44 viajes muy distintos + 6 textos libres, validaciones automáticas y juez opcional).
 
-- [x] **Editar itinerario antes de guardar**: mover / borrar / añadir / editar
-      actividad. Botón "Editar" en el resultado → `EditableDays` (`src/components/
-trip/EditableDays.tsx`).
-- [x] **Geocodificar más de 6 actividades** en background tras mostrar el
-      resultado: ruta `/api/geocode` (rate-limit server-side) + hook
-      `useBackgroundGeocode` que rellena las coords que faltan y actualiza el mapa.
-- [ ] **Rellenar los IDs de afiliado reales** en `src/constants/affiliateLinks.ts`
-      (`TU_ID`, `TU_PID`, `TU_CODIGO`) para empezar a monetizar.
-      _(Necesita tus IDs reales de Booking/Viator/Skyscanner/Airalo.)_
-- [x] **Manejar mejor el caso "sin coords"** en el mapa: `TripMap` muestra un
-      aviso ("Ubicaciones aún no disponibles") en vez de centrarse en un punto
-      arbitrario cuando ninguna actividad tiene coordenadas.
+**Seguridad y datos** (migración `supabase/migrations/20261008120000_seguridad_y_flujos.sql`, probada en Postgres real)
 
-## 🟡 Producto (esfuerzo medio)
+- Cerrado: cualquier usuario podía **hacerse admin**; el chat, los gastos y el GPS de **todos los grupos** eran legibles por cualquier usuario registrado.
+- Funcionan ahora: **compartir viaje** (público solo si el dueño lo marca), **unirse a un grupo** por enlace, realtime de grupos, referidos, registro de dispositivos y estados del modo en vivo.
+- Stripe: el webhook ya activa los planes (antes RLS bloqueaba todo) y es idempotente; el checkout calcula importes en el servidor; el «Pro por viaje» caduca; el depósito de reserva queda **desactivado** a propósito.
+- Auth: recuperación de contraseña, enlace mágico, confirmación que funciona en cualquier dispositivo, `?redirect` respetado y open redirects cerrados. Google OAuth ya no redirige a localhost en producción.
+- Admin: `requireAdmin` en cada consulta; revocar un plan lo cancela en Stripe; el MRR solo cuenta pagos reales.
+- Plataforma:
+  - rate limit en todas las rutas de IA y búsqueda;
+  - Sentry y PostHog completos y seguros sin keys;
+  - el service worker ya no cachea respuestas privadas;
+  - `robots.txt`, sitemap correcto, afiliados por variables de entorno y enlaces de navegación universales.
+- Amadeus (cerrado) y la API legacy de Booking se retiraron; Viator se reescribió con su API v2.
 
-- [x] **Tiers genuinamente distintos**: la IA adjunta `variantesTier`
-      (hoteles/actividades reales por nivel) en la MISMA generación y
-      `deriveTier` las aplica; si faltan, cae al escalado de precio clásico.
-      `enforceTierOrder` garantiza básico ≤ confort ≤ premium (las variantes de
-      la IA podían no ser monótonas). (`generateItinerary.ts` + `generateTrips.ts`.)
-- [x] **Búsqueda real de vuelos/hoteles/actividades**: rutas `/api/hotels`,
-      `/api/flights`, `/api/activities` + libs Amadeus/Booking/Viator y el
-      componente `RealSearch`. Degrada con gracia (`configured:false`) sin keys.
-      _Solo falta poner las API keys reales para que devuelva resultados._
-- [x] **Streaming del itinerario**: ruta SSE `/api/generate/stream` que emite el
-      progreso real del backend (`contexto → ia → coords → listo`) + el resultado.
-      Cliente en `streamGenerate` con fallback a `/api/generate`. La lógica de
-      generación se extrajo a `src/lib/ai/generateTrips.ts`. _Verificado en runtime._
-- [x] **Chat de ajustes con IA**: componente `AdjustChat` en el resultado +
-      ruta `/api/adjust` ("hazlo más barato / añade un mercado…"). Conserva ids y
-      coords de lo que no cambia, normaliza la respuesta. _Verificado en runtime._
-- [x] **Compartir viaje** por link público de solo lectura:
-      `/viaje-compartido/[id]` (sin GPS ni edición) + botón "Compartir" en el
-      resultado (guarda y copia el link) y en `/trip/[id]`.
-      _Nota: el guardado/lectura necesita Supabase OK (la 🔴 service role key)._
+**Rediseño completo «Cuaderno de Ruta»** ([docs/DISENO.md](docs/DISENO.md))
 
-## 🔵 Apuestas grandes (sesión propia cada una)
+- Nuevo sistema visual:
+  - tinta azul noche y acento Rosa de Bayahíbe;
+  - Newsreader e Instrument Sans;
+  - AA verificado en claro y oscuro (252 pares de contraste comprobados).
+- **Logo nuevo**: «wayio» monolínea, donde la w es la ruta y el punto de la i es el destino.
+- **Animación de entrada «La ruta llega»**: el punto traza la w, vuela, aterriza en la i y el logo viaja al header con un portal circular. Es CSS servido en SSR, así que no penaliza la carga, y se puede saltar.
+- Iconos, imagen OG y assets de la app móvil regenerados.
+- Pantallas rehechas: landing, planificador por pasos, carga con progreso real, comparador de versiones, itinerario, viaje en vivo, compartido, grupo, auth, mis viajes, cuenta, precios, SEO, admin y app móvil.
 
-- [x] **App móvil real** (`/mobile`, Expo) con GPS en vivo + geofencing +
-      alertas (capas 5-6). **Paridad de pantallas con web completada**: - `RealSearch` (búsqueda real vía las GET del backend) + `ReserveButton`
-      (abre checkout web logueado) en `TripDetailScreen`. - `AdjustChat` (chat de ajustes IA → `/api/adjust`, persiste el cambio). - `EditableDays` (editar/mover/borrar/añadir actividades) con modo
-      "Editar itinerario" en `TripDetailScreen`. - `RecreateTripScreen` ("Desde un video" → `/api/analyze-video`, prefija
-      el destino en el formulario) + botón en `HomeScreen`. - Compartir link público de solo lectura (`/viaje-compartido/[id]`) además
-      del invite de grupo. - **Paridad de rediseños (2ª pasada)**: `TripEssentials` ("Completa tu
-      viaje": vuelo incluido + preguntar hospedaje/carro + total en vivo),
-      card de actividad simplificada (`DayCard`: sin descripción, dirección +
-      "Llegar"), header con acciones colapsadas en un action-sheet "Más", y
-      `Loader3D` (giro 3D) en la pantalla de carga. - _Streaming: el `LoadingScreen` ya emula las fases; SSE real no es viable
-      en el `fetch` de RN, así que se usa el `POST /api/generate` que ya
-      funciona._ - _Verificado: `type-check` + `lint` en verde. No ejecutado en
-      dispositivo (requiere Expo + las `EXPO_PUBLIC_\*`).\_
-- [x] **Reservas dentro de la app** (Stripe): `ReserveButton` + `/api/stripe/
-    checkout` con `mode:'reservation'` (depósito del 15% del presupuesto).
-      Degrada con gracia sin `STRIPE_SECRET_KEY`. En móvil abre la web logueada.
-- [x] **Modo offline**: service worker (`public/sw.js`) + store (`src/lib/
-    offline/`) + hook `useOfflineTrip` cableado en `/trip/[id]` (cacheo
-      automático, indicador online/offline y lectura desde caché sin conexión).
+**Mapa «carta de ruta»**
 
-## 🧹 Limpieza / deuda técnica
+- Estilo propio sobre OpenFreeMap (paleta de la carta en claro y oscuro), marcadores numerados con aro de origen, etiqueta «hora · nombre», fichas sin HTML inyectable y flechas del sentido del recorrido.
+- **Rutas exactas por calles** (`POST /api/ruta`, OSRM sobre OpenStreetMap): a pie hasta 1,6 km y en carro hasta 250 km; por mar o aire, un arco. Con caché en el servidor y en la sesión, y arcos si el servicio no responde.
+- Gestos libres (arrastrar, deslizar, pellizcar, rueda) sin rotación accidental. En el móvil, dentro de una página, se mueve con dos dedos para que uno haga scroll; en pantalla completa queda libre.
+- Pantalla completa, «Ajustar vista», mostrar/ocultar rutas y, en la sala de grupo, avatares-pin de los miembros en su última ubicación.
 
-- [x] **Lint**: `ThemeToggle.tsx` reescrito con `useSyncExternalStore` (sin
-      `set-state-in-effect`) y `alt` añadido al `Image` de `WeatherStrip.tsx`.
-      `npm run lint` pasa con `--max-warnings=0`.
-- [ ] Revisar que el `next dev` no deje procesos huérfanos bloqueando el puerto.
+**Cierre de integración (2026-10-09)**
 
----
+- `/?destino=` redirige con un 307 real a `/planificar` y la landing es estática; los destinos inexistentes dan un 404 real.
+- Cabecera con «Cuenta», cierre de sesión que también reinicia la analítica, «Planes y precios» en el pie, sitemap con las páginas legales y `robots.txt` que deja a WhatsApp y X leer las tarjetas de los viajes compartidos.
+- Toasts que nunca tapan barras ni el botón «Ajustar con IA», errores por campo y espera real (429) en la generación, reserva desde el planificador cuando el viaje ya está guardado y reagendado que mueve la actividad al día propuesto.
+- Admin: errores reales con «Reintentar», rango 7/30/90 días, conteos en todos los filtros, presupuestos y gastos en su moneda, uso de IA por usuario, anuncios programados, valor JSON de las flags, mensajes de error en español y días en hora de RD.
+- App móvil: tipos al día con la web, formatos es-DO en toda la app, tiempo límite en todas las peticiones, cierre de sesión que borra los datos del modo en vivo y README/AGENTS de SDK 54.
+- Limpieza: 21 módulos web que ya nadie usaba (alertas, rastreador y paywall antiguos), `Loader3D` y dos componentes móviles; respaldo en el scratchpad de la sesión.
+- Verificado: `tsc` y ESLint sin errores ni avisos (web y móvil), Prettier, `next build` correcto (90 páginas) y QA en Chromium a 1440 px claro y 390 px oscuro sin errores de consola en producción.
 
-## ✅ Ya hecho (referencia)
+## 🔴 Lo que tienes que hacer tú (en este orden)
 
-- IA funcional de verdad: una sola llamada + derivación de tiers (≈5k tokens
-  por búsqueda en vez de ~27k). Parseo robusto de JSON (repara fences, comas
-  finales y escapes Unicode inválidos).
-- Reintento automático ante rate-limit (429) corto.
-- Búsqueda real sin keys de pago: geocoding (OpenStreetMap) + clima (OpenWeather)
-  inyectados al prompt; coordenadas reales de las actividades clave.
-- Enlaces de afiliado en actividades + CTAs de vuelos (Skyscanner) y hoteles
-  (Booking) en el resultado.
-- Botones: "Otra versión" (regenerar sin caché), "Calendario" (.ics export),
-  "PDF" (print).
-- Banner honesto que explica el motivo real cuando cae a demo.
-- Variables nuevas documentadas en `.env.example`: `AI_ITINERARY_MODEL`,
-  `AI_ITINERARY_MAX_TOKENS`.
-- Todas las pantallas del flujo responden OK (landing → form → loading →
-  packages → result → guardar → /trip/[id], login, group, landings SEO).
+1. **IA**: pon `ANTHROPIC_API_KEY` en `.env.local`, arranca `npm run dev` y ejecuta `npm run eval:ia -- --base http://localhost:3000 --interpret`. Todos los casos deberían salir sin errores (ver el informe en `scripts/eval-ia/resultados/`).
+2. **Supabase**:
+   - restaura el proyecto si está pausado;
+   - en el SQL Editor, pega y ejecuta `supabase/migrations/20261008120000_seguridad_y_flujos.sql`;
+   - revisa los admins y comprueba realtime;
+   - configura Auth (URLs, plantillas de correo, SMTP y Google), guía en `supabase/CONFIGURACION-AUTH.md`.
+3. **Upstash Redis** (gratis): `UPSTASH_REDIS_REST_URL` y `UPSTASH_REDIS_REST_TOKEN`, para que los límites de uso protejan tu factura de IA en producción.
+4. **Vercel**:
+   - variables de `.env.example`, con `NEXT_PUBLIC_BASE_URL` igual a tu dominio y `NEXT_PUBLIC_CONTACT_EMAIL` con tu email público (sin él, `/contacto` dice que el canal llega pronto);
+   - **Fluid Compute activado**, porque las rutas de IA usan hasta 300 s;
+   - borra `AMADEUS_*`, `BOOKING_API_KEY` y `NEXT_PUBLIC_SITE_URL`.
+5. **Afiliados** (es donde ganas dinero sin cobrar al usuario): Viator Partner (`VIATOR_API_KEY`, `PID`, `MCID`), Booking vía Awin/CJ, Travelpayouts o Skyscanner, y Airalo. Después de desplegar, haz un clic de prueba en cada panel de afiliado.
+6. **Cobros** (solo si vas a cobrar):
+   - primero decide con qué entidad: Stripe no opera con comercios en RD, así que necesitarías una LLC en EE. UU., Paddle o Lemon Squeezy;
+   - después crea productos, webhook y Customer Portal según la guía.
+7. **PostHog y Sentry** (opcional): las claves de la guía.
+8. **App móvil**:
+   - `cd mobile && npx expo install expo-dev-client expo-system-ui`;
+   - crea `mobile/.env` con las `EXPO_PUBLIC_*`;
+   - genera un _development build_ con `npx expo run:android` o `eas build --profile development`. Expo Go ya no sirve para este proyecto.
+9. **Pruebas finales con 2 cuentas** (checklist):
+   - B no puede hacerse admin;
+   - B no ve el grupo de A hasta abrir el enlace, y después el chat llega en vivo;
+   - un visitante sin sesión ve `/viaje-compartido/<id>` solo si A lo hizo público;
+   - el pago de prueba con la tarjeta 4242 cambia el plan;
+   - la recuperación de contraseña funciona de punta a punta;
+   - en el móvil: crear cuenta, generar, guardar y modo en vivo.
+
+## 🟡 Decisiones de producto pendientes
+
+- **Qué es «Pro»**: el helper `getEffectiveTier()` (`src/lib/stripe/entitlements.ts`) y la RPC `my_effective_tier` ya existen, pero las rutas de IA todavía no exigen plan (todo es gratis con límites de uso). Decide qué funciones son de pago y aplícalo en el servidor.
+- **Reservas con depósito**: desactivadas (`NEXT_PUBLIC_RESERVAS_ENABLED=false`) hasta que haya un proveedor real de reservas y una revisión legal.
+- **Precios reales de vuelos y hoteles**: hoy son enlaces de afiliado con fechas. Para precios en la app: Duffel o Travelpayouts (vuelos) y LiteAPI (hoteles).
+- **Video de TikTok/Instagram**: no funciona en Vercel serverless (necesita ffmpeg y yt-dlp). Muévelo a un worker en contenedor (Railway, Fly.io o Cloud Run) o déjalo desactivado.
+- **Feature flags y modo mantenimiento del admin**: se guardan pero nadie los lee todavía.
+- **Geocoding**: Nominatim es gratis pero con 1 petición/s global; con tráfico real, pasa a Geoapify, LocationIQ u OpenCage.
+- **Rutas del mapa**: los servidores públicos de FOSSGIS son de uso justo. Con tráfico real, monta tu OSRM (Docker) y pon `OSRM_FOOT_URL` y `OSRM_CAR_URL` (detalles en la guía).
+- **Gastos del grupo**: hoy siempre paga quien lo registra y se reparte entre todos. «Pagó» y «Entre quiénes» necesitan columnas nuevas y cambios en la API.
+- **Páginas legales** (`/privacidad`, `/terminos`): son un borrador (edad mínima, conservación de datos, nombre del responsable); revísalas con un abogado.
+
+## 🧹 Deuda técnica conocida
+
+- Quitar los alias `TEMPORAL` de colores de `globals.css` cuando ninguna pantalla los use (spec §2.2).
+- Probar en dispositivo (no había emulador): la intro móvil, los hápticos, el teclado sobre las hojas en Android y el modo en vivo en segundo plano.
+- Revisar en un Android de gama baja la intro y el mapa.
+- Mapa: falta la animación de 600 ms del trazo al cambiar de día (§7.4); el día activo ya se resalta con línea más gruesa y los demás atenuados.
+- En `next dev`, mientras el servidor recompila, la consola puede mostrar un «SyntaxError: Invalid or unexpected token» de un hot-update; no ocurre en producción (verificado con `next build` + `next start`).

@@ -1,118 +1,127 @@
-# Guía paso a paso — API keys de Wayio
+# Guía de configuración — servicios y API keys de Wayio
 
-> Todo va en `.env.local` (no lo subas a git). Reinicia `npm run dev` tras editarlo.
-> Sin ninguna key, la app corre en **modo demo** (datos de Tokio).
+> Todo va en `.env.local` en desarrollo (está en `.gitignore`) y en Vercel → Settings → Environment Variables en producción. Plantilla comentada: [`.env.example`](.env.example). Después de cambiar variables, reinicia `npm run dev` o vuelve a desplegar (las `NEXT_PUBLIC_*` se incrustan al compilar).
+>
+> Sin ninguna clave la app funciona en **modo demo**: muestra un itinerario de ejemplo, sin login ni pagos. Cada servicio que configures activa sus funciones; lo que falte se desactiva con mensajes amables (nunca con errores técnicos).
 
----
+## Orden recomendado
 
-## 1. Amadeus (vuelos) — `AMADEUS_CLIENT_ID` y `AMADEUS_CLIENT_SECRET`
-
-Gratis en entorno **test**, autoservicio. El código ya apunta a `test.api.amadeus.com`.
-
-1. Entra a **https://developers.amadeus.com** y haz clic en **Register** (arriba a la derecha).
-2. Crea la cuenta con tu email y confírmalo desde el correo que te llega.
-3. Inicia sesión y ve a **My Self-Service Workspace** (menú de tu usuario) →
-   **My apps**.
-4. Pulsa **Create new app**:
-   - **App name**: `Wayio` (lo que quieras).
-   - Acepta los términos.
-5. Al crearla verás dos valores en la pestaña de la app:
-   - **API Key** → es tu `AMADEUS_CLIENT_ID`
-   - **API Secret** → es tu `AMADEUS_CLIENT_SECRET`
-6. Pégalos en `.env.local`:
-   ```
-   AMADEUS_CLIENT_ID=tu_api_key
-   AMADEUS_CLIENT_SECRET=tu_api_secret
-   ```
-
-**Notas**
-
-- El entorno **test** es gratis pero devuelve datos limitados/cacheados — perfecto
-  para desarrollo. Para producción real hay que pasar la app a entorno
-  **Production** (botón en la misma página) y meter método de pago; ahí cambiarías
-  la URL base de `test.api.amadeus.com` a `api.amadeus.com` en
-  `src/lib/api/amadeus.ts`.
-- Con la misma cuenta tienes **Hotel Search API** si más adelante quieres hoteles
-  reales sin pelear con Booking.com.
+| #   | Servicio                                                      | Para qué                                                                                  | ¿Obligatorio?                 | Coste                  |
+| --- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------- | ----------------------------- | ---------------------- |
+| 1   | **Anthropic (Claude)**                                        | Generar itinerarios, interpretar la descripción libre, ajustes por chat, reagendar, video | Sí, para la IA real           | Pago por uso           |
+| 2   | **Supabase**                                                  | Login, guardar/compartir viajes, grupos, panel admin, caché                               | Sí, para cuentas              | Plan Free              |
+| 3   | **Upstash Redis**                                             | Límites de uso globales (protege tu factura de IA)                                        | Muy recomendado en producción | Plan Free              |
+| 4   | OpenWeather                                                   | Pronóstico real si el viaje empieza en ≤ 5 días                                           | Opcional                      | Gratis                 |
+| 5   | Afiliados (Viator, Booking, Skyscanner/Travelpayouts, Airalo) | Ganar comisión con los enlaces                                                            | Opcional                      | Gratis                 |
+| 6   | Stripe                                                        | Suscripciones Pro                                                                         | Solo si vas a cobrar          | Comisión por venta     |
+| 7   | PostHog / Sentry                                              | Analítica / errores                                                                       | Opcional                      | Planes gratis          |
+| 8   | Mapbox + Expo/EAS                                             | App móvil (mapa y builds)                                                                 | Solo móvil                    | Free / pago de tiendas |
 
 ---
 
-## 2. Sentry (monitoreo de errores) — `SENTRY_ORG`, `SENTRY_PROJECT` (y `SENTRY_DSN`)
+## 1. IA — Anthropic (recomendado) o Groq (pruebas)
 
-1. Crea cuenta en **https://sentry.io/signup/** (plan free sirve).
-2. En el onboarding, **crea un proyecto**:
-   - **Platform**: elige **Next.js**.
-   - **Project name**: `wayio` (o el que quieras).
-3. Al terminar te muestra el **DSN** (una URL tipo
-   `https://abc123@o456.ingest.sentry.io/789`). Eso es `SENTRY_DSN`.
-   - Si lo pierdes: **Settings → Projects → wayio → Client Keys (DSN)**.
-4. **`SENTRY_ORG`**: es el _slug_ de tu organización. Lo ves en la URL del
-   dashboard: `https://<ORG-SLUG>.sentry.io/...` o en
-   **Settings → General Settings → Organization Slug**.
-5. **`SENTRY_PROJECT`**: es el nombre/slug del proyecto que creaste (`wayio`).
-   Lo confirmas en **Settings → Projects** (la columna del slug).
-6. En `.env.local`:
+**Anthropic**
+
+1. Entra en <https://platform.claude.com> (consola de Anthropic), carga créditos y crea una clave en **API Keys**.
+2. En `.env.local`:
    ```
-   SENTRY_DSN=https://...ingest.sentry.io/...
-   SENTRY_ORG=tu-org-slug
-   SENTRY_PROJECT=wayio
+   AI_PROVIDER=anthropic
+   ANTHROPIC_API_KEY=sk-ant-...
    ```
+3. Modelos por defecto (no hace falta tocarlos): `claude-opus-5-5` para el itinerario y los ajustes, `claude-haiku-5-5` para tareas rápidas (interpretar la descripción, alertas). Para abaratar el itinerario a la mitad: `AI_ITINERARY_MODEL=claude-sonnet-5-5`. Velocidad vs. calidad: `AI_ITINERARY_EFFORT=low|medium|high` (por defecto `medium`).
+4. El servidor activa automáticamente el _fallback_ ante rechazos de los clasificadores de seguridad (`fallbacks: "default"`) en los modelos que lo admiten.
 
-**Nota**: `SENTRY_ORG` y `SENTRY_PROJECT` los usa el plugin de build para subir
-los _source maps_. El `SENTRY_DSN` es el que captura los errores en runtime.
-Es 100% opcional para que la app funcione.
+**Groq (gratis, cuota diaria limitada)**
 
----
+```
+AI_PROVIDER=groq
+GROQ_API_KEY=gsk_...
+GROQ_MODEL=openai/gpt-oss-120b
+GROQ_VISION_MODEL=qwen/qwen3.8-27b
+```
 
-## 3. PostHog (analítica de producto) — `NEXT_PUBLIC_POSTHOG_KEY`, `NEXT_PUBLIC_POSTHOG_HOST`
+Los modelos antiguos (`llama-3.3-70b-versatile`, `llama-3.1-8b-instant`, `llama-4-scout`) fueron dados de baja por Groq: si tu `.env.local` los tiene, cámbialos.
 
-1. Crea cuenta en **https://posthog.com** → **Get started — free**.
-2. Durante el registro eliges la **región de datos**:
-   - **US** → host `https://us.i.posthog.com`
-   - **EU** → host `https://eu.i.posthog.com`
-   - Ese valor es tu `NEXT_PUBLIC_POSTHOG_HOST`.
-3. Te crea un proyecto por defecto. Ve a
-   **Settings (⚙️) → Project → Project API Key**.
-4. Copia la **Project API Key** (empieza por `phc_...`).
-   → es tu `NEXT_PUBLIC_POSTHOG_KEY`.
-   - ⚠️ Usa la **Project API Key** (pública, `phc_`), **no** la Personal API Key.
-5. En `.env.local`:
+**Comprobar que la IA genera bien:** con el servidor corriendo, `npm run eval:ia -- --base http://localhost:3000` ejecuta la batería de 44 viajes de prueba (`scripts/eval-ia/casos.mjs`) y escribe un informe en `scripts/eval-ia/resultados/`. Opciones: `--interpret` (evalúa también la interpretación de texto libre), `--juez` (nota de calidad 1-5 de Claude), `--solo id1,id2`.
+
+## 2. Supabase
+
+1. <https://supabase.com> → tu proyecto (si está pausado, **Restore**). En **Project Settings → API** copia:
    ```
-   NEXT_PUBLIC_POSTHOG_KEY=phc_tuclave
-   NEXT_PUBLIC_POSTHOG_HOST=https://us.i.posthog.com
+   NEXT_PUBLIC_SUPABASE_URL=https://<ref>.supabase.co     # sin /rest/v1
+   NEXT_PUBLIC_SUPABASE_ANON_KEY=...
+   SUPABASE_SERVICE_ROLE_KEY=...                          # la "service_role" (secreta), NO la anon
+   NEXT_PUBLIC_BASE_URL=http://localhost:3000             # en producción, tu dominio
    ```
+2. **Esquema y seguridad:** SQL Editor → New query → pega TODO [`supabase/migrations/20261008120000_seguridad_y_flujos.sql`](supabase/migrations/20261008120000_seguridad_y_flujos.sql) → Run. Si el proyecto está vacío, pega en su lugar [`supabase/schema.sql`](supabase/schema.sql) (ya lo incluye). Ambos son idempotentes. Esta migración corrige huecos graves (cualquiera podía hacerse admin; los grupos eran legibles por cualquier usuario) y activa compartir, unirse a grupos, referidos, reservas y realtime.
+3. Revisa admins: `select id, email from public.profiles where role = 'admin';` y hazte admin con `update public.profiles set role = 'admin' where email = '<tu-email>';`.
+4. **Realtime:** Database → Publications → `supabase_realtime`: deben estar `trip_members`, `group_messages`, `activity_votes`, `group_expenses`.
+5. **Auth** (detalle paso a paso en [`supabase/CONFIGURACION-AUTH.md`](supabase/CONFIGURACION-AUTH.md)):
+   - Authentication → URL Configuration: Site URL = tu dominio; Redirect URLs = `https://<tu-dominio>/**`, `http://localhost:3000/**` (proyecto de desarrollo) y `wayio://**`.
+   - Providers → Email: Confirm email ON, contraseña mínima 8.
+   - Emails → Templates: pega los 6 HTML de `supabase/templates/` (el `db push` NO los sube).
+   - SMTP propio para producción (p. ej. Resend con dominio verificado).
+   - Google: crea un OAuth Client (Web) en Google Cloud con redirect `https://<ref>.supabase.co/auth/v1/callback` y pégalo en Providers → Google.
 
-**Nota**: como tienen prefijo `NEXT_PUBLIC_`, se exponen al navegador (es lo
-esperado para PostHog). Si la key está vacía, PostHog simplemente no se inicializa.
+## 3. Upstash Redis (límites de uso)
 
----
+<https://upstash.com> → Redis → crea una base → pestaña **REST API**:
 
-## 4. (Opcional recomendado) OpenWeather — `OPENWEATHER_API_KEY`
+```
+UPSTASH_REDIS_REST_URL=https://...upstash.io
+UPSTASH_REDIS_REST_TOKEN=...
+```
 
-Gratis, mejora el clima real en la pantalla de resultado.
+Sin esto, los límites (6 itinerarios/hora sin sesión, 30 con sesión, etc.) se cuentan por instancia serverless y no son globales. En desarrollo están apagados salvo `RATE_LIMIT_ENFORCE=true`.
 
-1. Cuenta en **https://openweathermap.org/api** → **Sign up**.
-2. **My API keys** (menú de tu usuario) → copia la **Default** key.
-3. `OPENWEATHER_API_KEY=tu_key`
-4. ⏳ La key tarda hasta ~1–2 horas en activarse la primera vez.
+## 4. Mapa, geocoding y clima
 
----
+- Mapa (MapLibre + OpenFreeMap) y geocoding (OpenStreetMap Nominatim): **gratis y sin clave**. Pon `NOMINATIM_EMAIL=tu@email` (lo pide su política de uso). Para tráfico alto, migra a un geocoder comercial (Geoapify, LocationIQ, OpenCage).
+- Rutas exactas por calles entre paradas (`POST /api/ruta`): **OSRM** sobre OpenStreetMap, con los servidores públicos de FOSSGIS (`routing.openstreetmap.de`, perfiles a pie y en carro). Son gratis y sin clave, pero de **uso justo**. Los tramos de ≤ 1,6 km van a pie, los de hasta 250 km en carro, y los más largos o por mar se dibujan como arco. Las rutas se cachean en el servidor (7 días) y en la sesión del navegador.
+  - Con tráfico real, monta tu propio OSRM (imagen Docker `osrm/osrm-backend` con el extracto de tu región de Geofabrik) y pon `OSRM_FOOT_URL` y `OSRM_CAR_URL` (URL base con el perfil, sin barra final). Otra opción es un proveedor comercial compatible (Stadia, GraphHopper, Mapbox Directions), adaptando `src/lib/api/rutas.ts`.
+  - Si el servicio no responde, el mapa dibuja arcos y el itinerario no se rompe.
+- Clima: <https://openweathermap.org/api> → API keys → `OPENWEATHER_API_KEY=` (tarda hasta 2 h en activarse). Si el viaje empieza en ≤ 5 días se usa el pronóstico real de esas fechas; si no, se muestra el clima actual con esa etiqueta.
 
-## 5. Booking.com — por qué NO ahora
+## 5. Búsqueda real y afiliados
 
-`BOOKING_API_KEY` requiere ser **partner afiliado aprobado** de Booking
-(Demand API / Distribution XML): proceso B2B, manual, con revisión. **No es
-autoservicio.** Recomendación: deja `BOOKING_API_KEY` vacío y, si quieres hoteles
-reales, usa **Amadeus Hotel Search** (misma cuenta del paso 1) o **Hotelbeds**.
-Mientras tanto la IA ya propone hoteles por nombre y categoría.
+| Qué                    | Estado                                                                | Qué hacer                                                                                                                                                                                  |
+| ---------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Vuelos con precio      | **Amadeus Self-Service cerró (17-jul-2026)**; no hay API autoservicio | Se usan enlaces de afiliado con fechas (Skyscanner/Aviasales/Google Flights). Para precios reales: Duffel (autoservicio) o Travelpayouts Data API                                          |
+| Hoteles con precio     | La API de Booking exige contrato                                      | Enlaces de Booking con fechas y huéspedes. Para precios: LiteAPI (sandbox gratis)                                                                                                          |
+| Actividades con precio | **Viator Partner API** (autoservicio "Basic Access")                  | Alta en <https://partnerresources.viator.com> → `VIATOR_API_KEY`, `NEXT_PUBLIC_VIATOR_PID`, `NEXT_PUBLIC_VIATOR_MCID` (prueba con `VIATOR_API_URL=https://api.sandbox.viator.com/partner`) |
 
----
+IDs de afiliado (públicos; si faltan, los enlaces funcionan sin comisión): `NEXT_PUBLIC_BOOKING_AID` (Booking vía Awin/CJ), `NEXT_PUBLIC_SKYSCANNER_ASSOCIATE_ID` (Impact), `NEXT_PUBLIC_TP_MARKER` (Travelpayouts/Aviasales), `NEXT_PUBLIC_AIRALO_REF`. Tras desplegar, haz un clic de prueba en cada panel de afiliado para confirmar la atribución.
 
-## Prioridad sugerida
+## 6. Stripe (solo si vas a cobrar)
 
-1. `GROQ_API_KEY` (gratis) o `ANTHROPIC_API_KEY` → **imprescindible** para IA real.
-2. `NEXT_PUBLIC_SUPABASE_*` → login + guardar viajes.
-3. `OPENWEATHER_API_KEY` → clima real (rápido y gratis).
-4. `AMADEUS_*` → vuelos reales.
-5. Sentry / PostHog → cuando quieras observabilidad/analítica.
-6. Stripe → solo si vas a cobrar.
+> Stripe no abre cuentas de comercio con sede en República Dominicana (verifícalo en stripe.com/global). Opciones: empresa en EE. UU. (Stripe Atlas), un _merchant of record_ (Paddle, Lemon Squeezy) o una pasarela local.
+
+1. dashboard.stripe.com (modo **Test** primero) → Developers → API keys → `STRIPE_SECRET_KEY`.
+2. Products (USD, importes de [`src/constants/pricing.ts`](src/constants/pricing.ts)):
+   - «Wayio Pro Viajero»: recurrente mensual 6.99 → `STRIPE_PRICE_MONTHLY`; recurrente anual 49.99 → `STRIPE_PRICE_ANNUAL`.
+   - «Wayio Pro por Viaje»: pago único 4.99 → `STRIPE_PRICE_PER_TRIP` (da Pro hasta el fin del viaje + 7 días).
+   - «Wayio Pro Grupo»: recurrente mensual 12.99 → `STRIPE_PRICE_GROUP`.
+3. Developers → Webhooks → endpoint `https://<tu-dominio>/api/stripe/webhook` con los eventos `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`, `customer.subscription.created|updated|deleted`, `invoice.paid`, `invoice.payment_failed` → `STRIPE_WEBHOOK_SECRET`. En local: `stripe listen --forward-to localhost:3000/api/stripe/webhook`.
+4. Settings → Billing → Customer portal: activa cancelar, cambiar método de pago y cambiar de plan; enlace de retorno `https://<tu-dominio>/cuenta`; **Save**.
+5. El «depósito de reserva» queda **desactivado** (`NEXT_PUBLIC_RESERVAS_ENABLED=false`): hoy no hay un proveedor real de reservas detrás y cobrar un depósito sin reservar nada es un riesgo legal. Actívalo solo cuando lo haya.
+
+## 7. Analítica y errores
+
+- PostHog: <https://posthog.com> → Project API Key → `NEXT_PUBLIC_POSTHOG_KEY` y `NEXT_PUBLIC_POSTHOG_HOST` (`https://us.i.posthog.com` o `https://eu.i.posthog.com`). Sin clave no se envía nada.
+- Sentry: proyecto Next.js en <https://sentry.io> → `NEXT_PUBLIC_SENTRY_DSN`. Para sourcemaps legibles: `SENTRY_ORG`, `SENTRY_PROJECT` y `SENTRY_AUTH_TOKEN` (Settings → Auth Tokens), solo en el build de Vercel.
+
+## 8. App móvil (Expo)
+
+`mobile/.env` (ver `mobile/.env.example`):
+
+```
+EXPO_PUBLIC_SUPABASE_URL=...            # la misma de la web
+EXPO_PUBLIC_SUPABASE_ANON_KEY=...       # la misma anon key
+EXPO_PUBLIC_API_URL=http://<IP-LAN-de-tu-PC>:3000   # en un teléfono físico, no "localhost"
+EXPO_PUBLIC_WEB_URL=https://<tu-dominio>
+EXPO_PUBLIC_MAPBOX_TOKEN=pk....          # account.mapbox.com (token público)
+```
+
+- **Expo Go ya no abre este proyecto** (Expo Go va por un SDK más nuevo que el 54 del proyecto, y el mapa, la ubicación en segundo plano y los enlaces `wayio://` necesitan código nativo). Haz un _development build_: `cd mobile && npx expo install expo-dev-client expo-system-ui && npx expo run:android` (Android Studio) o `eas build --profile development`.
+- Publicar en tiendas: Apple Developer (99 USD/año) y Google Play (25 USD, pago único). Para vender suscripciones dentro de la app revisa las reglas de pagos in-app de cada tienda.
