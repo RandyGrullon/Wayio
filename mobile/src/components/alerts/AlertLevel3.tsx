@@ -1,172 +1,134 @@
-import {
-  Modal,
-  View,
-  Text,
-  TouchableOpacity,
-  ActivityIndicator,
-  ScrollView,
-  StyleSheet,
-} from 'react-native'
+import { ActivityIndicator, StyleSheet, View } from 'react-native'
+import { useEstilos, useTheme, type Tema } from '../../theme'
+import { Txt } from '../ui/Txt'
+import { Button } from '../ui/Button'
+import { Card, CardKicker } from '../ui/Card'
+import { Compass } from '../ui/iconos'
+import { Hoja } from './piezas'
 import type { AlertMessage } from '../../types/alert'
 
 interface Props {
   retrasoMinutos: number
+  actividadNombre?: string | null
   aiMessage: AlertMessage | null
   aiLoading: boolean
+  /** Nombre de la actividad que la IA propone quitar (ya validada). */
+  recomendadaNombre: string | null
   onAceptar: () => void
+  onVerOpciones: () => void
   onRechazar: () => void
 }
 
+/** Nivel 3: hoja con la sugerencia de la IA (Compass, nunca Sparkles). */
 export function AlertLevel3({
   retrasoMinutos,
+  actividadNombre,
   aiMessage,
   aiLoading,
+  recomendadaNombre,
   onAceptar,
+  onVerOpciones,
   onRechazar,
 }: Props): React.ReactElement {
+  const styles = useEstilos(crearEstilos)
+  const { colors } = useTheme()
+  const hayRecomendacion =
+    !aiLoading && aiMessage?.actividadRecomendarQuitar && recomendadaNombre
+
   return (
-    <Modal visible transparent animationType="slide" statusBarTranslucent>
-      <View style={styles.overlay}>
-        <View style={styles.modal}>
-          <View style={styles.header}>
-            <Text style={styles.badge}>Nivel 3</Text>
-            <Text style={styles.title}>⏳ {retrasoMinutos} min de retraso</Text>
-          </View>
-
-          <ScrollView
-            style={styles.content}
-            showsVerticalScrollIndicator={false}
-          >
-            {aiLoading && (
-              <View style={styles.loading}>
-                <ActivityIndicator size="large" color="#2563EB" />
-                <Text style={styles.loadingText}>
-                  Analizando tu itinerario...
-                </Text>
-              </View>
-            )}
-
-            {aiMessage && !aiLoading && (
-              <>
-                <Text style={styles.aiMessage}>
-                  {aiMessage.mensajeAmigable}
-                </Text>
-
-                {aiMessage.actividadRecomendarQuitar && (
-                  <View style={styles.recommendation}>
-                    <Text style={styles.recLabel}>Recomendación:</Text>
-                    <Text style={styles.recText}>
-                      Quitar esta actividad ahorra{' '}
-                      <Text style={styles.recHighlight}>
-                        {aiMessage.tiempoQueAhorra} min
-                      </Text>
-                    </Text>
-                    <Text style={styles.recReason}>
-                      {aiMessage.razonSimple}
-                    </Text>
-                  </View>
-                )}
-
-                {aiMessage.alternativa && (
-                  <View style={styles.alternative}>
-                    <Text style={styles.altText}>{aiMessage.alternativa}</Text>
-                  </View>
-                )}
-              </>
-            )}
-          </ScrollView>
-
-          <View style={styles.buttons}>
-            <TouchableOpacity
-              style={[styles.btn, styles.btnPrimary]}
+    <Hoja
+      visible
+      alerta
+      onClose={onRechazar}
+      kicker="Sugerencia con IA"
+      kickerIcon={Compass}
+      titulo={`${retrasoMinutos} min de retraso`}
+      acciones={
+        <>
+          {hayRecomendacion ? (
+            <Button
+              title={`Quitar ${recomendadaNombre} de hoy`}
+              variant="tinta"
+              size="lg"
+              fullWidth
               onPress={onAceptar}
-            >
-              <Text style={styles.btnPrimaryText}>Aceptar recomendación</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.btn, styles.btnSecondary]}
-              onPress={onRechazar}
-            >
-              <Text style={styles.btnSecondaryText}>Continuar igual</Text>
-            </TouchableOpacity>
-          </View>
+            />
+          ) : (
+            <Button
+              title="Mover a otro día"
+              variant="tinta"
+              size="lg"
+              fullWidth
+              onPress={onVerOpciones}
+            />
+          )}
+          <Button
+            title="Seguir con mi plan"
+            variant="ghost"
+            size="lg"
+            fullWidth
+            onPress={onRechazar}
+          />
+        </>
+      }
+    >
+      {actividadNombre ? (
+        <Txt variant="bodyS" color="fgMuted">
+          Vas tarde a {actividadNombre}.
+        </Txt>
+      ) : null}
+
+      {aiLoading || !aiMessage ? (
+        <View
+          style={styles.cargando}
+          accessible
+          accessibilityLabel="Buscando una alternativa"
+          accessibilityState={{ busy: true }}
+        >
+          <ActivityIndicator color={colors.fg} />
+          <Txt variant="bodyS" color="fgMuted">
+            Buscando una alternativa para el resto del día…
+          </Txt>
         </View>
-      </View>
-    </Modal>
+      ) : (
+        <>
+          <Txt variant="body" accessibilityLiveRegion="polite">
+            {aiMessage.mensajeAmigable}
+          </Txt>
+
+          {hayRecomendacion ? (
+            <Card variant="nota" style={styles.nota}>
+              <CardKicker color="brassText">Recomendación</CardKicker>
+              <Txt variant="label">
+                Quitar {recomendadaNombre} te ahorra {aiMessage.tiempoQueAhorra}{' '}
+                min
+              </Txt>
+              {aiMessage.razonSimple ? (
+                <Txt variant="bodyS" color="fgMuted">
+                  {aiMessage.razonSimple}
+                </Txt>
+              ) : null}
+            </Card>
+          ) : null}
+
+          {aiMessage.alternativa ? (
+            <Txt variant="bodyS" color="fgMuted">
+              {aiMessage.alternativa}
+            </Txt>
+          ) : null}
+        </>
+      )}
+    </Hoja>
   )
 }
 
-const styles = StyleSheet.create({
-  overlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'flex-end',
-  },
-  modal: {
-    backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    paddingTop: 24,
-    paddingHorizontal: 24,
-    paddingBottom: 40,
-    maxHeight: '80%',
-  },
-  header: { marginBottom: 16 },
-  badge: {
-    alignSelf: 'flex-start',
-    backgroundColor: '#FEF3C7',
-    color: '#92400E',
-    fontSize: 12,
-    fontWeight: '700',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 6,
-    overflow: 'hidden',
-    marginBottom: 8,
-  },
-  title: { fontSize: 20, fontWeight: '700', color: '#111827' },
-  content: { marginBottom: 24 },
-  loading: { alignItems: 'center', paddingVertical: 32, gap: 16 },
-  loadingText: { fontSize: 14, color: '#6B7280' },
-  aiMessage: {
-    fontSize: 16,
-    lineHeight: 24,
-    color: '#374151',
-    marginBottom: 20,
-  },
-  recommendation: {
-    backgroundColor: '#EFF6FF',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
-  },
-  recLabel: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#1D4ED8',
-    marginBottom: 4,
-  },
-  recText: { fontSize: 15, color: '#1E3A5F', marginBottom: 4 },
-  recHighlight: { fontWeight: '700', color: '#1D4ED8' },
-  recReason: { fontSize: 13, color: '#3B82F6' },
-  alternative: {
-    backgroundColor: '#F0FDF4',
-    borderRadius: 12,
-    padding: 16,
-  },
-  altText: { fontSize: 14, color: '#15803D', lineHeight: 20 },
-  buttons: { gap: 12 },
-  btn: {
-    paddingVertical: 14,
-    borderRadius: 12,
-    alignItems: 'center',
-  },
-  btnPrimary: { backgroundColor: '#2563EB' },
-  btnPrimaryText: { color: '#FFFFFF', fontSize: 15, fontWeight: '700' },
-  btnSecondary: {
-    backgroundColor: '#F3F4F6',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-  },
-  btnSecondaryText: { color: '#374151', fontSize: 15, fontWeight: '600' },
-})
+const crearEstilos = (t: Tema) =>
+  StyleSheet.create({
+    cargando: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: t.space[3],
+      paddingVertical: t.space[4],
+    },
+    nota: { gap: t.space[1], padding: t.space[4] },
+  })

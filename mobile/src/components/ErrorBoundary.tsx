@@ -1,8 +1,11 @@
-import { Component, type ReactNode } from 'react'
+import { Component, type ErrorInfo, type ReactNode } from 'react'
 
 interface Props {
-  fallback: ReactNode
+  /** Contenido de reserva, o una función que recibe `reintentar`. */
+  fallback: ReactNode | ((reintentar: () => void) => ReactNode)
   children: ReactNode
+  /** Aviso opcional (registro de errores). */
+  onError?: (error: Error, info: ErrorInfo) => void
 }
 
 interface State {
@@ -10,9 +13,9 @@ interface State {
 }
 
 /**
- * Minimal error boundary. Used to wrap the lazily-loaded native map so that, in
- * environments without the native module (e.g. Expo Go), the rest of the screen
- * keeps working and a friendly fallback is shown instead of a red screen.
+ * Límite de errores. Envuelve la app entera (App.tsx, M18) y también el mapa
+ * nativo cargado en diferido, para que un fallo muestre una pantalla amable en
+ * vez de la pantalla roja o una app en blanco.
  */
 export class ErrorBoundary extends Component<Props, State> {
   state: State = { hasError: false }
@@ -21,7 +24,17 @@ export class ErrorBoundary extends Component<Props, State> {
     return { hasError: true }
   }
 
+  componentDidCatch(error: Error, info: ErrorInfo): void {
+    this.props.onError?.(error, info)
+  }
+
+  reintentar = (): void => {
+    this.setState({ hasError: false })
+  }
+
   render(): ReactNode {
-    return this.state.hasError ? this.props.fallback : this.props.children
+    if (!this.state.hasError) return this.props.children
+    const { fallback } = this.props
+    return typeof fallback === 'function' ? fallback(this.reintentar) : fallback
   }
 }

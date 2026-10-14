@@ -1,54 +1,78 @@
+import { postJSON } from '../api/http'
 import type { Activity } from '../../types/activity'
-import type { AlertMessage } from '../../types/alert'
+import type { AlertLevel, AlertMessage } from '../../types/alert'
 
-const API_BASE = process.env['EXPO_PUBLIC_API_URL'] ?? 'http://localhost:3000'
+/**
+ * Pide al backend un mensaje amable para un retraso. El prompt se construye en
+ * el servidor: aquí solo se envían datos estructurados (y el Bearer de la
+ * sesión). Si la IA no está disponible el backend devuelve igualmente un
+ * mensaje útil; solo falla por red, sesión caducada o límite de uso
+ * (BackendError con mensaje en español).
+ */
 
-export function buildAlertPrompt(
-  actividad: Activity,
-  itinerarioRestante: Activity[],
-  retrasoMinutos: number
-): string {
-  return `
-Eres un amigo que conoce muy bien el destino y ayuda al viajero.
-Hablas de forma natural, calida y directa. Nunca robotica.
+const MAX_SIGUIENTES = 5
 
-El viajero lleva ${retrasoMinutos} minutos de retraso.
-Actividad actual: ${actividad.nombre}
-Lo que queda del dia: ${JSON.stringify(itinerarioRestante)}
+const recortar = (s: string | undefined, max: number): string =>
+  (s ?? '').trim().slice(0, max)
 
-Analiza la situacion y responde en JSON con:
-{
-  mensajeAmigable: string,
-  actividadRecomendarQuitar: string | null,
-  razonSimple: string,
-  tiempoQueAhorra: number,
-  alternativa: string | null
+const hora = (s: string | undefined): string | undefined =>
+  s && /^\d{1,2}:\d{2}$/.test(s.trim()) ? s.trim() : undefined
+
+export interface AlertMessageOptions {
+  /** Nivel de alerta actual (1-5). Por defecto 3. */
+  nivel?: Exclude<AlertLevel, 0>
+  /** Si el viaje es un crucero (prioriza volver al barco). */
+  esCrucero?: boolean
 }
 
-REGLAS CRITICAS:
-- NUNCA recomendar quitar algo ya pagado o con reserva confirmada.
-- NUNCA recomendar quitar algo que el usuario voto positivo en el grupo.
-- Priorizar actividades unicas e irrepetibles sobre las que se pueden ver en otra ciudad.
-- Si el retraso es recuperable sin quitar nada, decirlo.
-`.trim()
+export interface AlertMessageResult extends AlertMessage {
+  /** 'ia' si lo generó la IA, 'local' si es el mensaje de respaldo. */
+  fuente?: 'ia' | 'local'
 }
 
 export async function generateAlertMessage(
   actividad: Activity,
   itinerarioRestante: Activity[],
-  retrasoMinutos: number
-): Promise<AlertMessage> {
-  const prompt = buildAlertPrompt(actividad, itinerarioRestante, retrasoMinutos)
+  retrasoMinutos: number,
+  opciones: AlertMessageOptions = {}
+): Promise<AlertMessageResult> {
+  const siguientes = itinerarioRestante
+    .filter((a) => a.id !== actividad.id)
+    .slice(0, MAX_SIGUIENTES)
+    .map((a) => {
+      const horaInicio = hora(a.horaInicio)
+      return {
+        id: recortar(a.id, 120),
+        nombre: recortar(a.nombre, 120) || 'Actividad',
+        ...(horaInicio ? { horaInicio } : {}),
+        ...(a.duracionMinutos > 0
+          ? { duracionMinutos: Math.min(Math.round(a.duracionMinutos), 1440) }
+          : {}),
+        reservada: Boolean(a.tieneReserva),
+        ...(a.votosPositivos
+          ? { votosPositivos: Math.min(Math.round(a.votosPositivos), 1000) }
+          : {}),
+      }
+    })
 
-  const response = await fetch(`${API_BASE}/api/alert-message`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt }),
+  const horaInicio = hora(actividad.horaInicio)
+  const horaFin = hora(actividad.horaFin)
+  const esCrucero =
+    opciones.esCrucero ??
+    [actividad, ...itinerarioRestante].some((a) => a.puertoCrucero === true)
+
+  return postJSON<AlertMessageResult>('/api/alert-message', {
+    actividad: {
+      id: recortar(actividad.id, 120),
+      nombre: recortar(actividad.nombre, 120) || 'Actividad',
+      ...(horaInicio ? { horaInicio } : {}),
+      ...(horaFin ? { horaFin } : {}),
+      tipo: recortar(actividad.tipo, 40),
+    },
+    retrasoMinutos: Math.min(Math.max(Math.round(retrasoMinutos), 0), 1440),
+    nivel: opciones.nivel ?? 3,
+    siguientes,
+    esCrucero,
+    idioma: 'es',
   })
-
-  if (!response.ok) {
-    throw new Error(`alert-message API error: ${response.status}`)
-  }
-
-  return response.json() as Promise<AlertMessage>
 }

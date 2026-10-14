@@ -1,11 +1,6 @@
-export function formatCurrency(amount: number, currency = 'USD'): string {
-  try {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency,
-      maximumFractionDigits: 0,
-    }).format(amount)
-  } catch {
-    return `$${Math.round(amount)}`
-  }
-}
+/**
+ * Compatibilidad: los formatos viven en `./formatters` (es-DO, sin Intl,
+ * seguros en Hermes). `formatCurrency(amount, currency)` mantiene su firma
+ * («US$1,840» en vez del antiguo «$1,840» en-US).
+ */
+export * from './formatters'

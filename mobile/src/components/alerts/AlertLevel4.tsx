@@ -1,133 +1,191 @@
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import {
-  View,
-  Text,
-  TouchableOpacity,
+  AccessibilityInfo,
+  Modal,
+  Pressable,
+  ScrollView,
   StyleSheet,
-  Animated,
-  SafeAreaView,
+  View,
 } from 'react-native'
+import { SafeAreaView } from 'react-native-safe-area-context'
+import { useEstilos, useTheme, type Tema } from '../../theme'
+import { Txt } from '../ui/Txt'
+import {
+  AlertTriangle,
+  ArrowRight,
+  CalendarDays,
+  SkipForward,
+  type LucideIcon,
+} from '../ui/iconos'
+import { useReduceMotion } from '../ui/useReduceMotion'
 
-interface Option {
-  label: string
-  sublabel: string
-  onPress: () => void
-}
+export type OpcionAlerta = 'A' | 'B' | 'C'
 
 interface Props {
   retrasoMinutos: number
-  opciones: [Option, Option, Option]
+  actividadNombre?: string | null
+  onElegir: (opcion: OpcionAlerta) => void
 }
 
+interface Opcion {
+  id: OpcionAlerta
+  icon: LucideIcon
+  titulo: string
+  detalle: string
+}
+
+const OPCIONES: readonly Opcion[] = [
+  {
+    id: 'A',
+    icon: CalendarDays,
+    titulo: 'Mover a otro día',
+    detalle: 'Buscamos el mejor hueco libre de tu itinerario.',
+  },
+  {
+    id: 'B',
+    icon: SkipForward,
+    titulo: 'Saltar actividad',
+    detalle: 'La quitamos de hoy y la guardamos para tu próxima visita.',
+  },
+  {
+    id: 'C',
+    icon: ArrowRight,
+    titulo: 'Seguir igual',
+    detalle: 'Sin cambios: llegarás más tarde.',
+  },
+]
+
+/**
+ * Nivel 4: pantalla completa para decidir. «Atrás» equivale a «Seguir igual»
+ * (no se queda nadie atrapado).
+ */
 export function AlertLevel4({
   retrasoMinutos,
-  opciones,
+  actividadNombre,
+  onElegir,
 }: Props): React.ReactElement {
-  const [scale] = useState(() => new Animated.Value(0.9))
+  const styles = useEstilos(crearEstilos)
+  const { colors } = useTheme()
+  const reducir = useReduceMotion()
+  const titulo = actividadNombre
+    ? `Vas ${retrasoMinutos} min tarde a ${actividadNombre}`
+    : `Llevas ${retrasoMinutos} min de retraso`
 
   useEffect(() => {
-    Animated.spring(scale, {
-      toValue: 1,
-      useNativeDriver: true,
-      tension: 100,
-      friction: 10,
-    }).start()
-  }, [scale])
+    AccessibilityInfo.announceForAccessibility(`${titulo}. Elige cómo seguir.`)
+  }, [titulo])
 
   return (
-    <Animated.View style={[styles.screen, { transform: [{ scale }] }]}>
-      <SafeAreaView style={styles.inner}>
-        <View style={styles.header}>
-          <Text style={styles.badge}>⚠️ URGENTE</Text>
-          <Text style={styles.title}>{retrasoMinutos} minutos de retraso</Text>
-          <Text style={styles.subtitle}>
-            Elige cómo seguir — no puedes continuar sin decidir
-          </Text>
-        </View>
+    <Modal
+      visible
+      animationType={reducir ? 'fade' : 'slide'}
+      statusBarTranslucent
+      navigationBarTranslucent
+      onRequestClose={() => onElegir('C')}
+    >
+      <SafeAreaView style={styles.pantalla} edges={['top', 'bottom']}>
+        <ScrollView
+          contentContainerStyle={styles.contenido}
+          accessibilityViewIsModal
+        >
+          <View style={styles.cabecera} accessibilityRole="alert">
+            <View style={styles.icono}>
+              <AlertTriangle
+                size={28}
+                color={colors.warningFg}
+                strokeWidth={1.75}
+                accessible={false}
+              />
+            </View>
+            <Txt variant="overline" color="warningFg">
+              Urgente
+            </Txt>
+            <Txt variant="h1" center>
+              {titulo}
+            </Txt>
+            <Txt variant="body" color="fgMuted" center>
+              Elige cómo seguir con el resto del día.
+            </Txt>
+          </View>
 
-        <View style={styles.options}>
-          {opciones.map((opt, i) => (
-            <TouchableOpacity
-              key={i}
-              style={[styles.optionBtn, i === 0 && styles.optionBtnPrimary]}
-              onPress={opt.onPress}
-              activeOpacity={0.85}
-            >
-              <Text
-                style={[
-                  styles.optionLabel,
-                  i === 0 && styles.optionLabelPrimary,
-                ]}
-              >
-                {String.fromCharCode(65 + i)}. {opt.label}
-              </Text>
-              <Text
-                style={[
-                  styles.optionSublabel,
-                  i === 0 && styles.optionSublabelPrimary,
-                ]}
-              >
-                {opt.sublabel}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
+          <View style={styles.opciones}>
+            {OPCIONES.map((o, i) => {
+              const Icono = o.icon
+              const principal = i === 0
+              return (
+                <Pressable
+                  key={o.id}
+                  onPress={() => onElegir(o.id)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${o.titulo}. ${o.detalle}`}
+                  style={({ pressed }) => [
+                    styles.opcion,
+                    principal ? styles.opcionPrincipal : null,
+                    pressed ? styles.pulsada : null,
+                  ]}
+                >
+                  <Icono
+                    size={22}
+                    color={principal ? colors.fgInverse : colors.fg}
+                    strokeWidth={1.75}
+                    accessible={false}
+                  />
+                  <View style={styles.opcionTextos}>
+                    <Txt variant="title" color={principal ? 'fgInverse' : 'fg'}>
+                      {o.titulo}
+                    </Txt>
+                    <Txt
+                      variant="caption"
+                      color={principal ? 'fgInverse' : 'fgMuted'}
+                    >
+                      {o.detalle}
+                    </Txt>
+                  </View>
+                </Pressable>
+              )
+            })}
+          </View>
+        </ScrollView>
       </SafeAreaView>
-    </Animated.View>
+    </Modal>
   )
 }
 
-const styles = StyleSheet.create({
-  screen: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: '#92400E',
-    zIndex: 999,
-  },
-  inner: {
-    flex: 1,
-    justifyContent: 'center',
-    paddingHorizontal: 24,
-  },
-  header: { marginBottom: 40, alignItems: 'center' },
-  badge: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#FCD34D',
-    letterSpacing: 1.5,
-    marginBottom: 12,
-  },
-  title: {
-    fontSize: 32,
-    fontWeight: '800',
-    color: '#FFFFFF',
-    textAlign: 'center',
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 16,
-    color: '#FDE68A',
-    textAlign: 'center',
-    lineHeight: 22,
-  },
-  options: { gap: 14 },
-  optionBtn: {
-    backgroundColor: 'rgba(255,255,255,0.15)',
-    borderRadius: 16,
-    padding: 20,
-    borderWidth: 1.5,
-    borderColor: 'rgba(255,255,255,0.25)',
-  },
-  optionBtnPrimary: {
-    backgroundColor: '#FFFFFF',
-    borderColor: '#FFFFFF',
-  },
-  optionLabel: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    marginBottom: 4,
-  },
-  optionLabelPrimary: { color: '#92400E' },
-  optionSublabel: { fontSize: 13, color: '#FDE68A' },
-  optionSublabelPrimary: { color: '#B45309' },
-})
+const crearEstilos = (t: Tema) =>
+  StyleSheet.create({
+    pantalla: { flex: 1, backgroundColor: t.colors.bg },
+    contenido: {
+      flexGrow: 1,
+      justifyContent: 'center',
+      padding: t.space[6],
+      gap: t.space[8],
+    },
+    cabecera: { alignItems: 'center', gap: t.space[2] },
+    icono: {
+      width: 56,
+      height: 56,
+      borderRadius: 28,
+      backgroundColor: t.colors.warningBg,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginBottom: t.space[2],
+    },
+    opciones: { gap: t.space[3] },
+    opcion: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: t.space[4],
+      minHeight: 72,
+      padding: t.space[4],
+      borderRadius: t.radius.card,
+      borderWidth: 1,
+      borderColor: t.colors.borderStrong,
+      backgroundColor: t.colors.surface,
+    },
+    opcionPrincipal: {
+      backgroundColor: t.colors.surfaceInverse,
+      borderColor: t.colors.surfaceInverse,
+    },
+    opcionTextos: { flex: 1, gap: 2 },
+    pulsada: { opacity: 0.9, transform: [{ scale: 0.99 }] },
+  })

@@ -1,110 +1,121 @@
-import { useState, useEffect } from 'react'
-import {
-  Animated,
-  View,
-  Text,
-  TouchableOpacity,
-  Dimensions,
-  StyleSheet,
-} from 'react-native'
-
-const { height } = Dimensions.get('window')
+import { useEffect, useState } from 'react'
+import { Animated, StyleSheet, View } from 'react-native'
+import { useEstilos, useTheme, type Tema } from '../../theme'
+import { Txt } from '../ui/Txt'
+import { Button } from '../ui/Button'
+import { Clock } from '../ui/iconos'
+import { useReduceMotion } from '../ui/useReduceMotion'
 
 interface Props {
   retrasoMinutos: number
-  onVerOpciones: () => void
+  actividadNombre?: string | null
+  /** «Mover a otro día»: la marca como perdida y busca un hueco. */
+  onMover: () => void
   onIgnorar: () => void
 }
 
+/**
+ * Nivel 2: tarjeta inferior (no bloquea la pantalla). Se coloca dentro del
+ * área de contenido, encima de la barra inferior.
+ */
 export function AlertLevel2({
   retrasoMinutos,
-  onVerOpciones,
+  actividadNombre,
+  onMover,
   onIgnorar,
 }: Props): React.ReactElement {
-  const [translateY] = useState(() => new Animated.Value(height))
+  const styles = useEstilos(crearEstilos)
+  const { colors } = useTheme()
+  const reducir = useReduceMotion()
+  const [valor] = useState(() => new Animated.Value(0))
 
   useEffect(() => {
-    Animated.spring(translateY, {
-      toValue: 0,
+    const anim = Animated.spring(valor, {
+      toValue: 1,
       useNativeDriver: true,
-      tension: 80,
-      friction: 12,
-    }).start()
-  }, [translateY])
+      stiffness: 260,
+      damping: 30,
+    })
+    anim.start()
+    return () => anim.stop()
+  }, [valor])
 
-  const dismiss = (cb: () => void): void => {
-    Animated.timing(translateY, {
-      toValue: height,
-      duration: 300,
+  const salir = (cb: () => void): void => {
+    Animated.timing(valor, {
+      toValue: 0,
+      duration: 200,
       useNativeDriver: true,
-    }).start(cb)
+    }).start(() => cb())
   }
 
+  const translateY = valor.interpolate({
+    inputRange: [0, 1],
+    outputRange: [reducir ? 0 : 40, 0],
+  })
+
   return (
-    <Animated.View style={[styles.card, { transform: [{ translateY }] }]}>
-      <View style={styles.handle} />
-      <Text style={styles.title}>⏱ Llevas {retrasoMinutos} min de retraso</Text>
-      <Text style={styles.body}>
-        Puede que no llegues a todo. ¿Querés ver opciones?
-      </Text>
-      <View style={styles.buttons}>
-        <TouchableOpacity
-          style={[styles.btn, styles.btnPrimary]}
-          onPress={() => dismiss(onVerOpciones)}
-        >
-          <Text style={styles.btnPrimaryText}>Ver opciones</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.btn, styles.btnSecondary]}
-          onPress={() => dismiss(onIgnorar)}
-        >
-          <Text style={styles.btnSecondaryText}>Ignorar</Text>
-        </TouchableOpacity>
+    <Animated.View
+      style={[styles.card, { opacity: valor, transform: [{ translateY }] }]}
+      accessibilityRole="alert"
+      accessibilityLiveRegion="polite"
+    >
+      <View style={styles.cabecera}>
+        <Clock
+          size={20}
+          color={colors.warningFg}
+          strokeWidth={1.75}
+          accessible={false}
+        />
+        <Txt variant="title" style={styles.titulo}>
+          Llevas {retrasoMinutos} min de retraso
+        </Txt>
+      </View>
+      <Txt variant="bodyS" color="fgMuted">
+        {actividadNombre
+          ? `Puede que no llegues a todo hoy. ¿Movemos ${actividadNombre} o sigues igual?`
+          : 'Puede que no llegues a todo hoy. ¿La movemos o sigues igual?'}
+      </Txt>
+      <View style={styles.botones}>
+        {/* Dice exactamente lo que hace: la marca como perdida y busca hueco. */}
+        <Button
+          title="Mover a otro día"
+          variant="tinta"
+          onPress={() => salir(onMover)}
+          style={styles.boton}
+        />
+        <Button
+          title="Seguir igual"
+          variant="ghost"
+          onPress={() => salir(onIgnorar)}
+          style={styles.boton}
+        />
       </View>
     </Animated.View>
   )
 }
 
-const styles = StyleSheet.create({
-  card: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 24,
-    paddingBottom: 40,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.12,
-    shadowRadius: 12,
-    elevation: 16,
-  },
-  handle: {
-    alignSelf: 'center',
-    width: 40,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: '#D1D5DB',
-    marginBottom: 16,
-  },
-  title: { fontSize: 17, fontWeight: '700', color: '#111827', marginBottom: 8 },
-  body: { fontSize: 15, color: '#4B5563', marginBottom: 24, lineHeight: 22 },
-  buttons: { flexDirection: 'row', gap: 12 },
-  btn: {
-    flex: 1,
-    paddingVertical: 14,
-    borderRadius: 12,
-    alignItems: 'center',
-  },
-  btnPrimary: { backgroundColor: '#2563EB' },
-  btnPrimaryText: { color: '#FFFFFF', fontSize: 15, fontWeight: '700' },
-  btnSecondary: {
-    backgroundColor: '#F3F4F6',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-  },
-  btnSecondaryText: { color: '#374151', fontSize: 15, fontWeight: '600' },
-})
+const crearEstilos = (t: Tema) =>
+  StyleSheet.create({
+    card: {
+      position: 'absolute',
+      left: t.space[3],
+      right: t.space[3],
+      bottom: t.space[3],
+      backgroundColor: t.isDark ? t.colors.surfaceRaised : t.colors.surface,
+      borderRadius: t.radius.card,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      padding: t.space[5],
+      gap: t.space[2],
+      ...(t.isDark ? {} : t.elevation.float),
+    },
+    cabecera: { flexDirection: 'row', alignItems: 'center', gap: t.space[2] },
+    titulo: { flex: 1 },
+    botones: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: t.space[2],
+      marginTop: t.space[2],
+    },
+    boton: { flexGrow: 1 },
+  })

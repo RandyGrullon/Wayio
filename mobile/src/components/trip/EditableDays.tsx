@@ -1,39 +1,44 @@
 import { useState } from 'react'
-import {
-  Modal,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from 'react-native'
+import { StyleSheet, View } from 'react-native'
+import { colorDia, useEstilos, useTheme, type Tema } from '../../theme'
 import { Button } from '../ui/Button'
-import { colors, radius } from '../../theme'
+import { ChipGroup, type OpcionChip } from '../ui/Chip'
+import { ConfirmDialog } from '../ui/ConfirmDialog'
+import { IconButton } from '../ui/IconButton'
+import { Input } from '../ui/Input'
+import { Sheet } from '../ui/Sheet'
+import { Txt } from '../ui/Txt'
+import { ArrowDown, ArrowUp, Pencil, Plus, Trash2 } from '../ui/iconos'
+import { formatCurrency, formatHora12, minutosDelDia } from '../ui/formato'
+import { TIPO_LABEL } from './DayCard'
 import type {
   PlanningActivity,
   PlanningActivityType,
   PlanningDay,
 } from '../../types/planning'
 
-const TIPOS: PlanningActivityType[] = [
-  'actividad',
-  'museo',
-  'restaurante',
-  'templo',
-  'parque',
-  'barrio',
-  'playa',
-  'traslado',
-]
+const TIPOS: readonly OpcionChip<PlanningActivityType>[] = (
+  [
+    'actividad',
+    'museo',
+    'restaurante',
+    'templo',
+    'parque',
+    'barrio',
+    'playa',
+    'traslado',
+  ] as const
+).map((t) => ({ value: t, label: TIPO_LABEL[t] }))
 
 interface Props {
   dias: PlanningDay[]
   onChange: (dias: PlanningDay[]) => void
+  moneda?: string
 }
 
 function uid(): string {
-  return `act-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  const uuid = globalThis.crypto?.randomUUID?.()
+  return uuid ?? `act-${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
 function nuevaActividad(): PlanningActivity {
@@ -60,14 +65,12 @@ function nuevaActividad(): PlanningActivity {
   }
 }
 
-/** Minutes between two "HH:MM" strings; 0 when unparseable or negative. */
+/** Minutos entre dos 'HH:MM'; 0 si no se pueden leer o el fin es anterior. */
 function minutosEntre(inicio: string, fin: string): number {
-  const a = /^(\d{1,2}):(\d{2})$/.exec(inicio)
-  const b = /^(\d{1,2}):(\d{2})$/.exec(fin)
-  if (!a || !b) return 0
-  const min =
-    Number(b[1]) * 60 + Number(b[2]) - (Number(a[1]) * 60 + Number(a[2]))
-  return min > 0 ? min : 0
+  const a = minutosDelDia(inicio)
+  const b = minutosDelDia(fin)
+  if (a === null || b === null) return 0
+  return b > a ? b - a : 0
 }
 
 function clonar(dias: PlanningDay[]): PlanningDay[] {
@@ -75,15 +78,54 @@ function clonar(dias: PlanningDay[]): PlanningDay[] {
 }
 
 /**
- * Mobile counterpart of the web `EditableDays`: reorder (↑/↓ across days),
- * delete, edit and add activities. Pure controlled component — the parent owns
- * the days array and persists on save.
+ * Modo edición del itinerario (§6.5): mover ↑/↓ (cruzando días), editar,
+ * borrar con confirmación y añadir. Controles de 44. El editor va en una
+ * hoja; cancelar una actividad nueva la elimina. Componente controlado: el
+ * padre guarda.
  */
-export function EditableDays({ dias, onChange }: Props): React.ReactElement {
+export function EditableDays({
+  dias,
+  onChange,
+  moneda = 'USD',
+}: Props): React.ReactElement {
+  const { days } = useTheme()
+  const styles = useEstilos(crearEstilos)
   const [draft, setDraft] = useState<PlanningActivity | null>(null)
+  const [nuevaId, setNuevaId] = useState<string | null>(null)
+  const [borrar, setBorrar] = useState<{
+    dia: number
+    id: string
+    nombre: string
+  } | null>(null)
+  const [errorHora, setErrorHora] = useState<string | null>(null)
+
+  const cerrarEditor = (): void => {
+    if (draft && nuevaId === draft.id) {
+      // Cancelar una actividad nueva la elimina.
+      onChange(
+        dias.map((d) => ({
+          ...d,
+          actividades: d.actividades.filter((a) => a.id !== draft.id),
+        }))
+      )
+    }
+    setDraft(null)
+    setNuevaId(null)
+    setErrorHora(null)
+  }
 
   const guardarDraft = (): void => {
     if (!draft) return
+    const ini = minutosDelDia(draft.horaInicio)
+    const fin = minutosDelDia(draft.horaFin)
+    if (ini === null || fin === null) {
+      setErrorHora('Usa el formato 24 h, por ejemplo 09:30 o 14:00.')
+      return
+    }
+    if (fin <= ini) {
+      setErrorHora('La hora de fin debe ser posterior a la de inicio.')
+      return
+    }
     const conDuracion: PlanningActivity = {
       ...draft,
       nombre: draft.nombre.trim() || 'Actividad sin nombre',
@@ -99,9 +141,11 @@ export function EditableDays({ dias, onChange }: Props): React.ReactElement {
       }))
     )
     setDraft(null)
+    setNuevaId(null)
+    setErrorHora(null)
   }
 
-  const borrar = (dayIdx: number, actId: string): void => {
+  const quitar = (dayIdx: number, actId: string): void => {
     const copy = clonar(dias)
     const day = copy[dayIdx]
     if (!day) return
@@ -109,7 +153,7 @@ export function EditableDays({ dias, onChange }: Props): React.ReactElement {
     onChange(copy)
   }
 
-  // dir -1 = up, +1 = down. At the edges, hops to the prev/next day.
+  // dir -1 = arriba, +1 = abajo. En los bordes salta al día anterior/siguiente.
   const mover = (dayIdx: number, actIdx: number, dir: -1 | 1): void => {
     const copy = clonar(dias)
     const day = copy[dayIdx]
@@ -146,306 +190,235 @@ export function EditableDays({ dias, onChange }: Props): React.ReactElement {
     const act = nuevaActividad()
     day.actividades.push(act)
     onChange(copy)
+    setNuevaId(act.id)
     setDraft({ ...act })
   }
 
+  const ultimoDia = dias.length - 1
+
   return (
     <View>
-      {dias.map((dia, dayIdx) => (
-        <View key={dia.numero} style={styles.dayCard}>
-          <View style={styles.dayHeader}>
-            <View style={styles.dayBadge}>
-              <Text style={styles.dayBadgeText}>{dia.numero}</Text>
-            </View>
-            <View style={styles.flex}>
-              <Text style={styles.dayTitle}>{dia.titulo}</Text>
-              <Text style={styles.dayCity}>{dia.ciudad}</Text>
-            </View>
-            <Text style={styles.dayBudget}>${dia.presupuestoDia}</Text>
-          </View>
-
-          {dia.actividades.length === 0 ? (
-            <Text style={styles.empty}>Sin actividades este día.</Text>
-          ) : null}
-
-          {dia.actividades.map((act, actIdx) => (
-            <View key={act.id} style={styles.actRow}>
+      {dias.map((dia, dayIdx) => {
+        const color = colorDia(days, dia.numero)
+        return (
+          <View key={dia.numero} style={styles.dia}>
+            <View style={styles.diaCabecera}>
+              <View style={[styles.diaNumero, { backgroundColor: color }]}>
+                <Txt variant="label" color="dayNumeral" tnum>
+                  {dia.numero}
+                </Txt>
+              </View>
               <View style={styles.flex}>
-                <Text style={styles.actName} numberOfLines={1}>
-                  {act.nombre || 'Sin nombre'}
-                </Text>
-                <Text style={styles.actMeta}>
-                  {act.horaInicio}–{act.horaFin} · ${act.precioEstimado} ·{' '}
-                  {act.tipo}
-                </Text>
-              </View>
-              <View style={styles.controls}>
-                <Ctrl label="↑" onPress={() => mover(dayIdx, actIdx, -1)} />
-                <Ctrl label="✎" onPress={() => setDraft({ ...act })} />
-                <Ctrl
-                  label="🗑"
-                  onPress={() => borrar(dayIdx, act.id)}
-                  danger
-                />
-                <Ctrl label="↓" onPress={() => mover(dayIdx, actIdx, 1)} />
+                <Txt variant="overline" style={{ color }}>
+                  Día {String(dia.numero).padStart(2, '0')}
+                </Txt>
+                <Txt variant="title" numberOfLines={2}>
+                  {dia.titulo}
+                </Txt>
               </View>
             </View>
-          ))}
 
-          <TouchableOpacity
-            onPress={() => anadir(dayIdx)}
-            style={styles.addBtn}
-          >
-            <Text style={styles.addText}>+ Añadir actividad</Text>
-          </TouchableOpacity>
-        </View>
-      ))}
-
-      <Modal
-        visible={draft !== null}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setDraft(null)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            {draft ? (
-              <ScrollView keyboardShouldPersistTaps="handled">
-                <Text style={styles.modalTitle}>Editar actividad</Text>
-
-                <Field label="Nombre">
-                  <TextInput
-                    value={draft.nombre}
-                    onChangeText={(t) => setDraft({ ...draft, nombre: t })}
-                    placeholder="Nombre de la actividad"
-                    placeholderTextColor={colors.textFaint}
-                    style={styles.input}
-                  />
-                </Field>
-
-                <Field label="Dirección">
-                  <TextInput
-                    value={draft.direccion}
-                    onChangeText={(t) => setDraft({ ...draft, direccion: t })}
-                    placeholder="Dirección o lugar"
-                    placeholderTextColor={colors.textFaint}
-                    style={styles.input}
-                  />
-                </Field>
-
-                <View style={styles.row}>
-                  <Field label="Hora inicio" style={styles.flex}>
-                    <TextInput
-                      value={draft.horaInicio}
-                      onChangeText={(t) =>
-                        setDraft({ ...draft, horaInicio: t })
-                      }
-                      placeholder="09:00"
-                      placeholderTextColor={colors.textFaint}
-                      style={styles.input}
-                    />
-                  </Field>
-                  <Field label="Hora fin" style={styles.flex}>
-                    <TextInput
-                      value={draft.horaFin}
-                      onChangeText={(t) => setDraft({ ...draft, horaFin: t })}
-                      placeholder="10:00"
-                      placeholderTextColor={colors.textFaint}
-                      style={styles.input}
-                    />
-                  </Field>
-                </View>
-
-                <Field label="Precio estimado ($)">
-                  <TextInput
-                    value={String(draft.precioEstimado)}
-                    onChangeText={(t) =>
-                      setDraft({
-                        ...draft,
-                        precioEstimado: parseInt(t, 10) || 0,
-                      })
-                    }
-                    keyboardType="number-pad"
-                    style={styles.input}
-                  />
-                </Field>
-
-                <Field label="Tipo">
-                  <View style={styles.tipos}>
-                    {TIPOS.map((t) => (
-                      <TouchableOpacity
-                        key={t}
-                        onPress={() => setDraft({ ...draft, tipo: t })}
-                        style={[
-                          styles.tipo,
-                          draft.tipo === t && styles.tipoActive,
-                        ]}
-                      >
-                        <Text
-                          style={[
-                            styles.tipoText,
-                            draft.tipo === t && styles.tipoTextActive,
-                          ]}
-                        >
-                          {t}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                </Field>
-
-                <View style={styles.modalActions}>
-                  <Button
-                    title="Cancelar"
-                    variant="secondary"
-                    onPress={() => setDraft(null)}
-                    style={styles.flex}
-                  />
-                  <Button
-                    title="Guardar"
-                    onPress={guardarDraft}
-                    style={styles.flex}
-                  />
-                </View>
-              </ScrollView>
+            {dia.actividades.length === 0 ? (
+              <Txt variant="bodyS" color="fgMuted" style={styles.vacio}>
+                Sin actividades este día.
+              </Txt>
             ) : null}
+
+            {dia.actividades.map((act, actIdx) => {
+              const primera = dayIdx === 0 && actIdx === 0
+              const ultima =
+                dayIdx === ultimoDia && actIdx === dia.actividades.length - 1
+              const nombre = act.nombre || 'Sin nombre'
+              return (
+                <View key={act.id} style={styles.fila}>
+                  <View style={styles.flex}>
+                    <Txt variant="label" numberOfLines={2}>
+                      {nombre}
+                    </Txt>
+                    <Txt variant="caption" color="fgMuted" tnum>
+                      {formatHora12(act.horaInicio)} –{' '}
+                      {formatHora12(act.horaFin)}
+                      {act.precioEstimado > 0
+                        ? ` · ${formatCurrency(act.precioEstimado, moneda)}`
+                        : ''}
+                      {` · ${TIPO_LABEL[act.tipo] ?? 'Actividad'}`}
+                    </Txt>
+                  </View>
+                  <View style={styles.controles}>
+                    <IconButton
+                      label={`Subir ${nombre}`}
+                      icon={ArrowUp}
+                      disabled={primera}
+                      onPress={() => mover(dayIdx, actIdx, -1)}
+                    />
+                    <IconButton
+                      label={`Bajar ${nombre}`}
+                      icon={ArrowDown}
+                      disabled={ultima}
+                      onPress={() => mover(dayIdx, actIdx, 1)}
+                    />
+                    <IconButton
+                      label={`Editar ${nombre}`}
+                      icon={Pencil}
+                      onPress={() => setDraft({ ...act })}
+                    />
+                    <IconButton
+                      label={`Borrar ${nombre}`}
+                      icon={Trash2}
+                      onPress={() =>
+                        setBorrar({ dia: dayIdx, id: act.id, nombre })
+                      }
+                    />
+                  </View>
+                </View>
+              )
+            })}
+
+            <Button
+              title="Añadir actividad"
+              variant="ghost"
+              size="sm"
+              icon={Plus}
+              onPress={() => anadir(dayIdx)}
+              style={styles.anadir}
+            />
           </View>
-        </View>
-      </Modal>
+        )
+      })}
+
+      <Sheet
+        visible={draft !== null}
+        onClose={cerrarEditor}
+        title={
+          draft && nuevaId === draft.id ? 'Nueva actividad' : 'Editar actividad'
+        }
+        footer={
+          <>
+            <Button title="Cancelar" variant="outline" onPress={cerrarEditor} />
+            <Button title="Guardar" variant="tinta" onPress={guardarDraft} />
+          </>
+        }
+      >
+        {draft ? (
+          <View>
+            <Input
+              label="Nombre"
+              placeholder="Nombre de la actividad"
+              value={draft.nombre}
+              onChangeText={(t) => setDraft({ ...draft, nombre: t })}
+              autoCapitalize="sentences"
+            />
+            <Input
+              label="Dirección"
+              optional
+              placeholder="Dirección o lugar"
+              value={draft.direccion}
+              onChangeText={(t) => setDraft({ ...draft, direccion: t })}
+            />
+            <View style={styles.horas}>
+              <Input
+                label="Inicio"
+                placeholder="09:00"
+                value={draft.horaInicio}
+                onChangeText={(t) => setDraft({ ...draft, horaInicio: t })}
+                keyboardType="numbers-and-punctuation"
+                hint={formatHora12(draft.horaInicio) || 'HH:MM'}
+                containerStyle={styles.flex}
+              />
+              <Input
+                label="Fin"
+                placeholder="10:00"
+                value={draft.horaFin}
+                onChangeText={(t) => setDraft({ ...draft, horaFin: t })}
+                keyboardType="numbers-and-punctuation"
+                hint={formatHora12(draft.horaFin) || 'HH:MM'}
+                error={errorHora}
+                containerStyle={styles.flex}
+              />
+            </View>
+            <Input
+              label={`Precio estimado (${moneda})`}
+              value={draft.precioEstimado ? String(draft.precioEstimado) : ''}
+              placeholder="0"
+              onChangeText={(t) =>
+                setDraft({
+                  ...draft,
+                  precioEstimado: parseInt(t.replace(/[^\d]/g, ''), 10) || 0,
+                })
+              }
+              keyboardType="number-pad"
+            />
+            <Txt variant="label" style={styles.tipoLabel}>
+              Tipo
+            </Txt>
+            <ChipGroup<PlanningActivityType>
+              label="Tipo de actividad"
+              size="sm"
+              options={TIPOS}
+              value={draft.tipo}
+              onValueChange={(t) => setDraft({ ...draft, tipo: t })}
+            />
+          </View>
+        ) : null}
+      </Sheet>
+
+      <ConfirmDialog
+        visible={borrar !== null}
+        onClose={() => setBorrar(null)}
+        title="¿Borrar esta actividad?"
+        {...(borrar
+          ? {
+              description: `«${borrar.nombre}» desaparece del itinerario cuando guardes los cambios.`,
+            }
+          : {})}
+        confirmLabel="Borrar actividad"
+        onConfirm={() => {
+          if (borrar) quitar(borrar.dia, borrar.id)
+        }}
+      />
     </View>
   )
 }
 
-function Ctrl({
-  label,
-  onPress,
-  danger,
-}: {
-  label: string
-  onPress: () => void
-  danger?: boolean
-}): React.ReactElement {
-  return (
-    <TouchableOpacity onPress={onPress} style={styles.ctrl} hitSlop={4}>
-      <Text style={[styles.ctrlText, danger && styles.ctrlDanger]}>
-        {label}
-      </Text>
-    </TouchableOpacity>
-  )
-}
-
-function Field({
-  label,
-  children,
-  style,
-}: {
-  label: string
-  children: React.ReactNode
-  style?: object
-}): React.ReactElement {
-  return (
-    <View style={[styles.field, style]}>
-      <Text style={styles.fieldLabel}>{label}</Text>
-      {children}
-    </View>
-  )
-}
-
-const styles = StyleSheet.create({
-  flex: { flex: 1 },
-  dayCard: {
-    backgroundColor: colors.surface,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    marginBottom: 12,
-    overflow: 'hidden',
-  },
-  dayHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    padding: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  dayBadge: {
-    width: 30,
-    height: 30,
-    borderRadius: 8,
-    backgroundColor: colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  dayBadgeText: { color: '#FFFFFF', fontWeight: '700', fontSize: 14 },
-  dayTitle: { fontSize: 14, fontWeight: '700', color: colors.text },
-  dayCity: { fontSize: 12, color: colors.textFaint },
-  dayBudget: { fontSize: 13, fontWeight: '600', color: colors.textMuted },
-  empty: { fontSize: 13, color: colors.textFaint, padding: 12 },
-  actRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    gap: 8,
-  },
-  actName: { fontSize: 13, fontWeight: '600', color: colors.text },
-  actMeta: { fontSize: 12, color: colors.textMuted, marginTop: 2 },
-  controls: { flexDirection: 'row', gap: 2 },
-  ctrl: { paddingHorizontal: 6, paddingVertical: 4 },
-  ctrlText: { fontSize: 16, color: colors.primary },
-  ctrlDanger: { color: colors.red },
-  addBtn: { padding: 12 },
-  addText: { fontSize: 13, fontWeight: '600', color: colors.primary },
-  modalOverlay: {
-    flex: 1,
-    justifyContent: 'flex-end',
-    backgroundColor: 'rgba(0,0,0,0.4)',
-  },
-  modalCard: {
-    backgroundColor: colors.surface,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 20,
-    paddingBottom: 32,
-    maxHeight: '88%',
-  },
-  modalTitle: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: colors.text,
-    marginBottom: 14,
-  },
-  field: { marginBottom: 12 },
-  fieldLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.textMuted,
-    marginBottom: 6,
-  },
-  input: {
-    backgroundColor: colors.bg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.sm,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 14,
-    color: colors.text,
-  },
-  row: { flexDirection: 'row', gap: 12 },
-  tipos: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  tipo: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-  },
-  tipoActive: { backgroundColor: colors.primary, borderColor: colors.primary },
-  tipoText: { fontSize: 12, color: colors.textMuted },
-  tipoTextActive: { color: '#FFFFFF', fontWeight: '700' },
-  modalActions: { flexDirection: 'row', gap: 10, marginTop: 8 },
-})
+const crearEstilos = (t: Tema) =>
+  StyleSheet.create({
+    flex: { flex: 1 },
+    dia: {
+      backgroundColor: t.colors.surface,
+      borderRadius: t.radius.card,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      marginBottom: 12,
+      paddingTop: 14,
+      paddingBottom: 6,
+    },
+    diaCabecera: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      paddingHorizontal: 14,
+      paddingBottom: 10,
+    },
+    diaNumero: {
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    vacio: { paddingHorizontal: 14, paddingVertical: 8 },
+    fila: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      paddingLeft: 14,
+      paddingRight: 4,
+      paddingVertical: 6,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: t.colors.border,
+    },
+    controles: { flexDirection: 'row' },
+    anadir: { marginLeft: 6, marginTop: 4 },
+    horas: { flexDirection: 'row', gap: 12 },
+    tipoLabel: { marginBottom: 8 },
+  })

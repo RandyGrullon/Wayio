@@ -5,9 +5,12 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "scheme": "wayio",
+    "userInterfaceStyle": "automatic",
+    "backgroundColor": "#F7F4EE",
     "ios": {
       "supportsTablet": true,
+      "bundleIdentifier": "com.wayio.app",
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "Wayio usa tu ubicación para detectar cuando llegas a cada actividad.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "Wayio necesita acceso a tu ubicación en segundo plano para el geofencing automático.",
@@ -16,7 +19,7 @@
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#142435",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
@@ -36,7 +39,7 @@
         "android.permission.FOREGROUND_SERVICE",
         "android.permission.FOREGROUND_SERVICE_LOCATION"
       ],
-      "package": "com.anonymous.wayiomobile"
+      "package": "com.wayio.app"
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -46,6 +49,7 @@
         "expo-location",
         {
           "locationAlwaysAndWhenInUsePermission": "Wayio necesita acceso a tu ubicación en segundo plano para el geofencing automático.",
+          "isIosBackgroundLocationEnabled": true,
           "isAndroidBackgroundLocationEnabled": true,
           "isAndroidForegroundServiceEnabled": true
         }
@@ -53,12 +57,26 @@
       [
         "expo-notifications",
         {
-          "icon": "./assets/icon.png",
-          "color": "#2563EB"
+          "icon": "./assets/android-icon-monochrome.png",
+          "color": "#C21A66"
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-punto.png",
+          "imageWidth": 20,
+          "resizeMode": "contain",
+          "backgroundColor": "#F7F4EE",
+          "dark": {
+            "image": "./assets/splash-punto-dark.png",
+            "backgroundColor": "#0B1622"
+          }
         }
       ],
       "@rnmapbox/maps",
-      "expo-web-browser"
+      "expo-web-browser",
+      "expo-font"
     ]
   }
 }

@@ -1,195 +1,270 @@
 import { useState } from 'react'
 import {
   ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
   ScrollView,
   StyleSheet,
-  Text,
-  TextInput,
   View,
 } from 'react-native'
-import { SafeAreaView } from 'react-native'
-import { ScreenHeader } from '../components/ui/ScreenHeader'
-import { Button } from '../components/ui/Button'
+import {
+  Badge,
+  Button,
+  Callout,
+  Card,
+  CardKicker,
+  Input,
+  Pantalla,
+  ScreenHeader,
+  Txt,
+} from '../components/ui'
+import {
+  ArrowRight,
+  Clapperboard,
+  Link2,
+  MapPin,
+  PenLine,
+} from '../components/ui/iconos'
 import { useNavigation } from '../navigation/NavigationContext'
-import { analyzeVideoUrl, type VideoAnalysisResult } from '../lib/api/backend'
-import { colors, radius } from '../theme'
+import {
+  analyzeVideoUrl,
+  BackendError,
+  type VideoAnalysisResult,
+} from '../lib/api/backend'
+import { useTheme } from '../theme'
+
+const PLATAFORMAS =
+  /(tiktok\.com|instagram\.com|youtube\.com|youtu\.be|vimeo\.com|facebook\.com|fb\.watch)/i
+
+interface ErrorVideo {
+  mensaje: string
+  /** El análisis de video está apagado: ofrecer escribir el destino. */
+  desactivado: boolean
+  sesion: boolean
+}
 
 /**
- * Mobile counterpart of the web "Desde un video": paste a travel video link
- * (TikTok / Reels / YouTube), the AI detects the destination, and we pre-fill a
- * new trip with it. Uses `/api/analyze-video` (degrades to a demo result with no
- * AI key).
+ * «Desde un video» (móvil): pega el enlace de un video de viaje, la IA
+ * detecta el destino y los lugares, y prellena un viaje nuevo con ellos.
+ * Contempla resultados de ejemplo, parciales y sin destino reconocido.
  */
 export function RecreateTripScreen(): React.ReactElement {
   const { navigate } = useNavigation()
+  const { colors } = useTheme()
   const [url, setUrl] = useState('')
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<ErrorVideo | null>(null)
+  const [aviso, setAviso] = useState<string | null>(null)
   const [result, setResult] = useState<VideoAnalysisResult | null>(null)
 
-  const looksLikeUrl = /^https?:\/\/\S+$/i.test(url.trim())
+  const limpio = url.trim()
+  const pareceEnlace =
+    limpio.length > 8 &&
+    (/^https?:\/\/\S+$/i.test(limpio) || PLATAFORMAS.test(limpio))
 
   const handleAnalyze = async (): Promise<void> => {
-    if (!looksLikeUrl) {
-      setError('Pega un enlace válido (https://…)')
+    if (!pareceEnlace) {
+      setAviso('Pega el enlace completo del video (TikTok, Reels, YouTube…).')
       return
     }
+    setAviso(null)
     setLoading(true)
     setError(null)
     setResult(null)
     try {
-      const data = await analyzeVideoUrl(url.trim())
-      setResult(data)
+      setResult(await analyzeVideoUrl(limpio))
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'No se pudo analizar el video')
+      const code = e instanceof BackendError ? e.data?.['code'] : null
+      const desactivado =
+        code === 'video_desactivado' || code === 'herramientas'
+      setError({
+        // El mensaje del servidor ofrece «subir una foto», que la app aún no
+        // tiene: aquí solo se propone escribir el destino.
+        mensaje: desactivado
+          ? 'El análisis de videos no está disponible por ahora. Puedes escribir el destino y trazamos el viaje igual.'
+          : e instanceof Error && e.message
+            ? e.message
+            : 'No pudimos analizar el video. Inténtalo de nuevo.',
+        desactivado,
+        sesion: e instanceof BackendError && e.code === 'auth',
+      })
     } finally {
       setLoading(false)
     }
   }
 
+  const lugares = result?.lugares.map((p) => p.lugar).filter(Boolean) ?? []
+  const destino = result?.destinoSugerido.trim() ?? ''
+
   return (
-    <SafeAreaView style={styles.safe}>
-      <ScreenHeader
-        title="Desde un video"
-        subtitle="Recrea un viaje que viste en redes"
-      />
-      <ScrollView contentContainerStyle={styles.scroll}>
-        <Text style={styles.label}>Enlace del video</Text>
-        <TextInput
-          value={url}
-          onChangeText={setUrl}
-          placeholder="https://www.tiktok.com/@.../video/..."
-          placeholderTextColor={colors.textFaint}
-          autoCapitalize="none"
-          autoCorrect={false}
-          keyboardType="url"
-          style={styles.input}
-        />
-        <Text style={styles.hint}>
-          Funciona con TikTok, Instagram Reels o YouTube.
-        </Text>
+    <Pantalla edges={['top', 'left', 'right']}>
+      <ScreenHeader title="Desde un video" kicker="Recrear un viaje" />
+      <KeyboardAvoidingView
+        style={styles.flex}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <ScrollView
+          contentContainerStyle={styles.scroll}
+          keyboardShouldPersistTaps="handled"
+        >
+          <Txt variant="displayL">¿Viste un viaje que te encantó?</Txt>
+          <Txt variant="body" color="fgMuted" style={styles.lead}>
+            Pega el enlace y Wayio reconoce el destino y los lugares para
+            trazarte uno parecido.
+          </Txt>
 
-        <Button
-          title={loading ? 'Analizando…' : 'Analizar video'}
-          onPress={() => void handleAnalyze()}
-          loading={loading}
-          disabled={!looksLikeUrl || loading}
-          size="lg"
-          style={styles.analyzeBtn}
-        />
+          <Input
+            label="Enlace del video"
+            icon={Link2}
+            value={url}
+            onChangeText={(t) => {
+              setUrl(t)
+              setAviso(null)
+            }}
+            placeholder="https://www.tiktok.com/@…/video/…"
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="url"
+            inputMode="url"
+            returnKeyType="go"
+            onSubmitEditing={() => void handleAnalyze()}
+            hint="Funciona con TikTok, Instagram Reels, YouTube, Vimeo y Facebook."
+            error={aviso}
+            containerStyle={styles.campo}
+          />
 
-        {error ? <Text style={styles.error}>{error}</Text> : null}
+          <Button
+            title="Analizar video"
+            icon={Clapperboard}
+            size="lg"
+            fullWidth
+            loading={loading}
+            loadingText="Analizando…"
+            disabled={limpio.length === 0}
+            onPress={() => void handleAnalyze()}
+          />
 
-        {loading ? (
-          <View style={styles.loadingBox}>
-            <ActivityIndicator color={colors.primary} />
-            <Text style={styles.loadingText}>La IA está mirando el video…</Text>
-          </View>
-        ) : null}
+          {loading ? (
+            <View style={styles.cargando} accessibilityLiveRegion="polite">
+              <ActivityIndicator color={colors.fg} />
+              <Txt variant="bodyS" color="fgMuted" style={styles.flex}>
+                La IA está mirando el video. Puede tardar un par de minutos.
+              </Txt>
+            </View>
+          ) : null}
 
-        {result ? (
-          <View style={styles.resultBox}>
-            <Text style={styles.resultLabel}>Destino detectado</Text>
-            <Text style={styles.resultDest}>{result.destinoSugerido}</Text>
-            {result.resumen ? (
-              <Text style={styles.resultSummary}>{result.resumen}</Text>
-            ) : null}
+          {error ? (
+            <View style={styles.bloque}>
+              <Callout tone={error.desactivado ? 'info' : 'danger'}>
+                {error.mensaje}
+              </Callout>
+              {error.desactivado ? (
+                <Button
+                  title="Escribir el destino"
+                  variant="outline"
+                  icon={PenLine}
+                  onPress={() => navigate({ name: 'create' })}
+                  style={styles.bloque}
+                />
+              ) : null}
+            </View>
+          ) : null}
 
-            {result.lugares.length > 0 ? (
-              <View style={styles.places}>
-                {result.lugares.map((p, i) => (
-                  <View key={`${p.lugar}-${i}`} style={styles.placeChip}>
-                    <Text style={styles.placeText}>
-                      {p.lugar}
-                      {p.pais ? `, ${p.pais}` : ''}
-                    </Text>
-                  </View>
-                ))}
-              </View>
-            ) : null}
+          {result ? (
+            <View style={styles.bloque} accessibilityLiveRegion="polite">
+              {result.demo ? (
+                <Callout
+                  tone="warning"
+                  title="Resultado de ejemplo"
+                  style={styles.aviso}
+                >
+                  El análisis con IA no está disponible ahora: esto es una
+                  muestra, no lo que sale en tu video.
+                </Callout>
+              ) : null}
+              {result.parcial ? (
+                <Callout tone="info" style={styles.aviso}>
+                  Analizamos solo una parte del video.
+                </Callout>
+              ) : null}
 
-            <Button
-              title={`Planificar viaje a ${result.destinoSugerido}`}
-              onPress={() =>
-                navigate({
-                  name: 'create',
-                  initialDestino: result.destinoSugerido,
-                })
-              }
-              size="lg"
-              style={styles.planBtn}
-            />
-          </View>
-        ) : null}
-      </ScrollView>
-    </SafeAreaView>
+              {destino ? (
+                <Card variant="elevated">
+                  <CardKicker icon={MapPin}>Destino detectado</CardKicker>
+                  <Txt variant="h1" italic style={styles.destino}>
+                    {destino}
+                  </Txt>
+                  {result.resumen ? (
+                    <Txt variant="bodyS" color="fgMuted" style={styles.resumen}>
+                      {result.resumen}
+                    </Txt>
+                  ) : null}
+                  {lugares.length > 0 ? (
+                    <View style={styles.lugares}>
+                      {result.lugares.map((p, i) => (
+                        <Badge
+                          key={`${p.lugar}-${i}`}
+                          label={p.pais ? `${p.lugar}, ${p.pais}` : p.lugar}
+                          variant="brand"
+                        />
+                      ))}
+                    </View>
+                  ) : null}
+                  <Button
+                    title={`Trazar viaje a ${destino}`}
+                    iconEnd={ArrowRight}
+                    size="lg"
+                    fullWidth
+                    variant="tinta"
+                    onPress={() =>
+                      navigate({
+                        name: 'create',
+                        initialDestino: destino,
+                        ...(lugares.length > 0
+                          ? { lugaresDeseados: lugares.slice(0, 30) }
+                          : {}),
+                      })
+                    }
+                    style={styles.bloque}
+                  />
+                </Card>
+              ) : (
+                <Card>
+                  <Txt variant="h3">No reconocimos el lugar</Txt>
+                  <Txt variant="bodyS" color="fgMuted" style={styles.resumen}>
+                    Prueba con otro video o escribe tú el destino.
+                  </Txt>
+                  <Button
+                    title="Escribir el destino"
+                    variant="outline"
+                    icon={PenLine}
+                    onPress={() => navigate({ name: 'create' })}
+                    style={styles.bloque}
+                  />
+                </Card>
+              )}
+            </View>
+          ) : null}
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </Pantalla>
   )
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.bg },
-  scroll: { padding: 20 },
-  label: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: colors.textMuted,
-    marginBottom: 8,
-  },
-  input: {
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    fontSize: 14,
-    color: colors.text,
-  },
-  hint: { fontSize: 12, color: colors.textFaint, marginTop: 8 },
-  analyzeBtn: { marginTop: 16 },
-  error: {
-    backgroundColor: colors.redBg,
-    color: colors.red,
-    padding: 12,
-    borderRadius: 10,
-    marginTop: 14,
-    fontSize: 13,
-  },
-  loadingBox: { alignItems: 'center', marginTop: 24, gap: 10 },
-  loadingText: { fontSize: 13, color: colors.textMuted },
-  resultBox: {
+  flex: { flex: 1 },
+  scroll: { padding: 16, paddingBottom: 48 },
+  lead: { marginTop: 8 },
+  campo: { marginTop: 24 },
+  cargando: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
     marginTop: 20,
-    backgroundColor: colors.surface,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: 16,
   },
-  resultLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.textFaint,
-    textTransform: 'uppercase',
-  },
-  resultDest: {
-    fontSize: 22,
-    fontWeight: '800',
-    color: colors.text,
-    marginTop: 4,
-  },
-  resultSummary: {
-    fontSize: 14,
-    color: colors.textMuted,
-    lineHeight: 20,
-    marginTop: 8,
-  },
-  places: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 12 },
-  placeChip: {
-    backgroundColor: colors.primaryLight,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-  },
-  placeText: { fontSize: 12, color: colors.primary, fontWeight: '600' },
-  planBtn: { marginTop: 16 },
+  bloque: { marginTop: 16 },
+  aviso: { marginBottom: 12 },
+  destino: { marginTop: 6 },
+  resumen: { marginTop: 8 },
+  lugares: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 12 },
 })

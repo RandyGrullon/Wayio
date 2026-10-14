@@ -1,27 +1,133 @@
 import {
   ActivityIndicator,
+  Pressable,
   StyleSheet,
   Text,
-  TouchableOpacity,
   View,
   type StyleProp,
   type ViewStyle,
 } from 'react-native'
-import { colors, radius } from '../../theme'
+import { alpha, palette, useTheme, type Tema } from '../../theme'
+import type { LucideIcon } from './iconos'
 
-type Variant = 'primary' | 'secondary' | 'ghost' | 'danger'
-type Size = 'sm' | 'md' | 'lg'
+export type ButtonVariant =
+  | 'primary'
+  | 'tinta'
+  | 'soft'
+  | 'outline'
+  | 'ghost'
+  | 'link'
+  | 'danger'
+  | 'danger-outline'
+  /** @deprecated usa `soft`. */
+  | 'secondary'
+
+export type ButtonSize = 'sm' | 'md' | 'lg' | 'xl'
 
 interface Props {
   title: string
   onPress: () => void
-  variant?: Variant
-  size?: Size
+  /** `primary` solo uno por vista; `danger` solo dentro de ConfirmDialog. */
+  variant?: ButtonVariant
+  size?: ButtonSize
   disabled?: boolean
   loading?: boolean
+  /** Texto mientras carga, en gerundio («Guardando…»). */
+  loadingText?: string
+  icon?: LucideIcon
+  iconEnd?: LucideIcon
+  fullWidth?: boolean
   style?: StyleProp<ViewStyle>
+  accessibilityLabel?: string
+  accessibilityHint?: string
+  testID?: string
 }
 
+interface Colores {
+  bg: string
+  bgPressed: string
+  fg: string
+  border: string
+}
+
+function coloresDe(variant: ButtonVariant, tema: Tema): Colores {
+  const c = tema.colors
+  const inversoPulsado = tema.isDark ? palette.papel[300] : palette.noche[700]
+  switch (variant) {
+    case 'primary':
+      return {
+        bg: c.primary,
+        bgPressed: c.primaryPressed,
+        fg: c.primaryFg,
+        border: c.primary,
+      }
+    case 'tinta':
+      return {
+        bg: c.surfaceInverse,
+        bgPressed: inversoPulsado,
+        fg: c.fgInverse,
+        border: c.surfaceInverse,
+      }
+    case 'soft':
+    case 'secondary':
+      return {
+        bg: c.surface2,
+        bgPressed: c.border,
+        fg: c.fg,
+        border: c.surface2,
+      }
+    case 'outline':
+      return {
+        bg: 'transparent',
+        bgPressed: c.surface2,
+        fg: c.fg,
+        border: c.borderStrong,
+      }
+    case 'ghost':
+      return {
+        bg: 'transparent',
+        bgPressed: c.surface2,
+        fg: c.fg,
+        border: 'transparent',
+      }
+    case 'link':
+      return {
+        bg: 'transparent',
+        bgPressed: 'transparent',
+        fg: c.accent,
+        border: 'transparent',
+      }
+    case 'danger':
+      return {
+        bg: c.danger,
+        bgPressed: c.dangerFg,
+        fg: c.onDanger,
+        border: c.danger,
+      }
+    case 'danger-outline':
+      return {
+        bg: 'transparent',
+        bgPressed: c.dangerBg,
+        fg: c.danger,
+        border: alpha(c.danger, 0.4),
+      }
+  }
+}
+
+const MEDIDAS: Record<
+  ButtonSize,
+  { alto: number; px: number; texto: number; icono: number }
+> = {
+  sm: { alto: 36, px: 14, texto: 14, icono: 16 },
+  md: { alto: 44, px: 18, texto: 15, icono: 18 },
+  lg: { alto: 52, px: 22, texto: 16, icono: 18 },
+  xl: { alto: 60, px: 28, texto: 17, icono: 20 },
+}
+
+/**
+ * Botón del sistema (§5.1). Pastilla redondeada, Instrument Sans 600 y
+ * estados de pulsado/deshabilitado/carga. El área táctil mínima es de 44.
+ */
 export function Button({
   title,
   onPress,
@@ -29,60 +135,120 @@ export function Button({
   size = 'md',
   disabled = false,
   loading = false,
+  loadingText,
+  icon: Icono,
+  iconEnd: IconoFinal,
+  fullWidth = false,
   style,
+  accessibilityLabel,
+  accessibilityHint,
+  testID,
 }: Props): React.ReactElement {
-  const v = VARIANTS[variant]
-  const s = SIZES[size]
-  const isDisabled = disabled || loading
+  const tema = useTheme()
+  const col = coloresDe(variant, tema)
+  const m = MEDIDAS[size]
+  const inactivo = disabled || loading
+  const esLink = variant === 'link'
+  const texto = loading && loadingText ? loadingText : title
 
   return (
-    <TouchableOpacity
-      activeOpacity={0.85}
+    <Pressable
       onPress={onPress}
-      disabled={isDisabled}
-      style={[
+      disabled={inactivo}
+      accessibilityRole={esLink ? 'link' : 'button'}
+      accessibilityLabel={accessibilityLabel ?? texto}
+      {...(accessibilityHint ? { accessibilityHint } : {})}
+      accessibilityState={{ disabled: inactivo, busy: loading }}
+      hitSlop={
+        esLink || size === 'sm' ? { top: 6, bottom: 6, left: 4, right: 4 } : 4
+      }
+      {...(testID ? { testID } : {})}
+      style={({ pressed }) => [
         styles.base,
-        { backgroundColor: v.bg, borderColor: v.border },
-        s.container,
-        isDisabled && styles.disabled,
+        esLink
+          ? styles.link
+          : {
+              minHeight: m.alto,
+              paddingHorizontal: m.px,
+              backgroundColor: pressed ? col.bgPressed : col.bg,
+              borderColor: col.border,
+            },
+        fullWidth ? styles.full : null,
+        pressed && !esLink ? styles.pulsado : null,
+        pressed && esLink ? styles.linkPulsado : null,
+        inactivo ? styles.inactivo : null,
         style,
       ]}
     >
-      <View style={styles.row}>
+      <View style={styles.fila}>
         {loading ? (
-          <ActivityIndicator size="small" color={v.text} style={styles.spin} />
+          <ActivityIndicator
+            size="small"
+            color={col.fg}
+            style={{ width: m.icono, height: m.icono }}
+          />
+        ) : Icono ? (
+          <Icono
+            size={m.icono}
+            color={col.fg}
+            strokeWidth={1.75}
+            accessible={false}
+          />
         ) : null}
-        <Text style={[styles.text, { color: v.text, fontSize: s.font }]}>
-          {title}
+        <Text
+          maxFontSizeMultiplier={1.4}
+          numberOfLines={esLink ? undefined : 1}
+          style={[
+            styles.texto,
+            {
+              color: col.fg,
+              fontSize: m.texto,
+              fontFamily: tema.fonts.sansSemiBold,
+            },
+            esLink ? styles.textoLink : null,
+          ]}
+        >
+          {texto}
         </Text>
+        {IconoFinal && !loading ? (
+          <IconoFinal
+            size={m.icono}
+            color={col.fg}
+            strokeWidth={1.75}
+            accessible={false}
+          />
+        ) : null}
       </View>
-    </TouchableOpacity>
+    </Pressable>
   )
-}
-
-const VARIANTS: Record<Variant, { bg: string; border: string; text: string }> =
-  {
-    primary: { bg: colors.primary, border: colors.primary, text: '#FFFFFF' },
-    secondary: { bg: colors.surface, border: colors.border, text: colors.text },
-    ghost: { bg: 'transparent', border: 'transparent', text: colors.primary },
-    danger: { bg: colors.red, border: colors.red, text: '#FFFFFF' },
-  }
-
-const SIZES: Record<Size, { container: ViewStyle; font: number }> = {
-  sm: { container: { paddingVertical: 8, paddingHorizontal: 12 }, font: 13 },
-  md: { container: { paddingVertical: 12, paddingHorizontal: 16 }, font: 15 },
-  lg: { container: { paddingVertical: 16, paddingHorizontal: 20 }, font: 17 },
 }
 
 const styles = StyleSheet.create({
   base: {
-    borderRadius: radius.md,
+    borderRadius: 999,
     borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
+    alignSelf: 'flex-start',
   },
-  row: { flexDirection: 'row', alignItems: 'center' },
-  spin: { marginRight: 8 },
-  text: { fontWeight: '600' },
-  disabled: { opacity: 0.55 },
+  full: { alignSelf: 'stretch' },
+  link: {
+    borderWidth: 0,
+    paddingHorizontal: 0,
+    minHeight: 32,
+    borderRadius: 4,
+  },
+  fila: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  texto: { textAlign: 'center', flexShrink: 1 },
+  textoLink: {
+    textDecorationLine: 'underline',
+  },
+  pulsado: { transform: [{ scale: 0.98 }] },
+  linkPulsado: { opacity: 0.7 },
+  inactivo: { opacity: 0.45 },
 })

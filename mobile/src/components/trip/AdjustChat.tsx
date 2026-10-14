@@ -1,19 +1,24 @@
 import { useState } from 'react'
-import {
-  ActivityIndicator,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from 'react-native'
-import { adjustTrip } from '../../lib/api/backend'
-import { colors, radius } from '../../theme'
+import { StyleSheet, View } from 'react-native'
+import { adjustTripDetailed, BackendError } from '../../lib/api/backend'
+import { useEstilos, type Tema } from '../../theme'
+import { Callout } from '../ui/Callout'
+import { Chip } from '../ui/Chip'
+import { IconButton } from '../ui/IconButton'
+import { Input } from '../ui/Input'
+import { Txt } from '../ui/Txt'
+import { Compass, Send, Undo2 } from '../ui/iconos'
+import { Button } from '../ui/Button'
 import type { PlanningTrip } from '../../types/planning'
 
 interface Props {
   trip: PlanningTrip
-  onAdjusted: (trip: PlanningTrip) => void
+  /** El viaje ajustado y el resumen de cambios de la IA. */
+  onAdjusted: (trip: PlanningTrip, resumen: string) => void
+  /** Deshacer el último ajuste (si lo hay). */
+  onUndo?: () => void
+  /** Sugerir la edición manual cuando la IA no está disponible. */
+  onEditarAMano?: () => void
 }
 
 const SUGERENCIAS = [
@@ -24,130 +29,204 @@ const SUGERENCIAS = [
   'Menos traslados',
 ] as const
 
-/** Mobile counterpart of the web `AdjustChat`: tweak an itinerary with the AI. */
-export function AdjustChat({ trip, onAdjusted }: Props): React.ReactElement {
+interface Mensaje {
+  id: number
+  propio: boolean
+  texto: string
+}
+
+/**
+ * «Ajustar con IA» (§6.5): sugerencias, historial (burbujas propias en tinta,
+ * respuestas con el resumen del cambio) y «Deshacer último ajuste». Ante 429
+ * respeta `retryAfter`; ante 503 ofrece la edición manual.
+ */
+export function AdjustChat({
+  trip,
+  onAdjusted,
+  onUndo,
+  onEditarAMano,
+}: Props): React.ReactElement {
+  const styles = useEstilos(crearEstilos)
   const [texto, setTexto] = useState('')
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<{ msg: string; manual: boolean } | null>(
+    null
+  )
+  const [historial, setHistorial] = useState<Mensaje[]>([])
 
   const enviar = async (instruccion: string): Promise<void> => {
-    const limpio = instruccion.trim()
-    if (!limpio || loading) return
+    const limpio = instruccion.trim().slice(0, 500)
+    if (limpio.length < 2 || loading) return
     setLoading(true)
     setError(null)
+    setHistorial((h) => [
+      ...h,
+      { id: h.length + 1, propio: true, texto: limpio },
+    ])
     try {
-      const updated = await adjustTrip(trip, limpio)
-      onAdjusted(updated)
+      const r = await adjustTripDetailed(trip, limpio)
+      const resumen = r.resumenCambios || 'Listo: ajusté tu itinerario.'
+      onAdjusted(r.trip, resumen)
+      setHistorial((h) => [
+        ...h,
+        { id: h.length + 1, propio: false, texto: resumen },
+      ])
       setTexto('')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error desconocido')
+      if (err instanceof BackendError) {
+        const manual =
+          err.code === 'unavailable' ||
+          err.data?.['code'] === 'ia_no_disponible'
+        const msg =
+          err.code === 'rate_limit' && err.retryAfter
+            ? `${err.message} Vuelve a intentarlo en ${Math.ceil(err.retryAfter / 60)} min.`
+            : err.message
+        setError({ msg, manual })
+      } else {
+        setError({
+          msg: 'No pudimos ajustar el itinerario. Inténtalo de nuevo.',
+          manual: false,
+        })
+      }
     } finally {
       setLoading(false)
     }
   }
 
   return (
-    <View style={styles.wrap}>
-      <Text style={styles.heading}>✨ Ajusta tu viaje con IA</Text>
-
+    <View>
       <View style={styles.chips}>
         {SUGERENCIAS.map((s) => (
-          <TouchableOpacity
+          <Chip
             key={s}
+            label={s}
+            role="button"
+            size="sm"
             disabled={loading}
             onPress={() => void enviar(s)}
-            style={[styles.chip, loading && styles.chipDisabled]}
-          >
-            <Text style={styles.chipText}>{s}</Text>
-          </TouchableOpacity>
+          />
         ))}
       </View>
 
-      <View style={styles.inputRow}>
-        <TextInput
+      {historial.length > 0 ? (
+        <View style={styles.historial} accessibilityLiveRegion="polite">
+          {historial.map((m) => (
+            <View
+              key={m.id}
+              style={[styles.burbuja, m.propio ? styles.propia : styles.ajena]}
+            >
+              {!m.propio ? (
+                <View style={styles.autor}>
+                  <Compass
+                    size={14}
+                    strokeWidth={1.75}
+                    color={styles.icono.color}
+                  />
+                  <Txt variant="caption" color="fgMuted">
+                    Wayio
+                  </Txt>
+                </View>
+              ) : null}
+              <Txt variant="bodyS" color={m.propio ? 'bubbleOwnFg' : 'fg'}>
+                {m.texto}
+              </Txt>
+            </View>
+          ))}
+        </View>
+      ) : null}
+
+      {loading ? (
+        <Txt variant="caption" color="fgMuted" style={styles.nota}>
+          La IA está reescribiendo tu itinerario. Puede tardar unos segundos.
+        </Txt>
+      ) : null}
+
+      {error ? (
+        <Callout
+          tone="danger"
+          style={styles.nota}
+          {...(error.manual && onEditarAMano
+            ? { action: { label: 'Editar a mano', onPress: onEditarAMano } }
+            : {})}
+        >
+          {error.msg}
+        </Callout>
+      ) : null}
+
+      <View style={styles.compositor}>
+        <Input
+          label="¿Qué quieres cambiar?"
+          hideLabel
           value={texto}
           onChangeText={setTexto}
-          editable={!loading}
+          disabled={loading}
           placeholder="Ej.: añade un mercado local el día 2"
-          placeholderTextColor={colors.textFaint}
-          style={styles.input}
-          onSubmitEditing={() => void enviar(texto)}
           returnKeyType="send"
+          onSubmitEditing={() => void enviar(texto)}
+          maxLength={500}
+          containerStyle={styles.flex}
         />
-        <TouchableOpacity
-          disabled={loading || !texto.trim()}
+        <IconButton
+          label="Enviar ajuste"
+          icon={Send}
+          variant="tinta"
+          disabled={loading || texto.trim().length < 2}
           onPress={() => void enviar(texto)}
-          style={[
-            styles.sendBtn,
-            (loading || !texto.trim()) && styles.sendBtnDisabled,
-          ]}
-        >
-          {loading ? (
-            <ActivityIndicator size="small" color="#FFFFFF" />
-          ) : (
-            <Text style={styles.sendText}>Enviar</Text>
-          )}
-        </TouchableOpacity>
+          style={styles.enviar}
+        />
       </View>
 
-      {error ? <Text style={styles.error}>{error}</Text> : null}
-      {loading ? (
-        <Text style={styles.note}>
-          La IA está reescribiendo tu itinerario. Puede tardar unos segundos.
-        </Text>
+      {onUndo ? (
+        <Button
+          title="Deshacer último ajuste"
+          variant="ghost"
+          size="sm"
+          icon={Undo2}
+          onPress={onUndo}
+          disabled={loading}
+        />
       ) : null}
     </View>
   )
 }
 
-const styles = StyleSheet.create({
-  wrap: {
-    backgroundColor: colors.primaryLight,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: 14,
-    marginBottom: 14,
-  },
-  heading: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: colors.text,
-    marginBottom: 10,
-  },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 10 },
-  chip: {
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-  },
-  chipDisabled: { opacity: 0.5 },
-  chipText: { fontSize: 12, color: colors.textMuted, fontWeight: '500' },
-  inputRow: { flexDirection: 'row', gap: 8, alignItems: 'center' },
-  input: {
-    flex: 1,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.sm,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 13,
-    color: colors.text,
-  },
-  sendBtn: {
-    backgroundColor: colors.primary,
-    borderRadius: radius.sm,
-    paddingHorizontal: 16,
-    paddingVertical: 11,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  sendBtnDisabled: { opacity: 0.5 },
-  sendText: { color: '#FFFFFF', fontWeight: '600', fontSize: 13 },
-  error: { fontSize: 12, color: colors.red, marginTop: 8 },
-  note: { fontSize: 12, color: colors.textMuted, marginTop: 8 },
-})
+const crearEstilos = (t: Tema) =>
+  StyleSheet.create({
+    flex: { flex: 1 },
+    chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+    historial: { marginTop: 16, gap: 8 },
+    burbuja: { maxWidth: '88%', paddingHorizontal: 14, paddingVertical: 10 },
+    propia: {
+      alignSelf: 'flex-end',
+      backgroundColor: t.colors.bubbleOwn,
+      borderTopLeftRadius: 16,
+      borderTopRightRadius: 16,
+      borderBottomLeftRadius: 16,
+      borderBottomRightRadius: 4,
+    },
+    ajena: {
+      alignSelf: 'flex-start',
+      backgroundColor: t.colors.surface,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      borderTopLeftRadius: 16,
+      borderTopRightRadius: 16,
+      borderBottomRightRadius: 16,
+      borderBottomLeftRadius: 4,
+    },
+    autor: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      marginBottom: 2,
+    },
+    icono: { color: t.colors.fgMuted },
+    nota: { marginTop: 12 },
+    compositor: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 8,
+      marginTop: 16,
+    },
+    enviar: { marginTop: 4 },
+  })

@@ -34,6 +34,11 @@ export interface PlanningActivity {
   direccion: string
   lat: number
   lng: number
+  /**
+   * true cuando lat/lng vienen de un geocoder real (no de la estimación de la
+   * IA). Las actividades sin esta marca se geocodifican en segundo plano.
+   */
+  coordsVerificadas?: boolean
   radioGeofencingMetros: number
   precioEstimado: number
   reservaRequerida: boolean
@@ -73,6 +78,17 @@ export interface PlanningTrip {
   presupuestoPorPersona: number
   dias: PlanningDay[]
   paquete: Paquete
+  /**
+   * Moneda de todos los importes del viaje. Opcional por compatibilidad con
+   * viajes guardados antes de existir el campo (se asume USD).
+   */
+  moneda?: Moneda
+  /**
+   * Estimación de la IA del vuelo ida y vuelta por persona desde el origen (en
+   * `moneda`). No está incluida en presupuestoTotal (gasto en destino). 0 si
+   * no hace falta volar.
+   */
+  vueloEstimadoPorPersona?: number
   resumenViaje: string
   consejos: string[]
   advertencias: string[]
@@ -86,6 +102,10 @@ export interface WeatherData {
   humidity: number
   windSpeed: number
   icon: string
+  /** 'pronostico' = previsión para las fechas del viaje; 'actual' = ahora mismo. */
+  tipo?: 'actual' | 'pronostico'
+  tempMin?: number
+  tempMax?: number
 }
 
 export interface GenerateResult {
@@ -93,6 +113,12 @@ export interface GenerateResult {
   confort: PlanningTrip
   premium: PlanningTrip
   weather: WeatherData | null
+  /** Moneda de todos los importes (opcional en respuestas antiguas). */
+  moneda?: Moneda
+  /** true solo cuando NO hay IA configurada (datos de ejemplo). */
+  demo?: boolean
+  /** Motivo legible del modo demo. */
+  motivo?: string
 }
 
 export interface TripFormValues {
@@ -113,6 +139,13 @@ export interface TripFormValues {
     | 'romantico'
     | 'gastronomia'
   paquete: Paquete
+  /** Descripción libre del viaje (la IA la trata como fuente principal). */
+  descripcion?: string
+  /** Zona del crucero (obligatoria si tipo === 'crucero'). */
+  zona?: string
+  /** Lugares concretos que el viajero quiere visitar (p. ej. desde un video). */
+  lugaresDeseados?: string[]
+  preferencias?: string[]
 }
 
 export type ConflictSeverity = 'critico' | 'advertencia' | 'sugerencia' | 'info'
@@ -135,6 +168,8 @@ export interface TripRow {
   data: PlanningTrip
   paquete: Paquete
   grupo_link: string | null
+  /** Publicado en la vista compartida (solo lectura). */
+  is_public?: boolean
   estado: 'planificando' | 'en_viaje' | 'completado'
   actividades_pendientes: PlanningActivity[]
   created_at: string

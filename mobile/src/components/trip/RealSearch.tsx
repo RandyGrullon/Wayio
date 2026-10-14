@@ -1,291 +1,364 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useState } from 'react'
+import { ActivityIndicator, Linking, StyleSheet, View } from 'react-native'
 import {
-  ActivityIndicator,
-  Linking,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from 'react-native'
-import { Button } from '../ui/Button'
-import {
+  BackendError,
   searchActivities,
   searchFlights,
   searchHotels,
-  type SearchProvider,
   type SearchResponse,
   type SearchResult,
 } from '../../lib/api/search'
-import { colors, radius } from '../../theme'
+import { useEstilos, useTheme, type Tema } from '../../theme'
+import { Button } from '../ui/Button'
+import { Card } from '../ui/Card'
+import { EmptyState } from '../ui/EmptyState'
+import { Input } from '../ui/Input'
+import { Tabs } from '../ui/Tabs'
+import { Txt } from '../ui/Txt'
+import { ExternalLink, PlaneTakeoff, MapPin, Search, Star } from '../ui/iconos'
+import { formatCurrency, formatDuracion, formatNumero } from '../ui/formato'
+import type { Moneda } from '../../types/planning'
 
 interface Props {
   destino: string
+  origen?: string
   fechaInicio: string
   fechaFin: string
   personas: number
+  /** Moneda del viaje (precios de actividades en esa moneda). */
+  moneda?: Moneda
 }
 
-interface SectionState {
-  loading: boolean
+type Pestana = 'hoteles' | 'actividades' | 'vuelos'
+
+interface Seccion {
+  estado: 'inactiva' | 'cargando' | 'lista' | 'error'
   data: SearchResponse | null
   error: string | null
 }
 
-const initial: SectionState = { loading: false, data: null, error: null }
+const INICIAL: Seccion = { estado: 'inactiva', data: null, error: null }
 
-const PROVIDER_LABEL: Record<SearchProvider, string> = {
-  amadeus: 'Amadeus',
-  booking: 'Booking',
+const NOMBRE_SITIO: Record<Pestana, string> = {
+  hoteles: 'Booking',
+  actividades: 'Viator',
+  vuelos: 'el buscador de vuelos',
+}
+
+/** Nombre visible del proveedor de cada resultado (nunca uno fijo). */
+const NOMBRE_PROVEEDOR: Record<string, string> = {
   viator: 'Viator',
 }
 
-function priceLabel(price?: number, currency?: string): string | null {
-  if (price === undefined || price === null) return null
-  return currency ? `${price} ${currency}` : `${price}`
+function abrir(url: string): void {
+  if (!url.startsWith('https://')) return
+  Linking.openURL(url).catch(() => undefined)
 }
 
-function ResultRow({ result }: { result: SearchResult }): React.ReactElement {
-  const price = priceLabel(result.price, result.currency)
+function ResultadoFila({ r }: { r: SearchResult }): React.ReactElement {
+  const { colors } = useTheme()
+  const styles = useEstilos(crearEstilos)
+  const precio =
+    r.price !== undefined && r.price !== null
+      ? formatCurrency(r.price, r.currency ?? 'USD')
+      : null
   return (
-    <View style={styles.resultRow}>
-      <View style={styles.resultMain}>
-        <Text style={styles.resultTitle} numberOfLines={1}>
-          {result.title}
-        </Text>
-        {result.subtitle ? (
-          <Text style={styles.resultSub} numberOfLines={1}>
-            {result.subtitle}
-          </Text>
+    <Card style={styles.resultado}>
+      <Txt variant="label" numberOfLines={2}>
+        {r.title}
+      </Txt>
+      {r.subtitle ? (
+        <Txt variant="caption" color="fgMuted" numberOfLines={2}>
+          {r.subtitle}
+        </Txt>
+      ) : null}
+      <View style={styles.meta}>
+        {typeof r.rating === 'number' ? (
+          <View style={styles.metaItem}>
+            <Star
+              size={14}
+              color={colors.brass}
+              fill={colors.brass}
+              strokeWidth={1.5}
+              accessible={false}
+            />
+            <Txt variant="caption" color="fgMuted" tnum>
+              {formatNumero(r.rating, 1)}
+              {r.reviews ? ` (${formatNumero(r.reviews)})` : ''}
+            </Txt>
+          </View>
         ) : null}
-        <Text style={styles.resultProvider}>
-          {PROVIDER_LABEL[result.provider]}
-        </Text>
-      </View>
-      <View style={styles.resultRight}>
-        {price ? <Text style={styles.resultPrice}>{price}</Text> : null}
-        {result.url ? (
-          <TouchableOpacity
-            onPress={() => void Linking.openURL(result.url as string)}
-            style={styles.resultLink}
-          >
-            <Text style={styles.resultLinkText}>Ver ↗</Text>
-          </TouchableOpacity>
+        {r.durationMinutes ? (
+          <Txt variant="caption" color="fgMuted">
+            {formatDuracion(r.durationMinutes)}
+          </Txt>
+        ) : null}
+        {NOMBRE_PROVEEDOR[r.provider] ? (
+          <Txt variant="caption" color="fgSubtle">
+            {NOMBRE_PROVEEDOR[r.provider]}
+          </Txt>
         ) : null}
       </View>
-    </View>
+      <View style={styles.pie}>
+        {precio ? (
+          <Txt variant="title" tnum>
+            {precio}
+          </Txt>
+        ) : (
+          <View />
+        )}
+        {r.url ? (
+          <Button
+            title="Ver y reservar"
+            variant="outline"
+            size="sm"
+            iconEnd={ExternalLink}
+            accessibilityHint="Enlace patrocinado: abre la web del proveedor"
+            onPress={() => abrir(r.url ?? '')}
+          />
+        ) : null}
+      </View>
+    </Card>
   )
 }
 
-function SectionBody({
-  state,
-  provider,
-}: {
-  state: SectionState
-  provider: string
-}): React.ReactElement | null {
-  if (state.loading) return <ActivityIndicator color={colors.primary} />
-  if (state.error) return <Text style={styles.note}>{state.error}</Text>
-  if (state.data && !state.data.configured) {
-    return (
-      <Text style={styles.note}>
-        Búsqueda real no configurada — agrega la API key de {provider}.
-      </Text>
-    )
-  }
-  if (state.data?.error)
-    return <Text style={styles.note}>{state.data.error}</Text>
-  if (state.data && state.data.results.length === 0) {
-    return <Text style={styles.note}>Sin resultados.</Text>
-  }
-  if (state.data) {
-    return (
-      <View style={styles.results}>
-        {state.data.results.map((r) => (
-          <ResultRow key={r.id} result={r} />
-        ))}
-      </View>
-    )
-  }
-  return null
-}
-
+/**
+ * «Disponibilidad real» (§6.5): pestañas Hoteles | Actividades | Vuelos con
+ * búsquedas BAJO DEMANDA. Si un proveedor no está configurado, vacío honesto
+ * con el enlace de búsqueda del socio (sin textos para desarrolladores).
+ */
 export function RealSearch({
   destino,
+  origen = '',
   fechaInicio,
   fechaFin,
   personas,
+  moneda = 'USD',
 }: Props): React.ReactElement {
-  const [hotels, setHotels] = useState<SectionState>(initial)
-  const [activities, setActivities] = useState<SectionState>(initial)
-  const [flights, setFlights] = useState<SectionState>(initial)
-  const [iataOrigin, setIataOrigin] = useState('')
-  const [iataDest, setIataDest] = useState('')
+  const styles = useEstilos(crearEstilos)
+  const { colors } = useTheme()
+  const [tab, setTab] = useState<Pestana>('hoteles')
+  const [secciones, setSecciones] = useState<Record<Pestana, Seccion>>({
+    hoteles: INICIAL,
+    actividades: INICIAL,
+    vuelos: INICIAL,
+  })
+  const [vueloOrigen, setVueloOrigen] = useState(origen)
+  const [vueloDestino, setVueloDestino] = useState(destino)
 
-  const run = useCallback(
-    async (
-      fetcher: () => Promise<SearchResponse>,
-      set: React.Dispatch<React.SetStateAction<SectionState>>
-    ) => {
-      set({ loading: true, data: null, error: null })
+  const buscar = useCallback(
+    async (p: Pestana): Promise<void> => {
+      setSecciones((s) => ({
+        ...s,
+        [p]: { estado: 'cargando', data: null, error: null },
+      }))
       try {
-        const data = await fetcher()
-        set({ loading: false, data, error: null })
-      } catch (err) {
-        set({
-          loading: false,
-          data: null,
-          error: err instanceof Error ? err.message : 'Error de búsqueda',
-        })
+        const data = await (p === 'hoteles'
+          ? searchHotels(destino, fechaInicio, fechaFin, personas)
+          : p === 'actividades'
+            ? searchActivities(destino, fechaInicio, {
+                returnDate: fechaFin,
+                currency: moneda,
+              })
+            : searchFlights(
+                vueloOrigen.trim(),
+                vueloDestino.trim(),
+                fechaInicio,
+                personas,
+                { returnDate: fechaFin, currency: moneda }
+              ))
+        setSecciones((s) => ({
+          ...s,
+          [p]: { estado: 'lista', data, error: null },
+        }))
+      } catch (e) {
+        const d = e instanceof BackendError ? e.data : null
+        const enlace =
+          typeof d?.['enlace'] === 'string' ? d['enlace'] : undefined
+        const mensaje =
+          typeof d?.['mensaje'] === 'string'
+            ? d['mensaje']
+            : e instanceof Error
+              ? e.message
+              : 'La búsqueda no está disponible ahora.'
+        setSecciones((s) => ({
+          ...s,
+          [p]: {
+            estado: 'error',
+            data: enlace
+              ? { configured: false, results: [], enlace, mensaje }
+              : null,
+            error: mensaje,
+          },
+        }))
       }
     },
-    []
+    [
+      destino,
+      fechaInicio,
+      fechaFin,
+      personas,
+      moneda,
+      vueloOrigen,
+      vueloDestino,
+    ]
   )
 
-  useEffect(() => {
-    if (!destino) return
-    void run(
-      () => searchHotels(destino, fechaInicio, fechaFin, personas),
-      setHotels
-    )
-    void run(() => searchActivities(destino, fechaInicio), setActivities)
-  }, [destino, fechaInicio, fechaFin, personas, run])
-
-  const onFlightSearch = useCallback(() => {
-    const origin = iataOrigin.trim().toUpperCase()
-    const dest = iataDest.trim().toUpperCase()
-    if (origin.length !== 3 || dest.length !== 3) return
-    void run(
-      () => searchFlights(origin, dest, fechaInicio, personas),
-      setFlights
-    )
-  }, [iataOrigin, iataDest, fechaInicio, personas, run])
-
-  const flightsValid =
-    iataOrigin.trim().length === 3 && iataDest.trim().length === 3
+  const sec = secciones[tab]
+  const resultados = sec.data?.results ?? []
+  const enlace = sec.data?.enlace
 
   return (
-    <View style={styles.wrap}>
-      <Text style={styles.heading}>Búsqueda en tiempo real</Text>
+    <View>
+      <Txt variant="overline" color="fgMuted">
+        Disponibilidad real
+      </Txt>
+      <Txt variant="h2" style={styles.h2}>
+        Precios de hoy
+      </Txt>
+      <Tabs<Pestana>
+        label="Tipo de búsqueda"
+        value={tab}
+        onValueChange={setTab}
+        options={[
+          { value: 'hoteles', label: 'Hoteles' },
+          { value: 'actividades', label: 'Actividades' },
+          { value: 'vuelos', label: 'Vuelos' },
+        ]}
+        style={styles.tabs}
+      />
 
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Hoteles</Text>
-        <SectionBody state={hotels} provider="Booking" />
-      </View>
+      <View style={styles.panel}>
+        {tab === 'vuelos' ? (
+          <View style={styles.vuelos}>
+            <Input
+              label="Desde"
+              icon={PlaneTakeoff}
+              value={vueloOrigen}
+              onChangeText={setVueloOrigen}
+              placeholder="Ciudad o código IATA"
+              autoCapitalize="words"
+              containerStyle={styles.flex}
+            />
+            <Input
+              label="Hasta"
+              icon={MapPin}
+              value={vueloDestino}
+              onChangeText={setVueloDestino}
+              placeholder="Ciudad o código IATA"
+              autoCapitalize="words"
+              containerStyle={styles.flex}
+            />
+          </View>
+        ) : null}
 
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Actividades</Text>
-        <SectionBody state={activities} provider="Viator" />
-      </View>
-
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Vuelos</Text>
-        <View style={styles.flightForm}>
-          <TextInput
-            value={iataOrigin}
-            onChangeText={(t) => setIataOrigin(t.toUpperCase())}
-            maxLength={3}
-            placeholder="Origen"
-            placeholderTextColor={colors.textFaint}
-            autoCapitalize="characters"
-            style={styles.iataInput}
-          />
-          <TextInput
-            value={iataDest}
-            onChangeText={(t) => setIataDest(t.toUpperCase())}
-            maxLength={3}
-            placeholder="Destino"
-            placeholderTextColor={colors.textFaint}
-            autoCapitalize="characters"
-            style={styles.iataInput}
-          />
+        {sec.estado === 'inactiva' ? (
           <Button
-            title="Buscar"
-            size="sm"
-            variant="secondary"
-            disabled={!flightsValid}
-            loading={flights.loading}
-            onPress={onFlightSearch}
-            style={styles.flightBtn}
+            title={`Buscar ${tab}`}
+            variant="outline"
+            icon={Search}
+            disabled={
+              tab === 'vuelos' &&
+              (vueloOrigen.trim().length < 2 || vueloDestino.trim().length < 2)
+            }
+            onPress={() => void buscar(tab)}
           />
-        </View>
-        <Text style={styles.hint}>Usa códigos IATA (ej. MAD, JFK)</Text>
-        <SectionBody state={flights} provider="Amadeus" />
+        ) : null}
+
+        {sec.estado === 'cargando' ? (
+          <View
+            style={styles.cargando}
+            accessible
+            accessibilityLabel="Buscando…"
+          >
+            <ActivityIndicator color={colors.fg} />
+            <Txt variant="bodyS" color="fgMuted">
+              Buscando {tab}…
+            </Txt>
+          </View>
+        ) : null}
+
+        {sec.estado === 'lista' || sec.estado === 'error' ? (
+          resultados.length > 0 ? (
+            <View>
+              {resultados.map((r) => (
+                <ResultadoFila key={r.id} r={r} />
+              ))}
+              <Button
+                title="Buscar de nuevo"
+                variant="ghost"
+                size="sm"
+                onPress={() => void buscar(tab)}
+              />
+            </View>
+          ) : (
+            <View>
+              <EmptyState
+                ilustracion={
+                  sec.estado === 'error' && !enlace ? 'error' : 'ruta'
+                }
+                title={
+                  enlace
+                    ? `Mira los precios en ${NOMBRE_SITIO[tab]}`
+                    : sec.estado === 'error'
+                      ? 'No pudimos buscar ahora'
+                      : 'Sin resultados por ahora'
+                }
+                description={
+                  sec.data?.mensaje ??
+                  sec.error ??
+                  'Prueba otra vez más tarde o con otras fechas.'
+                }
+                style={styles.vacio}
+              />
+              {enlace ? (
+                <Button
+                  title={`Abrir ${NOMBRE_SITIO[tab]}`}
+                  variant="outline"
+                  iconEnd={ExternalLink}
+                  accessibilityHint="Enlace patrocinado: abre la búsqueda del socio"
+                  onPress={() => abrir(enlace)}
+                  style={styles.centrado}
+                />
+              ) : (
+                <Button
+                  title="Reintentar"
+                  variant="ghost"
+                  onPress={() => void buscar(tab)}
+                  style={styles.centrado}
+                />
+              )}
+            </View>
+          )
+        ) : null}
       </View>
     </View>
   )
 }
 
-const styles = StyleSheet.create({
-  wrap: { marginBottom: 16 },
-  heading: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: colors.text,
-    marginBottom: 10,
-  },
-  section: {
-    backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: 14,
-    marginBottom: 10,
-  },
-  sectionTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: colors.text,
-    marginBottom: 8,
-  },
-  note: { fontSize: 12, color: colors.textMuted, lineHeight: 18 },
-  results: { gap: 8 },
-  resultRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    backgroundColor: colors.bg,
-    borderRadius: radius.sm,
-    padding: 10,
-    gap: 10,
-  },
-  resultMain: { flex: 1 },
-  resultTitle: { fontSize: 13, fontWeight: '600', color: colors.text },
-  resultSub: { fontSize: 12, color: colors.textMuted, marginTop: 1 },
-  resultProvider: {
-    fontSize: 10,
-    fontWeight: '600',
-    color: colors.textFaint,
-    textTransform: 'uppercase',
-    marginTop: 3,
-  },
-  resultRight: { alignItems: 'flex-end', gap: 4 },
-  resultPrice: { fontSize: 13, fontWeight: '700', color: colors.text },
-  resultLink: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.sm,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  resultLinkText: { fontSize: 12, color: colors.text, fontWeight: '500' },
-  flightForm: { flexDirection: 'row', gap: 8, alignItems: 'center' },
-  iataInput: {
-    width: 72,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.sm,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    fontSize: 13,
-    color: colors.text,
-    textTransform: 'uppercase',
-  },
-  flightBtn: { flex: 1 },
-  hint: {
-    fontSize: 11,
-    color: colors.textFaint,
-    marginTop: 6,
-    marginBottom: 8,
-  },
-})
+const crearEstilos = (_t: Tema) =>
+  StyleSheet.create({
+    flex: { flex: 1 },
+    h2: { marginTop: 4 },
+    tabs: { marginTop: 8, marginHorizontal: -16 },
+    panel: { paddingTop: 16 },
+    vuelos: { flexDirection: 'row', gap: 12 },
+    cargando: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      paddingVertical: 16,
+    },
+    resultado: { padding: 16, marginBottom: 10 },
+    meta: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginTop: 6 },
+    metaItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+    pie: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 8,
+      marginTop: 12,
+    },
+    vacio: { paddingVertical: 16 },
+    centrado: { alignSelf: 'center' },
+  })

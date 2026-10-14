@@ -1,469 +1,821 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   KeyboardAvoidingView,
   Platform,
+  Pressable,
   ScrollView,
+  Share,
   StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
   View,
+  type TextInput,
 } from 'react-native'
-import { SafeAreaView } from 'react-native'
-import { ScreenHeader } from '../components/ui/ScreenHeader'
-import { Button } from '../components/ui/Button'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
+import type { User } from '@supabase/supabase-js'
+import {
+  Avatar,
+  AvatarStack,
+  Badge,
+  Button,
+  Callout,
+  Card,
+  CardKicker,
+  EmptyState,
+  IconButton,
+  Input,
+  Pantalla,
+  ScreenHeader,
+  Skeleton,
+  SkeletonRegion,
+  Tabs,
+  Txt,
+} from '../components/ui'
+import { Check, Plus, Send, UserPlus } from '../components/ui/iconos'
+import {
+  formatCurrency,
+  formatFecha,
+  formatHora12,
+  formatViajeros,
+  monedaDe,
+  parseFecha,
+} from '../components/ui/formato'
 import { useAuth } from '../context/AuthContext'
-import { useGroup } from '../hooks/useGroup'
-import { colors, radius } from '../theme'
-import { formatCurrency } from '../lib/utils/format'
-import type { PlanningTrip } from '../types/planning'
+import { useGroup, type UseGroupReturn } from '../hooks/useGroup'
+import { getTrip } from '../lib/trips/repository'
+import { config } from '../config'
+import { useEstilos, useTheme, type Tema } from '../theme'
+import type { GroupMessageRow, PlanningTrip, TripRow } from '../types/planning'
 
 type Tab = 'chat' | 'votos' | 'gastos' | 'miembros'
-const TABS: { key: Tab; label: string }[] = [
-  { key: 'chat', label: 'Chat' },
-  { key: 'votos', label: 'Votos' },
-  { key: 'gastos', label: 'Gastos' },
-  { key: 'miembros', label: 'Miembros' },
-]
 
+const TEMPORAL = 'temp-'
+const esPendiente = (id: string): boolean => id.startsWith(TEMPORAL)
+
+/**
+ * Sala del grupo (§6.8, móvil): chat, votos, gastos y miembros con Supabase
+ * Realtime. Muestra los errores de carga y de cada acción, y marca lo que aún
+ * se está enviando. Si llega sin viaje (deep link), lo carga.
+ */
 export function GroupScreen({
-  trip,
+  trip: tripInicial,
   tripId,
 }: {
-  trip: PlanningTrip
+  trip?: PlanningTrip
   tripId: string
 }): React.ReactElement {
   const { user } = useAuth()
-  const [tab, setTab] = useState<Tab>('chat')
+  const [fila, setFila] = useState<TripRow | null>(null)
+  const [errorViaje, setErrorViaje] = useState<string | null>(null)
+
+  useEffect(() => {
+    let vivo = true
+    getTrip(tripId)
+      .then((r) => {
+        if (!vivo) return
+        if (r) setFila(r)
+        else if (!tripInicial) {
+          setErrorViaje('No encontramos este viaje o ya no tienes acceso.')
+        }
+      })
+      .catch(() => {
+        if (vivo && !tripInicial) {
+          setErrorViaje('No pudimos cargar el viaje. Revisa tu conexión.')
+        }
+      })
+    return () => {
+      vivo = false
+    }
+  }, [tripId, tripInicial])
+
+  const trip = tripInicial ?? fila?.data ?? null
 
   if (!user) {
     return (
-      <SafeAreaView style={styles.safe}>
-        <ScreenHeader title="Sala grupal" />
-        <View style={styles.center}>
-          <Text style={styles.muted}>Inicia sesión para usar el grupo.</Text>
-        </View>
-      </SafeAreaView>
+      <Pantalla>
+        <ScreenHeader title="Sala del grupo" />
+        <EmptyState
+          ilustracion="icono"
+          icon={UserPlus}
+          title="Inicia sesión para entrar al grupo"
+        />
+      </Pantalla>
+    )
+  }
+
+  if (!trip) {
+    return (
+      <Pantalla>
+        <ScreenHeader title="Sala del grupo" />
+        {errorViaje ? (
+          <EmptyState
+            ilustracion="error"
+            title="No pudimos abrir el grupo"
+            description={errorViaje}
+          />
+        ) : (
+          <SkeletonRegion
+            label="Cargando el grupo…"
+            style={estilosFijos.margen}
+          >
+            <Skeleton width="60%" height={24} style={estilosFijos.hueco} />
+            <Skeleton width="40%" height={14} style={estilosFijos.hueco} />
+          </SkeletonRegion>
+        )}
+      </Pantalla>
     )
   }
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <ScreenHeader title={trip.destino} subtitle="Sala grupal" />
-      <View style={styles.tabBar}>
-        {TABS.map((t) => (
-          <TouchableOpacity
-            key={t.key}
-            onPress={() => setTab(t.key)}
-            style={[styles.tab, tab === t.key && styles.tabActive]}
-          >
-            <Text
-              style={[styles.tabText, tab === t.key && styles.tabTextActive]}
-            >
-              {t.label}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-      <GroupBody tab={tab} trip={trip} tripId={tripId} user={user} />
-    </SafeAreaView>
+    <Sala
+      trip={trip}
+      tripId={tripId}
+      user={user}
+      grupoLink={fila?.grupo_link ?? null}
+    />
   )
 }
 
-function GroupBody({
-  tab,
+function Sala({
   trip,
   tripId,
   user,
+  grupoLink,
 }: {
-  tab: Tab
   trip: PlanningTrip
   tripId: string
-  user: NonNullable<ReturnType<typeof useAuth>['user']>
+  user: User
+  grupoLink: string | null
 }): React.ReactElement {
   const group = useGroup(tripId, user)
-  const scrollRef = useRef<ScrollView>(null)
-  const [msg, setMsg] = useState('')
-  const [concepto, setConcepto] = useState('')
-  const [monto, setMonto] = useState('')
+  const styles = useEstilos(crearEstilos)
+  const [tab, setTab] = useState<Tab>('chat')
+  const moneda = monedaDe(trip)
 
-  const balances = useMemo(() => {
-    const map = new Map<string, number>()
-    for (const m of group.members) map.set(m.user_id, 0)
-    for (const e of group.expenses) {
-      const sharers = e.entre_todos
-        ? group.members.map((m) => m.user_id)
-        : [e.pagado_por]
-      const share = e.monto / Math.max(sharers.length, 1)
-      map.set(e.pagado_por, (map.get(e.pagado_por) ?? 0) + e.monto)
-      for (const uid of sharers) map.set(uid, (map.get(uid) ?? 0) - share)
-    }
-    return map
-  }, [group.expenses, group.members])
+  const personas = group.members.map((m, i) => ({
+    nombre: m.nombre,
+    indice: i,
+  }))
 
-  const nameOf = (uid: string): string =>
-    group.members.find((m) => m.user_id === uid)?.nombre ?? 'Viajero'
-
-  if (tab === 'chat') {
-    return (
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={90}
-      >
-        <ScrollView
-          ref={scrollRef}
-          contentContainerStyle={styles.chatScroll}
-          onContentSizeChange={() =>
-            scrollRef.current?.scrollToEnd({ animated: true })
-          }
-        >
-          {group.messages.map((m) => {
-            const own = m.user_id === user.id
-            return (
-              <View
-                key={m.id}
-                style={[styles.bubbleRow, own ? styles.right : styles.left]}
-              >
-                <View
-                  style={[
-                    styles.bubble,
-                    own ? styles.bubbleOwn : styles.bubbleOther,
-                  ]}
-                >
-                  {!own ? (
-                    <Text style={styles.bubbleName}>{m.nombre_usuario}</Text>
-                  ) : null}
-                  <Text
-                    style={[styles.bubbleText, own && styles.bubbleTextOwn]}
-                  >
-                    {m.mensaje}
-                  </Text>
-                </View>
-              </View>
-            )
-          })}
-          {group.messages.length === 0 ? (
-            <Text style={styles.muted}>Sé el primero en escribir.</Text>
-          ) : null}
-        </ScrollView>
-        <View style={styles.inputBar}>
-          <TextInput
-            style={styles.chatInput}
-            placeholder="Escribe un mensaje..."
-            placeholderTextColor={colors.textFaint}
-            value={msg}
-            onChangeText={setMsg}
-          />
-          <Button
-            title="Enviar"
-            size="sm"
-            onPress={() => {
-              const t = msg.trim()
-              if (!t) return
-              void group.sendMessage(t)
-              setMsg('')
-            }}
-          />
-        </View>
-      </KeyboardAvoidingView>
-    )
+  const invitar = (): void => {
+    if (!grupoLink) return
+    const url = config.webUrl
+      ? `${config.webUrl}/group/${grupoLink}`
+      : `wayio://group/${grupoLink}`
+    Share.share({
+      message: `Únete a mi viaje a ${trip.destino} en Wayio: ${url}`,
+    }).catch(() => undefined)
   }
 
-  if (tab === 'votos') {
-    const acts = trip.dias.flatMap((d) => d.actividades)
-    return (
-      <ScrollView contentContainerStyle={styles.scroll}>
-        {acts.map((a) => {
-          const av = group.votes.filter((v) => v.activity_id === a.id)
-          const si = av.filter((v) => v.voto).length
-          const no = av.filter((v) => !v.voto).length
-          const total = si + no
-          return (
-            <View key={a.id} style={styles.voteCard}>
-              <Text style={styles.voteQ}>¿Incluir &quot;{a.nombre}&quot;?</Text>
-              <View style={styles.voteRow}>
-                <TouchableOpacity
-                  style={[styles.voteBtn, styles.voteYes]}
-                  onPress={() => void group.castVote(a.id, true)}
-                >
-                  <Text style={styles.voteBtnText}>
-                    Sí {total > 0 ? `· ${Math.round((si / total) * 100)}%` : ''}
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.voteBtn, styles.voteNo]}
-                  onPress={() => void group.castVote(a.id, false)}
-                >
-                  <Text style={styles.voteBtnText}>
-                    No {total > 0 ? `· ${Math.round((no / total) * 100)}%` : ''}
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          )
-        })}
-        <View style={styles.bottom} />
-      </ScrollView>
-    )
-  }
-
-  if (tab === 'gastos') {
-    return (
-      <ScrollView contentContainerStyle={styles.scroll}>
-        <View style={styles.expenseForm}>
-          <TextInput
-            style={[styles.chatInput, styles.flex]}
-            placeholder="Concepto"
-            placeholderTextColor={colors.textFaint}
-            value={concepto}
-            onChangeText={setConcepto}
-          />
-          <TextInput
-            style={[styles.chatInput, styles.montoInput]}
-            placeholder="Monto"
-            placeholderTextColor={colors.textFaint}
-            keyboardType="numeric"
-            value={monto}
-            onChangeText={setMonto}
-          />
-          <Button
-            title="+"
-            size="sm"
-            onPress={() => {
-              const n = parseFloat(monto)
-              if (!concepto.trim() || isNaN(n) || n <= 0) return
-              void group.addExpense(concepto.trim(), n)
-              setConcepto('')
-              setMonto('')
-            }}
-          />
-        </View>
-
-        {group.expenses.map((e) => (
-          <View key={e.id} style={styles.expenseRow}>
-            <Text style={styles.expenseDesc}>{e.concepto}</Text>
-            <Text style={styles.expenseAmt}>{formatCurrency(e.monto)}</Text>
-          </View>
-        ))}
-
-        {group.members.length > 0 ? (
-          <View style={styles.balances}>
-            <Text style={styles.balTitle}>Balances</Text>
-            {Array.from(balances.entries()).map(([uid, bal]) => (
-              <View key={uid} style={styles.balRow}>
-                <Text style={styles.balName}>{nameOf(uid)}</Text>
-                <Text
-                  style={[
-                    styles.balVal,
-                    { color: bal >= 0 ? colors.green : colors.red },
-                  ]}
-                >
-                  {bal >= 0 ? '+' : ''}
-                  {formatCurrency(bal)}
-                </Text>
-              </View>
-            ))}
-          </View>
-        ) : null}
-        <View style={styles.bottom} />
-      </ScrollView>
-    )
-  }
-
-  // miembros
   return (
-    <ScrollView contentContainerStyle={styles.scroll}>
-      {group.members.map((m) => (
-        <View key={m.id} style={styles.memberRow}>
-          <View style={styles.avatar}>
-            <Text style={styles.avatarText}>
-              {m.nombre[0]?.toUpperCase() ?? '?'}
-            </Text>
-          </View>
-          <View style={styles.flex}>
-            <Text style={styles.memberName}>{m.nombre}</Text>
-            <Text style={styles.memberLoc}>
-              {m.ultima_ubicacion ? 'Ubicación compartida' : 'Sin ubicación'}
-            </Text>
-          </View>
-          {m.user_id === user.id ? (
-            <View style={styles.youPill}>
-              <Text style={styles.youText}>Tú</Text>
-            </View>
-          ) : null}
+    <Pantalla>
+      <ScreenHeader
+        kicker="Sala del grupo"
+        title={trip.destino}
+        {...(grupoLink
+          ? {
+              right: (
+                <IconButton
+                  label="Invitar al grupo"
+                  icon={UserPlus}
+                  onPress={invitar}
+                />
+              ),
+            }
+          : {})}
+      />
+      {group.members.length > 0 ? (
+        <View style={styles.miembrosFila}>
+          <AvatarStack personas={personas} size={28} />
+          <Txt variant="caption" color="fgMuted">
+            {formatViajeros(group.members.length)}
+          </Txt>
         </View>
-      ))}
-      {group.members.length === 0 ? (
-        <Text style={styles.muted}>Aún no hay miembros.</Text>
       ) : null}
-      <View style={styles.bottom} />
+
+      <Tabs<Tab>
+        label="Secciones del grupo"
+        value={tab}
+        onValueChange={setTab}
+        options={[
+          { value: 'chat', label: 'Chat', count: group.messages.length },
+          { value: 'votos', label: 'Votos' },
+          { value: 'gastos', label: 'Gastos', count: group.expenses.length },
+          { value: 'miembros', label: 'Miembros', count: group.members.length },
+        ]}
+      />
+
+      {group.actionError ? (
+        <Callout
+          tone="danger"
+          onDismiss={group.clearActionError}
+          style={styles.errorAccion}
+        >
+          {group.actionError}
+        </Callout>
+      ) : null}
+
+      {group.error ? (
+        <EmptyState
+          ilustracion="error"
+          title="No pudimos cargar el grupo"
+          description={group.error}
+          action={{ label: 'Reintentar', onPress: () => void group.reload() }}
+        />
+      ) : group.loading ? (
+        <SkeletonRegion label="Cargando el grupo…" style={styles.margen}>
+          {[0, 1, 2].map((k) => (
+            <Skeleton
+              key={k}
+              width={k % 2 ? '55%' : '70%'}
+              height={44}
+              radius={16}
+              style={styles.hueco}
+            />
+          ))}
+        </SkeletonRegion>
+      ) : tab === 'chat' ? (
+        <Chat group={group} userId={user.id} />
+      ) : tab === 'votos' ? (
+        <Votos group={group} trip={trip} userId={user.id} />
+      ) : tab === 'gastos' ? (
+        <Gastos group={group} moneda={moneda} userId={user.id} />
+      ) : (
+        <Miembros group={group} userId={user.id} />
+      )}
+    </Pantalla>
+  )
+}
+
+// ── Chat ──────────────────────────────────────────────────────────────────
+
+function etiquetaDia(iso: string): string {
+  const f = parseFecha(iso)
+  if (!f) return ''
+  const hoy = new Date()
+  const ayer = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate() - 1)
+  const mismo = (a: Date, b: Date): boolean =>
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  if (mismo(f, hoy)) return 'Hoy'
+  if (mismo(f, ayer)) return 'Ayer'
+  return formatFecha(f)
+}
+
+function Chat({
+  group,
+  userId,
+}: {
+  group: UseGroupReturn
+  userId: string
+}): React.ReactElement {
+  const styles = useEstilos(crearEstilos)
+  const insets = useSafeAreaInsets()
+  const scrollRef = useRef<ScrollView>(null)
+  const inputRef = useRef<TextInput>(null)
+  const [msg, setMsg] = useState('')
+
+  const enviar = (): void => {
+    const t = msg.trim()
+    if (!t) return
+    setMsg('')
+    void group.sendMessage(t)
+  }
+
+  const items = useMemo(() => {
+    const out: (
+      | { tipo: 'dia'; id: string; texto: string }
+      | { tipo: 'msg'; m: GroupMessageRow }
+    )[] = []
+    let ultimo = ''
+    for (const m of group.messages) {
+      const dia = etiquetaDia(m.created_at)
+      if (dia && dia !== ultimo) {
+        out.push({ tipo: 'dia', id: `dia-${m.id}`, texto: dia })
+        ultimo = dia
+      }
+      out.push({ tipo: 'msg', m })
+    }
+    return out
+  }, [group.messages])
+
+  return (
+    <KeyboardAvoidingView
+      style={styles.flex}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 96 : 0}
+    >
+      <ScrollView
+        ref={scrollRef}
+        contentContainerStyle={styles.chatScroll}
+        onContentSizeChange={() =>
+          scrollRef.current?.scrollToEnd({ animated: true })
+        }
+        keyboardShouldPersistTaps="handled"
+      >
+        {group.messages.length === 0 ? (
+          <EmptyState
+            title="Nadie ha escrito todavía"
+            description="Propón un plan, comparte una hora de encuentro o pregunta qué traer."
+            action={{
+              label: 'Escribe el primero',
+              variant: 'outline',
+              onPress: () => inputRef.current?.focus(),
+            }}
+          />
+        ) : null}
+        {items.map((it) =>
+          it.tipo === 'dia' ? (
+            <Txt
+              key={it.id}
+              variant="caption"
+              color="fgSubtle"
+              center
+              style={styles.separador}
+            >
+              {it.texto}
+            </Txt>
+          ) : (
+            <Burbuja key={it.m.id} m={it.m} propia={it.m.user_id === userId} />
+          )
+        )}
+      </ScrollView>
+      <View
+        style={[
+          styles.compositor,
+          { paddingBottom: Math.max(10, insets.bottom) },
+        ]}
+      >
+        <Input
+          inputRef={inputRef}
+          label="Mensaje"
+          hideLabel
+          placeholder="Escribe un mensaje…"
+          value={msg}
+          onChangeText={setMsg}
+          multiline
+          maxLength={1000}
+          fieldSize="md"
+          inputStyle={styles.chatInput}
+          containerStyle={styles.chatCampo}
+        />
+        <IconButton
+          label="Enviar mensaje"
+          icon={Send}
+          variant="primary"
+          disabled={!msg.trim()}
+          onPress={enviar}
+        />
+      </View>
+    </KeyboardAvoidingView>
+  )
+}
+
+function Burbuja({
+  m,
+  propia,
+}: {
+  m: GroupMessageRow
+  propia: boolean
+}): React.ReactElement {
+  const styles = useEstilos(crearEstilos)
+  const pendiente = esPendiente(m.id)
+  const hora = formatHora12(parseFecha(m.created_at))
+  if (m.tipo !== 'mensaje') {
+    return (
+      <Txt variant="caption" color="fgMuted" center style={styles.sistema}>
+        {m.mensaje}
+      </Txt>
+    )
+  }
+  return (
+    <View
+      style={[styles.burbujaFila, propia ? styles.derecha : styles.izquierda]}
+      accessible
+      accessibilityLabel={`${propia ? 'Tú' : m.nombre_usuario}, ${hora}: ${m.mensaje}${pendiente ? '. Enviando' : ''}`}
+    >
+      <View
+        style={[
+          styles.burbuja,
+          propia ? styles.propia : styles.ajena,
+          pendiente ? styles.pendiente : null,
+        ]}
+      >
+        {!propia ? (
+          <Txt variant="caption" style={styles.autor}>
+            {m.nombre_usuario}
+          </Txt>
+        ) : null}
+        <Txt variant="bodyS" color={propia ? 'bubbleOwnFg' : 'fg'}>
+          {m.mensaje}
+        </Txt>
+        <Txt
+          variant="caption"
+          tnum
+          color={propia ? 'bubbleOwnFg' : 'fgSubtle'}
+          style={styles.hora}
+        >
+          {pendiente ? 'Enviando…' : hora}
+        </Txt>
+      </View>
+    </View>
+  )
+}
+
+// ── Votos ─────────────────────────────────────────────────────────────────
+
+function Votos({
+  group,
+  trip,
+  userId,
+}: {
+  group: UseGroupReturn
+  trip: PlanningTrip
+  userId: string
+}): React.ReactElement {
+  const { colors } = useTheme()
+  const styles = useEstilos(crearEstilos)
+  const acts = trip.dias.flatMap((d) => d.actividades)
+
+  if (acts.length === 0) {
+    return <EmptyState title="Aún no hay actividades para votar" />
+  }
+
+  return (
+    <ScrollView contentContainerStyle={styles.lista}>
+      {acts.map((a) => {
+        const av = group.votes.filter((v) => v.activity_id === a.id)
+        const si = av.filter((v) => v.voto).length
+        const no = av.length - si
+        const total = si + no
+        const mio = av.find((v) => v.user_id === userId)
+        return (
+          <Card key={a.id} style={styles.voto}>
+            <Txt variant="label">¿Incluimos «{a.nombre}»?</Txt>
+            <View style={styles.votoBotones} accessibilityRole="radiogroup">
+              {[true, false].map((valor) => {
+                const sel = mio?.voto === valor
+                return (
+                  <Pressable
+                    key={String(valor)}
+                    onPress={() => void group.castVote(a.id, valor)}
+                    accessibilityRole="radio"
+                    accessibilityState={{ checked: sel }}
+                    accessibilityLabel={valor ? 'Sí' : 'No'}
+                    style={[styles.votoBoton, sel ? styles.votoBotonSel : null]}
+                  >
+                    {sel ? (
+                      <Check
+                        size={16}
+                        color={colors.fgInverse}
+                        strokeWidth={2.5}
+                      />
+                    ) : null}
+                    <Txt variant="label" color={sel ? 'fgInverse' : 'fg'}>
+                      {valor ? 'Sí' : 'No'}
+                    </Txt>
+                  </Pressable>
+                )
+              })}
+            </View>
+            {total > 0 ? (
+              <View style={styles.resultado}>
+                <View style={styles.barraVotos}>
+                  {si > 0 ? (
+                    <View
+                      style={[
+                        styles.segmento,
+                        { flex: si, backgroundColor: colors.accent },
+                      ]}
+                    />
+                  ) : null}
+                  {no > 0 ? (
+                    <View
+                      style={[
+                        styles.segmento,
+                        { flex: no, backgroundColor: colors.fgSubtle },
+                      ]}
+                    />
+                  ) : null}
+                </View>
+                <Txt variant="caption" color="fgMuted" tnum>
+                  {si} sí · {no} no
+                  {mio && esPendiente(mio.id) ? ' · Guardando tu voto…' : ''}
+                </Txt>
+              </View>
+            ) : (
+              <Txt variant="caption" color="fgSubtle" style={styles.hueco}>
+                Nadie ha votado todavía.
+              </Txt>
+            )}
+          </Card>
+        )
+      })}
     </ScrollView>
   )
 }
 
-const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.bg },
-  flex: { flex: 1 },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  muted: {
-    color: colors.textMuted,
-    fontSize: 14,
-    textAlign: 'center',
-    marginTop: 20,
-  },
-  tabBar: {
-    flexDirection: 'row',
-    backgroundColor: colors.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  tab: {
-    flex: 1,
-    paddingVertical: 12,
-    alignItems: 'center',
-    borderBottomWidth: 2,
-    borderBottomColor: 'transparent',
-  },
-  tabActive: { borderBottomColor: colors.primary },
-  tabText: { fontSize: 14, color: colors.textMuted, fontWeight: '500' },
-  tabTextActive: { color: colors.primary, fontWeight: '700' },
-  scroll: { padding: 16 },
-  bottom: { height: 40 },
+// ── Gastos ────────────────────────────────────────────────────────────────
 
-  chatScroll: { padding: 16, flexGrow: 1 },
-  bubbleRow: { flexDirection: 'row', marginBottom: 8 },
-  left: { justifyContent: 'flex-start' },
-  right: { justifyContent: 'flex-end' },
-  bubble: {
-    maxWidth: '78%',
-    borderRadius: radius.md,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  bubbleOwn: { backgroundColor: colors.primary },
-  bubbleOther: {
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  bubbleName: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: colors.textMuted,
-    marginBottom: 2,
-  },
-  bubbleText: { fontSize: 14, color: colors.text },
-  bubbleTextOwn: { color: '#FFFFFF' },
-  inputBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    padding: 12,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-    backgroundColor: colors.surface,
-  },
-  chatInput: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    fontSize: 14,
-    color: colors.text,
-    backgroundColor: colors.surface,
-  },
+function Gastos({
+  group,
+  moneda,
+  userId,
+}: {
+  group: UseGroupReturn
+  moneda: string
+  userId: string
+}): React.ReactElement {
+  const styles = useEstilos(crearEstilos)
+  const [concepto, setConcepto] = useState('')
+  const [monto, setMonto] = useState('')
+  const [error, setError] = useState<string | null>(null)
 
-  voteCard: {
-    backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    padding: 14,
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  voteQ: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: colors.text,
-    marginBottom: 10,
-  },
-  voteRow: { flexDirection: 'row', gap: 10 },
-  voteBtn: {
-    flex: 1,
-    paddingVertical: 10,
-    borderRadius: radius.sm,
-    alignItems: 'center',
-  },
-  voteYes: { backgroundColor: '#DCFCE7' },
-  voteNo: { backgroundColor: '#FEE2E2' },
-  voteBtnText: { fontSize: 13, fontWeight: '700', color: colors.text },
+  const nombreDe = (uid: string): string =>
+    uid === userId
+      ? 'Tú'
+      : (group.members.find((m) => m.user_id === uid)?.nombre ?? 'Alguien')
 
-  expenseForm: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 14,
-  },
-  montoInput: { width: 90, flex: 0 },
-  expenseRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    backgroundColor: colors.surface,
-    borderRadius: radius.sm,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    marginBottom: 8,
-  },
-  expenseDesc: { fontSize: 14, color: colors.text },
-  expenseAmt: { fontSize: 14, fontWeight: '600', color: colors.text },
-  balances: {
-    marginTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-    paddingTop: 12,
-  },
-  balTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: colors.text,
-    marginBottom: 8,
-  },
-  balRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: 4,
-  },
-  balName: { fontSize: 14, color: colors.textMuted },
-  balVal: { fontSize: 14, fontWeight: '600' },
+  // Quién le debe a quién (todos los gastos se reparten entre todos).
+  const deudas = useMemo(() => {
+    const neto = new Map<string, number>()
+    const ids = group.members.map((m) => m.user_id)
+    for (const id of ids) neto.set(id, 0)
+    for (const e of group.expenses) {
+      const entre = e.entre_todos && ids.length > 0 ? ids : [e.pagado_por]
+      const parte = e.monto / Math.max(1, entre.length)
+      neto.set(e.pagado_por, (neto.get(e.pagado_por) ?? 0) + e.monto)
+      for (const id of entre) neto.set(id, (neto.get(id) ?? 0) - parte)
+    }
+    const deudores = [...neto.entries()]
+      .filter(([, v]) => v < -0.009)
+      .map(([id, v]) => ({ id, v: -v }))
+    const acreedores = [...neto.entries()]
+      .filter(([, v]) => v > 0.009)
+      .map(([id, v]) => ({ id, v }))
+    const out: { de: string; a: string; monto: number }[] = []
+    let i = 0
+    let j = 0
+    while (i < deudores.length && j < acreedores.length) {
+      const d = deudores[i]
+      const c = acreedores[j]
+      if (!d || !c) break
+      const x = Math.min(d.v, c.v)
+      out.push({ de: d.id, a: c.id, monto: x })
+      d.v -= x
+      c.v -= x
+      if (d.v < 0.01) i++
+      if (c.v < 0.01) j++
+    }
+    return out
+  }, [group.expenses, group.members])
 
-  memberRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    padding: 12,
-    marginBottom: 8,
-  },
-  avatar: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-  },
-  avatarText: { color: '#FFFFFF', fontWeight: '700', fontSize: 15 },
-  memberName: { fontSize: 14, fontWeight: '600', color: colors.text },
-  memberLoc: { fontSize: 12, color: colors.textFaint, marginTop: 1 },
-  youPill: {
-    backgroundColor: colors.primaryLight,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 3,
-  },
-  youText: { fontSize: 12, color: colors.primary, fontWeight: '700' },
+  const anadir = async (): Promise<void> => {
+    const n = Number(monto.replace(',', '.'))
+    if (!concepto.trim()) {
+      setError('Escribe el concepto del gasto.')
+      return
+    }
+    if (!Number.isFinite(n) || n <= 0) {
+      setError('El monto debe ser mayor que cero.')
+      return
+    }
+    setError(null)
+    const ok = await group.addExpense(concepto.trim(), n)
+    if (ok) {
+      setConcepto('')
+      setMonto('')
+    }
+  }
+
+  return (
+    <ScrollView
+      contentContainerStyle={styles.lista}
+      keyboardShouldPersistTaps="handled"
+    >
+      <Card style={styles.formGasto}>
+        <CardKicker>Añadir gasto</CardKicker>
+        <Input
+          label="Concepto"
+          placeholder="Ej.: cena en el malecón"
+          value={concepto}
+          onChangeText={setConcepto}
+          maxLength={200}
+          containerStyle={styles.hueco}
+          error={error && !concepto.trim() ? error : null}
+        />
+        <Input
+          label={`Monto (${moneda})`}
+          placeholder="0"
+          value={monto}
+          onChangeText={(t) => setMonto(t.replace(/[^\d.,]/g, ''))}
+          keyboardType="decimal-pad"
+          error={error && concepto.trim() ? error : null}
+          hint="Se reparte entre todos los miembros."
+        />
+        <Button
+          title="Añadir gasto"
+          variant="tinta"
+          icon={Plus}
+          onPress={() => void anadir()}
+        />
+      </Card>
+
+      {group.expenses.length === 0 ? (
+        <EmptyState
+          title="Sin gastos todavía"
+          description="Anota lo que pague cada uno y Wayio calcula quién le debe a quién."
+        />
+      ) : (
+        <View style={styles.gastos}>
+          {group.expenses.map((e) => (
+            <View key={e.id} style={styles.gasto}>
+              <View style={styles.flex}>
+                <Txt variant="label" numberOfLines={2}>
+                  {e.concepto}
+                </Txt>
+                <Txt variant="caption" color="fgMuted">
+                  {esPendiente(e.id)
+                    ? 'Guardando…'
+                    : `${e.pagado_por === userId ? 'Pagaste tú' : `Pagó ${nombreDe(e.pagado_por)}`} · ${formatFecha(e.created_at, { diaSemana: false })}`}
+                </Txt>
+              </View>
+              <Txt variant="label" tnum>
+                {formatCurrency(e.monto, moneda, { decimales: true })}
+              </Txt>
+            </View>
+          ))}
+        </View>
+      )}
+
+      {deudas.length > 0 ? (
+        <Card style={styles.balances}>
+          <CardKicker>Balances</CardKicker>
+          {deudas.map((d) => (
+            <Txt key={`${d.de}-${d.a}`} variant="bodyS" style={styles.hueco}>
+              {nombreDe(d.de)} {d.de === userId ? 'le debes' : 'le debe'}{' '}
+              <Txt variant="label" tnum>
+                {formatCurrency(d.monto, moneda, { decimales: true })}
+              </Txt>{' '}
+              a {nombreDe(d.a) === 'Tú' ? 'ti' : nombreDe(d.a)}
+            </Txt>
+          ))}
+        </Card>
+      ) : group.expenses.length > 0 ? (
+        <Txt variant="caption" color="fgMuted" style={styles.hueco}>
+          Están a mano: nadie le debe a nadie.
+        </Txt>
+      ) : null}
+    </ScrollView>
+  )
+}
+
+// ── Miembros ──────────────────────────────────────────────────────────────
+
+function Miembros({
+  group,
+  userId,
+}: {
+  group: UseGroupReturn
+  userId: string
+}): React.ReactElement {
+  const styles = useEstilos(crearEstilos)
+  if (group.members.length === 0) {
+    return (
+      <EmptyState
+        title="Aún no hay miembros"
+        description="Invita a tus acompañantes con el enlace del grupo."
+      />
+    )
+  }
+  return (
+    <ScrollView contentContainerStyle={styles.lista}>
+      {group.members.map((m, i) => (
+        <View key={m.id} style={styles.miembro}>
+          <Avatar nombre={m.nombre} indice={i} size={40} />
+          <View style={styles.flex}>
+            <Txt variant="label">{m.nombre}</Txt>
+            <Txt variant="caption" color="fgMuted">
+              {m.ultima_ubicacion
+                ? `Ubicación actualizada ${formatHora12(parseFecha(m.ultima_ubicacion))}`
+                : 'Sin ubicación'}
+            </Txt>
+          </View>
+          {m.user_id === userId ? <Badge label="Tú" variant="brand" /> : null}
+        </View>
+      ))}
+    </ScrollView>
+  )
+}
+
+const estilosFijos = StyleSheet.create({
+  margen: { paddingHorizontal: 16 },
+  hueco: { marginTop: 12 },
 })
+
+const crearEstilos = (t: Tema) =>
+  StyleSheet.create({
+    flex: { flex: 1 },
+    margen: { paddingHorizontal: 16 },
+    hueco: { marginTop: 10 },
+    miembrosFila: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      paddingHorizontal: 16,
+      paddingVertical: 8,
+    },
+    errorAccion: { marginHorizontal: 16, marginTop: 12 },
+    lista: { padding: 16, paddingBottom: 48 },
+    chatScroll: { padding: 16, flexGrow: 1 },
+    separador: { marginVertical: 10 },
+    sistema: { marginVertical: 6 },
+    burbujaFila: { flexDirection: 'row', marginBottom: 8 },
+    izquierda: { justifyContent: 'flex-start' },
+    derecha: { justifyContent: 'flex-end' },
+    burbuja: { maxWidth: '80%', paddingHorizontal: 14, paddingVertical: 9 },
+    propia: {
+      backgroundColor: t.colors.bubbleOwn,
+      borderTopLeftRadius: 16,
+      borderTopRightRadius: 16,
+      borderBottomLeftRadius: 16,
+      borderBottomRightRadius: 4,
+    },
+    ajena: {
+      backgroundColor: t.colors.surface,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      borderTopLeftRadius: 16,
+      borderTopRightRadius: 16,
+      borderBottomRightRadius: 16,
+      borderBottomLeftRadius: 4,
+    },
+    pendiente: { opacity: 0.6 },
+    autor: { fontFamily: t.fonts.sansSemiBold, marginBottom: 2 },
+    hora: { fontSize: 12, marginTop: 2, alignSelf: 'flex-end', opacity: 0.85 },
+    compositor: {
+      flexDirection: 'row',
+      alignItems: 'flex-end',
+      gap: 8,
+      paddingHorizontal: 12,
+      paddingTop: 10,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: t.colors.border,
+      backgroundColor: t.colors.surface,
+    },
+    chatCampo: { flex: 1, marginBottom: 0 },
+    chatInput: {
+      minHeight: 44,
+      maxHeight: 120,
+      paddingTop: 10,
+      paddingBottom: 10,
+    },
+    voto: { marginBottom: 12, padding: 16 },
+    votoBotones: { flexDirection: 'row', gap: 8, marginTop: 12 },
+    votoBoton: {
+      flex: 1,
+      minHeight: 44,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 6,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: t.colors.borderStrong,
+      backgroundColor: t.colors.surface,
+    },
+    votoBotonSel: {
+      backgroundColor: t.colors.surfaceInverse,
+      borderColor: t.colors.surfaceInverse,
+    },
+    resultado: { marginTop: 12, gap: 6 },
+    barraVotos: {
+      flexDirection: 'row',
+      gap: 2,
+      height: 8,
+      borderRadius: 4,
+      overflow: 'hidden',
+    },
+    segmento: { height: 8 },
+    formGasto: { padding: 16, marginBottom: 16 },
+    gastos: {
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: t.colors.border,
+    },
+    gasto: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      paddingVertical: 12,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: t.colors.border,
+    },
+    balances: { marginTop: 16, padding: 16 },
+    miembro: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      paddingVertical: 12,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: t.colors.border,
+    },
+  })

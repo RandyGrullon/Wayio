@@ -1,54 +1,108 @@
 import { useState } from 'react'
-import { StyleSheet, Text, View } from 'react-native'
+import { StyleSheet, View } from 'react-native'
 import * as WebBrowser from 'expo-web-browser'
-import { Button } from '../ui/Button'
 import { config } from '../../config'
-import { colors } from '../../theme'
+import { BackendError, postJSON } from '../../lib/api/http'
+import { conTope } from '../ui/conTope'
+import { Button } from '../ui/Button'
+import { Txt } from '../ui/Txt'
+import { Ticket } from '../ui/iconos'
+import { formatCurrency } from '../ui/formato'
 
 interface Props {
   tripId: string
   style?: React.ComponentProps<typeof Button>['style']
 }
 
-/**
- * Reservations need the user's authenticated web session (the Stripe checkout
- * route reads the Supabase cookie), so — like the paywall — we open the web trip
- * page where the in-page "Reservar ahora" button runs the checkout. When no
- * `WEB_URL` is configured we surface a hint instead of a dead button.
- */
-export function ReserveButton({ tripId, style }: Props): React.ReactElement {
-  const [opening, setOpening] = useState(false)
+interface RespuestaReserva {
+  url?: string
+  deposito?: { importe: number; moneda: string }
+}
 
-  if (!config.webUrl) {
-    return (
-      <View style={styles.hintBox}>
-        <Text style={styles.hint}>
-          Reservas disponibles en la web (configura WEB_URL).
-        </Text>
-      </View>
-    )
+/** Mensaje amable desde un BackendError del checkout (nunca códigos técnicos). */
+function mensajeCheckout(e: unknown): string {
+  if (e instanceof BackendError) {
+    const d = e.data
+    const mensaje = d?.['mensaje']
+    if (typeof mensaje === 'string' && mensaje.trim()) return mensaje
+    if (d?.['code'] === 'reservations_disabled') {
+      return 'Las reservas con depósito aún no están disponibles.'
+    }
+    if (e.message.includes(' ')) return e.message
   }
+  return 'No pudimos abrir el pago ahora mismo. Inténtalo más tarde.'
+}
 
-  const openReserve = async (): Promise<void> => {
-    setOpening(true)
+/**
+ * «Reservar con depósito (15 %)» (§6.5): POST /api/stripe/checkout con el
+ * Bearer de la sesión → abre Stripe en el navegador seguro de la app. Solo se
+ * muestra si las reservas están activas en esta build
+ * (EXPO_PUBLIC_RESERVAS_ENABLED=true → `config.reservasActivas`).
+ */
+export function ReserveButton({
+  tripId,
+  style,
+}: Props): React.ReactElement | null {
+  const [abriendo, setAbriendo] = useState(false)
+  const [mensaje, setMensaje] = useState<string | null>(null)
+
+  if (!config.reservasActivas) return null
+
+  const reservar = async (): Promise<void> => {
+    setAbriendo(true)
+    setMensaje(null)
     try {
-      await WebBrowser.openBrowserAsync(`${config.webUrl}/trip/${tripId}`)
+      // Sin respuesta en 30 s se deja de esperar (mensaje amable abajo).
+      const r = await conTope(
+        postJSON<RespuestaReserva>('/api/stripe/checkout', {
+          mode: 'reservation',
+          tripId,
+        }),
+        30_000,
+        'sin respuesta'
+      )
+      if (!r.url) throw new Error('sin url')
+      if (r.deposito) {
+        setMensaje(
+          `Depósito: ${formatCurrency(r.deposito.importe, r.deposito.moneda, { decimales: true })}`
+        )
+      }
+      await WebBrowser.openAuthSessionAsync(r.url, 'wayio://reserva')
+    } catch (e) {
+      setMensaje(mensajeCheckout(e))
     } finally {
-      setOpening(false)
+      setAbriendo(false)
     }
   }
 
   return (
-    <Button
-      title="💳 Reservar ahora"
-      loading={opening}
-      onPress={() => void openReserve()}
-      {...(style ? { style } : {})}
-    />
+    <View style={styles.wrap}>
+      <Button
+        title="Reservar con depósito (15 %)"
+        variant="tinta"
+        size="lg"
+        fullWidth
+        icon={Ticket}
+        loading={abriendo}
+        loadingText="Abriendo el pago…"
+        onPress={() => void reservar()}
+        {...(style ? { style } : {})}
+      />
+      {mensaje ? (
+        <Txt
+          variant="caption"
+          color="fgMuted"
+          style={styles.mensaje}
+          accessibilityLiveRegion="polite"
+        >
+          {mensaje}
+        </Txt>
+      ) : null}
+    </View>
   )
 }
 
 const styles = StyleSheet.create({
-  hintBox: { paddingVertical: 8 },
-  hint: { fontSize: 12, color: colors.textFaint, textAlign: 'center' },
+  wrap: { marginTop: 16 },
+  mensaje: { marginTop: 8, textAlign: 'center' },
 })
