@@ -1,61 +1,86 @@
-import { createClient } from '@/lib/supabase/server'
+import 'server-only'
+import type { SupabaseClient } from '@supabase/supabase-js'
 import { trackServerEvent } from '@/lib/analytics/posthog'
+import type { ApplyReferralResult } from '@/types/database'
 
-function generateCode(userId: string): string {
-  const base = userId.replace(/-/g, '').slice(0, 8).toUpperCase()
-  const suffix = Math.random().toString(36).slice(2, 5).toUpperCase()
-  return `${base}${suffix}`
-}
+/**
+ * Referidos. Toda la lógica sensible vive en la BD (RPC SECURITY DEFINER):
+ *  - my_referral_code(): devuelve (o crea) el código del usuario actual. Es
+ *    el ÚNICO generador de códigos (antes había dos formatos distintos).
+ *  - apply_referral(code): canjea un código ajeno una sola vez, sin
+ *    autorreferidos y con incremento atómico de conversions.
+ * Las funciones reciben el cliente de la petición (cookies o Bearer móvil),
+ * así que actúan como ese usuario.
+ */
 
-export interface ReferralRow {
-  id: string
-  user_id: string
-  code: string
+export interface ReferralInfo {
+  code: string | null
   conversions: number
-  created_at: string
 }
 
-export async function getOrCreateReferralCode(userId: string): Promise<string> {
-  const supabase = await createClient()
+/** Analítica best-effort: sin key de PostHog o si falla, no hace nada. */
+function trackSeguro(
+  userId: string,
+  event: string,
+  properties: Record<string, unknown>
+): void {
+  if (!process.env['NEXT_PUBLIC_POSTHOG_KEY']) return
+  try {
+    trackServerEvent(userId, event, properties)
+  } catch {
+    // la analítica nunca debe romper la petición
+  }
+}
 
-  const { data: existing } = await supabase
+/** Código propio del usuario (lo crea si no tiene) y sus conversiones. */
+export async function getOrCreateReferralCode(
+  supabase: SupabaseClient,
+  userId: string
+): Promise<ReferralInfo> {
+  const { data: fila } = await supabase
     .from('referrals')
-    .select('code')
+    .select('code, conversions')
     .eq('user_id', userId)
-    .single()
+    .order('created_at', { ascending: true })
+    .limit(1)
+    .maybeSingle()
 
-  if (existing) return existing.code as string
+  const existente = fila as { code: string; conversions: number } | null
+  if (existente) {
+    return { code: existente.code, conversions: existente.conversions }
+  }
 
-  const code = generateCode(userId)
-  await supabase
-    .from('referrals')
-    .insert({ user_id: userId, code, conversions: 0 })
-  trackServerEvent(userId, 'referral_created', { code })
-  return code
+  const { data, error } = await supabase.rpc('my_referral_code')
+  const code = !error && typeof data === 'string' ? data : null
+  if (code) trackSeguro(userId, 'referral_created', { code })
+  return { code, conversions: 0 }
 }
 
+export type ApplyResult = ApplyReferralResult | 'unavailable'
+
+const RESULTADOS: readonly ApplyReferralResult[] = [
+  'ok',
+  'not_authenticated',
+  'invalid_code',
+  'self_referral',
+  'already_redeemed',
+  'not_eligible',
+]
+
+/** Canjea el código `code` para el usuario de la petición. */
 export async function applyReferral(
+  supabase: SupabaseClient,
   code: string,
-  newUserId: string
-): Promise<boolean> {
-  const supabase = await createClient()
-
-  const { data: referral } = await supabase
-    .from('referrals')
-    .select('id, user_id, conversions')
-    .eq('code', code.toUpperCase())
-    .single()
-
-  if (!referral) return false
-
-  await supabase
-    .from('referrals')
-    .update({ conversions: (referral.conversions as number) + 1 })
-    .eq('id', referral.id)
-
-  trackServerEvent(newUserId, 'referral_converted', {
-    code,
-    referrer: referral.user_id,
+  userId: string
+): Promise<ApplyResult> {
+  const { data, error } = await supabase.rpc('apply_referral', {
+    p_code: code.trim().toUpperCase(),
   })
-  return true
+  if (error) return 'unavailable'
+
+  const resultado = RESULTADOS.find((r) => r === data) ?? 'unavailable'
+  if (resultado === 'ok') {
+    trackSeguro(userId, 'referral_converted', { code: code.toUpperCase() })
+  }
+  return resultado
 }

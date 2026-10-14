@@ -1,10 +1,13 @@
+import 'server-only'
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { requireEnv } from '@/lib/utils/env'
 
 /**
  * Cliente Supabase con SERVICE ROLE key. IGNORA RLS por completo, así que
- * SOLO debe usarse en código de servidor protegido por requireAdmin().
- * Nunca lo importes en componentes cliente.
+ * SOLO debe usarse en código de servidor que ya validó quién llama (panel
+ * admin con requireAdmin(), webhook de Stripe con firma verificada, logs de
+ * IA, caché). `server-only` hace que el build falle si algún componente
+ * cliente lo importa por error.
  */
 export function createAdminClient(): SupabaseClient {
   return createClient(

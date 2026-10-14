@@ -1,50 +1,81 @@
-import { createClient } from '@/lib/supabase/server'
 import { z } from 'zod'
+import { exigirMiembro } from '../../_lib/grupo'
+import {
+  autenticar,
+  errorDb,
+  errorJson,
+  leerJson,
+  okJson,
+} from '@/app/api/trips/_lib/http'
+import { rateLimit, tooManyRequests } from '@/lib/security/rateLimit'
+import type { ActivityVoteRow } from '@/types/database'
+
+type Ctx = { params: Promise<{ id: string }> }
 
 const VoteSchema = z.object({
-  activity_id: z.string().min(1),
+  activity_id: z.string().trim().min(1).max(100),
   voto: z.boolean(),
 })
 
+/**
+ * GET /api/groups/[tripId]/votes[?activityId=...]
+ * Respuesta: { votes: ActivityVoteRow[] }
+ */
 export async function GET(
   request: Request,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: Ctx
 ): Promise<Response> {
   const { id } = await params
-  const supabase = await createClient()
+
+  const auth = await autenticar(request)
+  if (!auth.ok) return auth.response
+  const { supabase } = auth
+
+  const rechazo = await exigirMiembro(supabase, id)
+  if (rechazo) return rechazo
 
   const activityId = new URL(request.url).searchParams.get('activityId')
 
   let query = supabase.from('activity_votes').select('*').eq('trip_id', id)
-  if (activityId) query = query.eq('activity_id', activityId)
+  if (activityId) query = query.eq('activity_id', activityId.slice(0, 100))
 
   const { data, error } = await query
-  if (error) {
-    return Response.json({ error: error.message }, { status: 500 })
-  }
-
-  return Response.json({ votes: data })
+  if (error) return errorDb(error, 'groups.votes.list')
+  return okJson({ votes: (data ?? []) as ActivityVoteRow[] })
 }
 
+/**
+ * POST /api/groups/[tripId]/votes — vota (o cambia tu voto) una actividad.
+ * Body: { activity_id: string, voto: boolean }
+ * Respuesta: { vote: ActivityVoteRow }
+ */
 export async function POST(
   request: Request,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: Ctx
 ): Promise<Response> {
   const { id } = await params
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
 
-  if (!user) {
-    return Response.json({ error: 'No autenticado' }, { status: 401 })
-  }
+  const auth = await autenticar(request)
+  if (!auth.ok) return auth.response
+  const { supabase, user } = auth
 
-  const body: unknown = await request.json()
-  const parsed = VoteSchema.safeParse(body)
+  const limite = await rateLimit({
+    bucket: 'group-vote',
+    id: user.id,
+    limit: 60,
+    windowSec: 60,
+  })
+  if (!limite.ok) return tooManyRequests(limite)
+
+  const leido = await leerJson(request, 2_000)
+  if (!leido.ok) return leido.response
+  const parsed = VoteSchema.safeParse(leido.body)
   if (!parsed.success) {
-    return Response.json({ error: parsed.error.flatten() }, { status: 400 })
+    return errorJson(400, 'El voto no es válido.', 'invalid_vote')
   }
+
+  const rechazo = await exigirMiembro(supabase, id)
+  if (rechazo) return rechazo
 
   const { data, error } = await supabase
     .from('activity_votes')
@@ -60,9 +91,6 @@ export async function POST(
     .select()
     .single()
 
-  if (error) {
-    return Response.json({ error: error.message }, { status: 500 })
-  }
-
-  return Response.json({ vote: data })
+  if (error || !data) return errorDb(error, 'groups.votes.upsert')
+  return okJson({ vote: data as ActivityVoteRow })
 }

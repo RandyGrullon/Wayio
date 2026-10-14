@@ -13,11 +13,16 @@ import type { OfflineStorage, OfflineTripRecord } from './types'
  * module from a Server Component never throws.
  */
 
-const DB_NAME = 'wayio-offline'
+/** Nombre de la base IndexedDB (lo usa también cleanup.ts para borrarla). */
+export const OFFLINE_DB_NAME = 'wayio-offline'
+/** Prefijo de todas las claves de Wayio en localStorage/sessionStorage. */
+export const OFFLINE_KEY_PREFIX = 'wayio:'
+
+const DB_NAME = OFFLINE_DB_NAME
 const DB_VERSION = 1
 const STORE = 'trips'
-const ACTIVE_KEY = 'wayio:activeTripId'
-const LS_TRIP_PREFIX = 'wayio:trip:'
+const ACTIVE_KEY = `${OFFLINE_KEY_PREFIX}activeTripId`
+const LS_TRIP_PREFIX = `${OFFLINE_KEY_PREFIX}trip:`
 
 function isBrowser(): boolean {
   return typeof window !== 'undefined'
@@ -40,7 +45,13 @@ function openDB(): Promise<IDBDatabase> {
         db.createObjectStore(STORE, { keyPath: 'id' })
       }
     }
-    req.onsuccess = () => resolve(req.result)
+    req.onsuccess = () => {
+      const db = req.result
+      // Si otra pestaña borra la base (cierre de sesión), soltamos la conexión
+      // para no bloquear el borrado.
+      db.onversionchange = () => db.close()
+      resolve(db)
+    }
     req.onerror = () => reject(req.error ?? new Error('IndexedDB open failed'))
   })
 }
@@ -58,6 +69,9 @@ function tx<T>(
         request.onerror = () =>
           reject(request.error ?? new Error('IndexedDB request failed'))
         transaction.oncomplete = () => db.close()
+        // Una transacción abortada no dispara oncomplete: cerramos igual para
+        // no dejar conexiones abiertas que bloqueen clearOfflineData().
+        transaction.onabort = () => db.close()
       })
   )
 }

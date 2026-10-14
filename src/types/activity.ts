@@ -19,6 +19,11 @@ export interface Activity {
   direccion: string
   lat: number
   lng: number
+  /**
+   * true cuando lat/lng vienen de un geocoder real (no de la estimación de la
+   * IA). Las actividades sin esta marca se geocodifican en segundo plano.
+   */
+  coordsVerificadas?: boolean
   radioGeofencingMetros: number
   precioEstimado: number
   reservaRequerida: boolean

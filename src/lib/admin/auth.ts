@@ -1,3 +1,5 @@
+import 'server-only'
+import { cache } from 'react'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
@@ -7,6 +9,11 @@ export interface AdminContext {
   userId: string
   email: string
   profile: ProfileRow
+}
+
+/** ¿El perfil cuenta como admin? (rol admin y no baneado) */
+function esAdmin(profile: ProfileRow | null): profile is ProfileRow {
+  return Boolean(profile && profile.role === 'admin' && !profile.is_banned)
 }
 
 /** Devuelve el contexto admin o null (sin redirigir). Útil para checks suaves. */
@@ -25,17 +32,20 @@ export async function getAdminContext(): Promise<AdminContext | null> {
     .single()
 
   const profile = data as ProfileRow | null
-  if (!profile || profile.role !== 'admin') return null
+  if (!esAdmin(profile)) return null
 
   return { userId: user.id, email: profile.email ?? user.email ?? '', profile }
 }
 
 /**
  * Exige sesión admin. Redirige a /login si no hay sesión, o a / si el usuario
- * existe pero no es admin. Devuelve el contexto cuando pasa.
- * DEBE llamarse al inicio de cada página /admin y de cada server action admin.
+ * existe pero no es admin (o está baneado). Devuelve el contexto cuando pasa.
+ * Se llama en el layout de /admin, al inicio de CADA función de queries.ts
+ * (patrón DAL: el chequeo vive junto a los datos, no solo en el layout) y de
+ * cada server action admin. Con cache() la comprobación se hace una sola vez
+ * por petición aunque una página llame a varias consultas.
  */
-export async function requireAdmin(): Promise<AdminContext> {
+export const requireAdmin = cache(async (): Promise<AdminContext> => {
   const supabase = await createClient()
   const {
     data: { user },
@@ -50,7 +60,7 @@ export async function requireAdmin(): Promise<AdminContext> {
     .single()
 
   const profile = data as ProfileRow | null
-  if (!profile || profile.role !== 'admin') redirect('/')
+  if (!esAdmin(profile)) redirect('/')
 
   return { userId: user.id, email: profile.email ?? user.email ?? '', profile }
-}
+})

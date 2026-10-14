@@ -1,23 +1,43 @@
-import { createAdminClientSafe } from '@/lib/supabase/admin'
-
-export const dynamic = 'force-dynamic'
+import { createClient } from '@supabase/supabase-js'
+import { isSupabaseConfigured } from '@/lib/supabase/config'
 
 /**
  * Remote config para web y mobile. Devuelve feature flags, anuncios activos y
  * el estado de mantenimiento. Filtra por plataforma con ?platform=web|mobile.
  *
+ * Lee con la ANON key (las tres tablas tienen lectura pública por RLS): no
+ * necesita la service role. Sin Supabase configurado devuelve valores por
+ * defecto. Caché corta en CDN porque es igual para todos.
+ *
  * Ejemplo (mobile): GET /api/config?platform=mobile
  */
+
+const PLATAFORMAS = new Set(['all', 'web', 'mobile'])
+const CACHE = 'public, max-age=30, s-maxage=30, stale-while-revalidate=60'
+
+interface Mantenimiento {
+  enabled: boolean
+  message?: string
+}
+
+function porDefecto(): Response {
+  return Response.json(
+    { flags: {}, announcements: [], maintenance: { enabled: false } },
+    { headers: { 'Cache-Control': CACHE } }
+  )
+}
+
 export async function GET(request: Request): Promise<Response> {
-  const platform = new URL(request.url).searchParams.get('platform') ?? 'all'
-  const client = createAdminClientSafe()
-  if (!client) {
-    return Response.json({
-      flags: {},
-      announcements: [],
-      maintenance: { enabled: false },
-    })
-  }
+  const pedido = new URL(request.url).searchParams.get('platform') ?? 'all'
+  const platform = PLATAFORMAS.has(pedido) ? pedido : 'all'
+
+  if (!isSupabaseConfigured()) return porDefecto()
+
+  const client = createClient(
+    process.env['NEXT_PUBLIC_SUPABASE_URL'] as string,
+    process.env['NEXT_PUBLIC_SUPABASE_ANON_KEY'] as string,
+    { auth: { persistSession: false, autoRefreshToken: false } }
+  )
 
   const nowIso = new Date().toISOString()
   const [flagsRes, annRes, settingsRes] = await Promise.all([
@@ -25,7 +45,8 @@ export async function GET(request: Request): Promise<Response> {
     client
       .from('announcements')
       .select('id, title, body, level, platform, starts_at, ends_at')
-      .eq('active', true),
+      .eq('active', true)
+      .limit(20),
     client
       .from('app_settings')
       .select('value')
@@ -62,11 +83,18 @@ export async function GET(request: Request): Promise<Response> {
     .filter((a) => a.starts_at <= nowIso && (!a.ends_at || a.ends_at >= nowIso))
     .map(({ id, title, body, level }) => ({ id, title, body, level }))
 
-  const maintenance = (
-    settingsRes.data as {
-      value: { enabled?: boolean; message?: string }
-    } | null
-  )?.value ?? { enabled: false }
+  const valor = (settingsRes.data as { value: unknown } | null)?.value
+  const crudo =
+    typeof valor === 'object' && valor !== null
+      ? (valor as Record<string, unknown>)
+      : {}
+  const maintenance: Mantenimiento = { enabled: crudo['enabled'] === true }
+  if (typeof crudo['message'] === 'string') {
+    maintenance.message = crudo['message'].slice(0, 500)
+  }
 
-  return Response.json({ flags, announcements, maintenance })
+  return Response.json(
+    { flags, announcements, maintenance },
+    { headers: { 'Cache-Control': CACHE } }
+  )
 }

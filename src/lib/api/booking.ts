@@ -1,103 +1,43 @@
-import type { SearchResponse, SearchResult } from './types'
+import { buildBookingLink } from '@/constants/affiliateLinks'
+import type { SearchResponse } from './types'
 
 /**
- * Defensively normalize a Booking.com response into SearchResult[]. The exact
- * shape is uncertain, so every field is optional-chained and we tolerate a few
- * plausible container keys. Unexpected shapes yield an empty list, never a throw.
+ * Hoteles: sin proveedor de precios en tiempo real.
+ *
+ * La API antigua de Booking (distribution-xml 2.9) está retirada y la actual
+ * (Demand API) solo se da a socios con contrato, así que no se llama a nada:
+ * se devuelve el enlace de búsqueda de afiliado para que el usuario vea
+ * disponibilidad y precios en Booking.com.
  */
-function normalizeHotels(raw: unknown): SearchResult[] {
-  const root = raw as Record<string, unknown> | null | undefined
-  const candidate =
-    (Array.isArray(raw) && raw) ||
-    (Array.isArray(root?.['result']) && root?.['result']) ||
-    (Array.isArray(root?.['hotels']) && root?.['hotels']) ||
-    (Array.isArray(root?.['data']) && root?.['data']) ||
-    []
 
-  const list = candidate as unknown[]
-  const results: SearchResult[] = []
-  for (let i = 0; i < list.length; i++) {
-    const item = list[i] as Record<string, unknown> | null | undefined
-    if (!item || typeof item !== 'object') {
-      continue
-    }
-
-    const rawId = item['hotel_id'] ?? item['id']
-    const id =
-      typeof rawId === 'string'
-        ? rawId
-        : typeof rawId === 'number'
-          ? String(rawId)
-          : `booking-${i}`
-
-    const nameRaw = item['hotel_name'] ?? item['name'] ?? item['title']
-    const title = typeof nameRaw === 'string' ? nameRaw : 'Hotel'
-
-    const priceRaw =
-      item['min_total_price'] ?? item['price'] ?? item['total_price']
-    const price =
-      typeof priceRaw === 'number'
-        ? priceRaw
-        : typeof priceRaw === 'string'
-          ? Number(priceRaw)
-          : undefined
-    const currency =
-      typeof item['currency'] === 'string'
-        ? (item['currency'] as string)
-        : typeof item['currencycode'] === 'string'
-          ? (item['currencycode'] as string)
-          : undefined
-    const urlRaw = item['url'] ?? item['hotel_url']
-    const url = typeof urlRaw === 'string' ? urlRaw : undefined
-    const cityRaw = item['city'] ?? item['address']
-    const subtitle = typeof cityRaw === 'string' ? cityRaw : undefined
-
-    results.push({
-      id,
-      title,
-      provider: 'booking',
-      ...(subtitle ? { subtitle } : {}),
-      ...(price !== undefined && Number.isFinite(price) ? { price } : {}),
-      ...(currency ? { currency } : {}),
-      ...(url ? { url } : {}),
-    })
-  }
-  return results
+export interface HotelSearchParams {
+  destino: string
+  checkIn: string
+  checkOut: string
+  huespedes: number
 }
 
-export async function searchHotels(
-  destination: string,
-  checkIn: string,
-  checkOut: string,
-  guests: number
-): Promise<SearchResponse> {
-  const apiKey = process.env['BOOKING_API_KEY']
+export const MENSAJE_HOTELES_SIN_PROVEEDOR =
+  'Los precios de hoteles se consultan directamente en Booking.com, con tus fechas ya puestas.'
 
-  if (!apiKey) {
-    return { configured: false, results: [] }
-  }
+/** 'YYYY-MM-DD' del día siguiente (UTC). */
+function diaSiguiente(fecha: string): string {
+  const t = Date.parse(`${fecha}T00:00:00Z`)
+  if (!Number.isFinite(t)) return fecha
+  return new Date(t + 86_400_000).toISOString().slice(0, 10)
+}
 
-  try {
-    const params = new URLSearchParams({
-      destination,
-      checkin_date: checkIn,
-      checkout_date: checkOut,
-      adults_number: String(guests),
-    })
-
-    const res = await fetch(
-      `https://distribution-xml.booking.com/2.9/json/hotels?${params}`,
-      { headers: { Authorization: `Bearer ${apiKey}` } }
-    )
-
-    if (!res.ok) {
-      throw new Error(`Booking.com search failed: ${res.status}`)
-    }
-
-    const raw = await res.json()
-    return { configured: true, results: normalizeHotels(raw) }
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'Unknown error'
-    return { configured: true, results: [], error: message }
+export function searchHotels(p: HotelSearchParams): SearchResponse {
+  // Viaje de un solo día (salida = regreso): se busca una noche.
+  const checkOut = p.checkOut > p.checkIn ? p.checkOut : diaSiguiente(p.checkIn)
+  return {
+    configured: false,
+    results: [],
+    reason: 'sin-proveedor',
+    mensaje: MENSAJE_HOTELES_SIN_PROVEEDOR,
+    enlace: buildBookingLink(p.destino, p.checkIn, {
+      checkOut,
+      adultos: p.huespedes,
+    }),
   }
 }

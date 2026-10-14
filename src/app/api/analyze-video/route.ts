@@ -1,22 +1,50 @@
-import { NextResponse } from 'next/server'
-import {
-  analyzeVideoFromUrl,
-  analyzeVideoFromBase64,
-} from '@/lib/ai/analyzeVideo'
-import type { VideoAnalysisResult } from '@/lib/ai/analyzeVideo'
-import { aiConfigured } from '@/lib/ai/config'
+import * as Sentry from '@sentry/nextjs'
 import { z } from 'zod'
+import {
+  analyzeImage,
+  analyzeVideoFromUrl,
+  normalizarUrlVideo,
+  prepararImagen,
+  VideoAnalysisError,
+  videoAnalysisEnabled,
+  type VideoAnalysisResult,
+} from '@/lib/ai/analyzeVideo'
+import { describeAiError } from '@/lib/ai/client'
+import { aiConfigured } from '@/lib/ai/config'
+import {
+  estadoPorErrorIA,
+  exigirSesion,
+  jsonError,
+  leerJson,
+  limitar,
+} from '@/lib/ai/routeKit'
 
-const urlSchema = z.object({
-  videoUrl: z.string().url(),
+/**
+ * POST /api/analyze-video — detecta lugares en un video de viaje o en una foto.
+ *
+ * Body (una de dos):
+ *   { videoUrl: string }                       (YouTube, TikTok, Instagram, Vimeo, Facebook)
+ *   { imageBase64: string, mediaType?: 'image/jpeg'|'image/png'|'image/webp' }  (≤ 5 MB)
+ * 200: VideoAnalysisResult { lugares, destinoSugerido, resumen, demo?, parcial? }
+ *
+ * Exige sesión y tiene rate limit. El modo video depende del flag
+ * VIDEO_ANALYSIS_ENABLED (desactivado por defecto en producción).
+ */
+
+export const maxDuration = 300
+
+/** Presupuesto de tiempo interno (por debajo de maxDuration). */
+const PRESUPUESTO_MS = 280_000
+/** 5 MB de foto en base64 + margen del JSON. */
+const MAX_BODY_BYTES = 5_400_000
+
+const UrlBody = z.object({ videoUrl: z.string().trim().min(4).max(2048) })
+const ImagenBody = z.object({
+  imageBase64: z.string().min(16),
+  mediaType: z.enum(['image/jpeg', 'image/png', 'image/webp']).optional(),
 })
 
-const base64Schema = z.object({
-  imageBase64: z.string().min(1),
-  mediaType: z.enum(['image/jpeg', 'image/png', 'image/webp']),
-})
-
-const DEMO_VIDEO_RESULT: VideoAnalysisResult = {
+const DEMO_RESULT: VideoAnalysisResult = {
   lugares: [
     {
       lugar: 'Tokio',
@@ -27,38 +55,106 @@ const DEMO_VIDEO_RESULT: VideoAnalysisResult = {
       confianza: 0.9,
     },
   ],
-  destinoSugerido: 'Tokio',
+  destinoSugerido: 'Tokio, Japón',
   resumen:
-    'Demo: sin API key de IA mostramos un resultado de ejemplo (Tokio). Configura la IA para analizar videos reales.',
+    'Este es un resultado de ejemplo: el análisis con IA no está disponible ahora mismo.',
+  demo: true,
 }
 
-export const maxDuration = 120
-
-export async function POST(request: Request): Promise<NextResponse> {
-  const body: unknown = await request.json()
-
-  // Modo demo: sin IA devolvemos un análisis de ejemplo
-  if (!aiConfigured()) {
-    return NextResponse.json(DEMO_VIDEO_RESULT)
+function respuestaDeError(err: unknown): Response {
+  if (err instanceof VideoAnalysisError) {
+    if (err.code === 'herramientas' || err.status >= 500) {
+      Sentry.captureException(err, { tags: { area: 'analyze-video' } })
+    }
+    return jsonError(err.status, err.mensaje, { code: err.code })
   }
-
-  const urlParsed = urlSchema.safeParse(body)
-  if (urlParsed.success) {
-    const result = await analyzeVideoFromUrl(urlParsed.data.videoUrl)
-    return NextResponse.json(result)
-  }
-
-  const b64Parsed = base64Schema.safeParse(body)
-  if (b64Parsed.success) {
-    const result = await analyzeVideoFromBase64(
-      b64Parsed.data.imageBase64,
-      b64Parsed.data.mediaType
-    )
-    return NextResponse.json(result)
-  }
-
-  return NextResponse.json(
-    { error: 'Envía videoUrl o imageBase64+mediaType' },
-    { status: 400 }
+  const { code } = describeAiError(err)
+  Sentry.captureException(err, { tags: { area: 'analyze-video' } })
+  return jsonError(
+    estadoPorErrorIA(code),
+    'No pudimos analizar el video en este momento. Inténtalo de nuevo en unos minutos.',
+    { code }
   )
+}
+
+export async function POST(request: Request): Promise<Response> {
+  const inicio = Date.now()
+  const lectura = await leerJson(request, MAX_BODY_BYTES)
+  if (!lectura.ok) return lectura.response
+
+  const comoUrl = UrlBody.safeParse(lectura.data)
+  const comoImagen = comoUrl.success ? null : ImagenBody.safeParse(lectura.data)
+
+  // ── Modo video (URL) ────────────────────────────────────────────────────
+  if (comoUrl.success) {
+    if (!videoAnalysisEnabled()) {
+      return jsonError(
+        503,
+        'El análisis de videos no está disponible por ahora. Puedes escribir el destino o subir una foto del lugar.',
+        { code: 'video_desactivado' }
+      )
+    }
+    let url: string
+    try {
+      url = normalizarUrlVideo(comoUrl.data.videoUrl)
+    } catch (err) {
+      return respuestaDeError(err)
+    }
+
+    const sesion = await exigirSesion(request)
+    if (!sesion.ok) return sesion.response
+    const limite = await limitar(sesion.llamante, 'analyze-video', {
+      conSesion: 5,
+      anonimo: 5,
+    })
+    if (limite) return limite
+
+    if (!aiConfigured()) return Response.json(DEMO_RESULT)
+
+    try {
+      const resultado = await analyzeVideoFromUrl(url, {
+        userId: sesion.llamante.user?.id ?? null,
+        signal: request.signal,
+        deadline: inicio + PRESUPUESTO_MS,
+      })
+      return Response.json(resultado)
+    } catch (err) {
+      return respuestaDeError(err)
+    }
+  }
+
+  // ── Modo foto (base64) ──────────────────────────────────────────────────
+  if (!comoImagen?.success) {
+    return jsonError(400, 'Envía el enlace de un video o una foto del lugar.', {
+      code: 'bad_request',
+    })
+  }
+
+  let imagen: ReturnType<typeof prepararImagen>
+  try {
+    imagen = prepararImagen(comoImagen.data.imageBase64)
+  } catch (err) {
+    return respuestaDeError(err)
+  }
+
+  const sesion = await exigirSesion(request)
+  if (!sesion.ok) return sesion.response
+  const limite = await limitar(sesion.llamante, 'analyze-image', {
+    conSesion: 15,
+    anonimo: 5,
+  })
+  if (limite) return limite
+
+  if (!aiConfigured()) return Response.json(DEMO_RESULT)
+
+  try {
+    const resultado = await analyzeImage(imagen, {
+      userId: sesion.llamante.user?.id ?? null,
+      signal: request.signal,
+      deadline: inicio + PRESUPUESTO_MS,
+    })
+    return Response.json(resultado)
+  } catch (err) {
+    return respuestaDeError(err)
+  }
 }

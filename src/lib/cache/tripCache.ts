@@ -1,31 +1,42 @@
+import 'server-only'
 import { createHash } from 'crypto'
-import { createClient } from '@supabase/supabase-js'
+import { createAdminClientSafe } from '@/lib/supabase/admin'
+import { aiModel, PROMPT_VERSION } from '@/lib/ai/config'
 import type { TripForm } from '@/lib/validations/tripForm'
 
 const CACHE_TTL_HOURS = 6
 
+/**
+ * Clave de caché: TODO lo que cambia el resultado (incluidos presupuesto,
+ * moneda, descripción libre y la versión del prompt/modelo). Antes ignoraba
+ * presupuesto y moneda y servía planes de otro usuario con otra moneda.
+ */
 function buildCacheKey(form: TripForm): string {
-  // paquete excluded: we cache all 3 packages together under one key
-  const str = [
-    form.destino,
-    form.origen,
-    form.fechaInicio,
-    form.fechaFin,
-    String(form.personas),
-    form.tipo,
-  ].join(':')
-  return createHash('sha256').update(str).digest('hex').slice(0, 32)
-}
-
-function getClient() {
-  const url = process.env['NEXT_PUBLIC_SUPABASE_URL']
-  const key = process.env['SUPABASE_SERVICE_ROLE_KEY']
-  if (!url || !key) return null
-  return createClient(url, key)
+  const norm = (s: string | undefined): string => (s ?? '').trim().toLowerCase()
+  const material = JSON.stringify({
+    v: PROMPT_VERSION,
+    modelo: aiModel('itinerario'),
+    destino: form.destinoSorpresa ? '<sorpresa>' : norm(form.destino),
+    origen: norm(form.origen),
+    fechaInicio: form.fechaInicio,
+    fechaFin: form.fechaFin,
+    personas: form.personas,
+    presupuesto: Math.round(form.presupuesto),
+    moneda: form.moneda,
+    tipo: form.tipo,
+    paquete: form.paquete,
+    zona: norm(form.zona),
+    preferencias: [...(form.preferencias ?? [])].map(norm).sort(),
+    lugares: [...(form.lugaresDeseados ?? [])].map(norm).sort(),
+    descripcion: norm(form.descripcion),
+  })
+  return createHash('sha256').update(material).digest('hex').slice(0, 40)
 }
 
 export async function getCachedTrip(form: TripForm): Promise<string | null> {
-  const client = getClient()
+  // Los destinos sorpresa no se cachean: cada vez debe ser una sorpresa.
+  if (form.destinoSorpresa) return null
+  const client = createAdminClientSafe()
   if (!client) return null
 
   try {
@@ -52,7 +63,8 @@ export async function saveCachedTrip(
   form: TripForm,
   json: string
 ): Promise<void> {
-  const client = getClient()
+  if (form.destinoSorpresa) return
+  const client = createAdminClientSafe()
   if (!client) return
 
   try {
@@ -63,6 +75,6 @@ export async function saveCachedTrip(
       created_at: new Date().toISOString(),
     })
   } catch {
-    // Cache write failure is non-fatal
+    // Un fallo de caché no debe romper la generación.
   }
 }

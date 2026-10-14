@@ -5,6 +5,7 @@ export interface AiUsageEntry {
   provider: string
   model: string
   endpoint?: string
+  userId?: string | null
   promptTokens: number
   completionTokens: number
   latencyMs: number
@@ -13,8 +14,8 @@ export interface AiUsageEntry {
 }
 
 /**
- * Registra el uso de IA en ai_logs (best-effort, fire-and-forget). Si falta la
- * service role key simplemente no hace nada — nunca rompe la generación.
+ * Registra el uso de IA en ai_logs (best-effort). Si falta la service role key
+ * simplemente no hace nada — nunca rompe la generación.
  */
 export async function logAiUsage(e: AiUsageEntry): Promise<void> {
   const client = createAdminClientSafe()
@@ -24,6 +25,7 @@ export async function logAiUsage(e: AiUsageEntry): Promise<void> {
       provider: e.provider,
       model: e.model,
       endpoint: e.endpoint ?? null,
+      user_id: e.userId ?? null,
       prompt_tokens: e.promptTokens,
       completion_tokens: e.completionTokens,
       total_tokens: e.promptTokens + e.completionTokens,

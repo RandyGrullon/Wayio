@@ -1,3 +1,6 @@
+/**
+ * Destinos de las landings SEO /viaje/[slug] (generadas en build).
+ */
 export interface Destino {
   slug: string
   nombre: string
@@ -7,10 +10,19 @@ export interface Destino {
   keywords: string[]
   diasRecomendados: number
   mejorEpoca: string
+  /** Imagen para redes (Open Graph / Twitter), relativa a metadataBase. */
   imagen: string
 }
 
-export const DESTINOS: Destino[] = [
+/**
+ * Imagen social genérica de la app. La sirve la convención de Next
+ * `src/app/opengraph-image.*` en /opengraph-image (no hay fotos por destino).
+ */
+export const OG_IMAGEN_GENERICA = '/opengraph-image'
+
+type DatosDestino = Omit<Destino, 'imagen'>
+
+const DATOS: DatosDestino[] = [
   {
     slug: 'japon',
     nombre: 'Japón',
@@ -26,7 +38,6 @@ export const DESTINOS: Destino[] = [
     ],
     diasRecomendados: 14,
     mejorEpoca: 'Marzo–Mayo (cerezos) o Septiembre–Noviembre',
-    imagen: '/destinos/japon.jpg',
   },
   {
     slug: 'espana',
@@ -43,7 +54,6 @@ export const DESTINOS: Destino[] = [
     ],
     diasRecomendados: 10,
     mejorEpoca: 'Abril–Junio o Septiembre–Octubre',
-    imagen: '/destinos/espana.jpg',
   },
   {
     slug: 'italia',
@@ -60,7 +70,6 @@ export const DESTINOS: Destino[] = [
     ],
     diasRecomendados: 10,
     mejorEpoca: 'Abril–Junio o Septiembre–Octubre',
-    imagen: '/destinos/italia.jpg',
   },
   {
     slug: 'estados-unidos',
@@ -77,7 +86,6 @@ export const DESTINOS: Destino[] = [
     ],
     diasRecomendados: 14,
     mejorEpoca: 'Primavera u Otoño según la región',
-    imagen: '/destinos/usa.jpg',
   },
   {
     slug: 'francia',
@@ -94,7 +102,6 @@ export const DESTINOS: Destino[] = [
     ],
     diasRecomendados: 8,
     mejorEpoca: 'Abril–Junio o Septiembre',
-    imagen: '/destinos/francia.jpg',
   },
   {
     slug: 'mexico',
@@ -111,7 +118,6 @@ export const DESTINOS: Destino[] = [
     ],
     diasRecomendados: 10,
     mejorEpoca: 'Diciembre–Abril (temporada seca)',
-    imagen: '/destinos/mexico.jpg',
   },
   {
     slug: 'colombia',
@@ -128,7 +134,6 @@ export const DESTINOS: Destino[] = [
     ],
     diasRecomendados: 10,
     mejorEpoca: 'Diciembre–Marzo o Junio–Agosto',
-    imagen: '/destinos/colombia.jpg',
   },
   {
     slug: 'argentina',
@@ -145,7 +150,6 @@ export const DESTINOS: Destino[] = [
     ],
     diasRecomendados: 14,
     mejorEpoca: 'Noviembre–Marzo (verano austral)',
-    imagen: '/destinos/argentina.jpg',
   },
   {
     slug: 'republica-dominicana',
@@ -162,7 +166,6 @@ export const DESTINOS: Destino[] = [
     ],
     diasRecomendados: 7,
     mejorEpoca: 'Diciembre–Abril',
-    imagen: '/destinos/rd.jpg',
   },
   {
     slug: 'tailandia',
@@ -179,7 +182,6 @@ export const DESTINOS: Destino[] = [
     ],
     diasRecomendados: 12,
     mejorEpoca: 'Noviembre–Febrero',
-    imagen: '/destinos/tailandia.jpg',
   },
   {
     slug: 'peru',
@@ -191,7 +193,6 @@ export const DESTINOS: Destino[] = [
     keywords: ['viaje a peru', 'machu picchu', 'cusco lima'],
     diasRecomendados: 10,
     mejorEpoca: 'Mayo–Octubre',
-    imagen: '/destinos/peru.jpg',
   },
   {
     slug: 'grecia',
@@ -203,7 +204,6 @@ export const DESTINOS: Destino[] = [
     keywords: ['viaje a grecia', 'santorini atenas', 'islas griegas'],
     diasRecomendados: 10,
     mejorEpoca: 'Mayo–Octubre',
-    imagen: '/destinos/grecia.jpg',
   },
   {
     slug: 'portugal',
@@ -215,7 +215,6 @@ export const DESTINOS: Destino[] = [
     keywords: ['viaje a portugal', 'lisboa porto algarve'],
     diasRecomendados: 7,
     mejorEpoca: 'Abril–Octubre',
-    imagen: '/destinos/portugal.jpg',
   },
   {
     slug: 'marruecos',
@@ -227,19 +226,6 @@ export const DESTINOS: Destino[] = [
     keywords: ['viaje a marruecos', 'marrakech fez sahara'],
     diasRecomendados: 8,
     mejorEpoca: 'Marzo–Mayo u Octubre–Noviembre',
-    imagen: '/destinos/marruecos.jpg',
-  },
-  {
-    slug: 'tailandia',
-    nombre: 'Tailandia',
-    nombreCorto: 'Tailandia',
-    pais: 'Tailandia',
-    descripcion:
-      'Templos dorados, islas paradisíacas y street food legendario.',
-    keywords: ['viaje a tailandia', 'bangkok phuket'],
-    diasRecomendados: 12,
-    mejorEpoca: 'Noviembre–Febrero',
-    imagen: '/destinos/tailandia.jpg',
   },
   {
     slug: 'bali',
@@ -251,7 +237,6 @@ export const DESTINOS: Destino[] = [
     keywords: ['viaje a bali', 'bali indonesia', 'ubud seminyak'],
     diasRecomendados: 10,
     mejorEpoca: 'Mayo–Septiembre',
-    imagen: '/destinos/bali.jpg',
   },
   {
     slug: 'turquia',
@@ -263,7 +248,6 @@ export const DESTINOS: Destino[] = [
     keywords: ['viaje a turquia', 'estambul capadocia'],
     diasRecomendados: 10,
     mejorEpoca: 'Abril–Mayo o Septiembre–Octubre',
-    imagen: '/destinos/turquia.jpg',
   },
   {
     slug: 'canada',
@@ -275,7 +259,6 @@ export const DESTINOS: Destino[] = [
     keywords: ['viaje a canada', 'toronto vancouver banff'],
     diasRecomendados: 12,
     mejorEpoca: 'Junio–Septiembre',
-    imagen: '/destinos/canada.jpg',
   },
   {
     slug: 'australia',
@@ -287,7 +270,6 @@ export const DESTINOS: Destino[] = [
     keywords: ['viaje a australia', 'sydney melbourne cairns'],
     diasRecomendados: 14,
     mejorEpoca: 'Septiembre–Noviembre',
-    imagen: '/destinos/australia.jpg',
   },
   {
     slug: 'cuba',
@@ -299,7 +281,6 @@ export const DESTINOS: Destino[] = [
     keywords: ['viaje a cuba', 'la habana varadero trinidad'],
     diasRecomendados: 8,
     mejorEpoca: 'Noviembre–Abril',
-    imagen: '/destinos/cuba.jpg',
   },
   {
     slug: 'brasil',
@@ -311,7 +292,6 @@ export const DESTINOS: Destino[] = [
     keywords: ['viaje a brasil', 'rio de janeiro amazon'],
     diasRecomendados: 12,
     mejorEpoca: 'Abril–Junio o Agosto–Octubre',
-    imagen: '/destinos/brasil.jpg',
   },
   {
     slug: 'costa-rica',
@@ -323,7 +303,6 @@ export const DESTINOS: Destino[] = [
     keywords: ['viaje a costa rica', 'san jose arenal manuel antonio'],
     diasRecomendados: 8,
     mejorEpoca: 'Diciembre–Abril',
-    imagen: '/destinos/costarica.jpg',
   },
   {
     slug: 'nueva-zelanda',
@@ -335,7 +314,6 @@ export const DESTINOS: Destino[] = [
     keywords: ['viaje a nueva zelanda', 'auckland queenstown'],
     diasRecomendados: 14,
     mejorEpoca: 'Noviembre–Marzo',
-    imagen: '/destinos/nz.jpg',
   },
   {
     slug: 'india',
@@ -347,7 +325,6 @@ export const DESTINOS: Destino[] = [
     keywords: ['viaje a india', 'delhi agra rajasthan'],
     diasRecomendados: 14,
     mejorEpoca: 'Octubre–Marzo',
-    imagen: '/destinos/india.jpg',
   },
   {
     slug: 'vietnam',
@@ -359,7 +336,6 @@ export const DESTINOS: Destino[] = [
     keywords: ['viaje a vietnam', 'hanoi ho chi minh halong'],
     diasRecomendados: 12,
     mejorEpoca: 'Noviembre–Abril',
-    imagen: '/destinos/vietnam.jpg',
   },
   {
     slug: 'egipto',
@@ -371,7 +347,6 @@ export const DESTINOS: Destino[] = [
     keywords: ['viaje a egipto', 'el cairo piramides luxor'],
     diasRecomendados: 10,
     mejorEpoca: 'Octubre–Abril',
-    imagen: '/destinos/egipto.jpg',
   },
   {
     slug: 'islandia',
@@ -383,7 +358,6 @@ export const DESTINOS: Destino[] = [
     keywords: ['viaje a islandia', 'reykjavik aurora boreal'],
     diasRecomendados: 7,
     mejorEpoca: 'Junio–Agosto o Diciembre–Febrero',
-    imagen: '/destinos/islandia.jpg',
   },
   {
     slug: 'noruega',
@@ -395,7 +369,6 @@ export const DESTINOS: Destino[] = [
     keywords: ['viaje a noruega', 'oslo bergen fiordos'],
     diasRecomendados: 8,
     mejorEpoca: 'Junio–Agosto o Diciembre–Febrero',
-    imagen: '/destinos/noruega.jpg',
   },
   {
     slug: 'croacia',
@@ -407,7 +380,6 @@ export const DESTINOS: Destino[] = [
     keywords: ['viaje a croacia', 'dubrovnik split plitvice'],
     diasRecomendados: 8,
     mejorEpoca: 'Mayo–Septiembre',
-    imagen: '/destinos/croacia.jpg',
   },
   {
     slug: 'indonesia',
@@ -419,7 +391,6 @@ export const DESTINOS: Destino[] = [
     keywords: ['viaje a indonesia', 'jakarta java lombok'],
     diasRecomendados: 14,
     mejorEpoca: 'Mayo–Septiembre',
-    imagen: '/destinos/indonesia.jpg',
   },
   {
     slug: 'emiratos',
@@ -431,7 +402,6 @@ export const DESTINOS: Destino[] = [
     keywords: ['viaje a dubai', 'emiratos arabes abu dhabi'],
     diasRecomendados: 5,
     mejorEpoca: 'Noviembre–Marzo',
-    imagen: '/destinos/dubai.jpg',
   },
   {
     slug: 'singapur',
@@ -443,7 +413,6 @@ export const DESTINOS: Destino[] = [
     keywords: ['viaje a singapur', 'singapore marina bay'],
     diasRecomendados: 5,
     mejorEpoca: 'Todo el año',
-    imagen: '/destinos/singapur.jpg',
   },
   {
     slug: 'kenia',
@@ -455,7 +424,6 @@ export const DESTINOS: Destino[] = [
     keywords: ['safari kenia', 'masai mara nairobi'],
     diasRecomendados: 8,
     mejorEpoca: 'Julio–Octubre',
-    imagen: '/destinos/kenia.jpg',
   },
   {
     slug: 'sudafrica',
@@ -467,7 +435,6 @@ export const DESTINOS: Destino[] = [
     keywords: ['viaje a sudafrica', 'ciudad del cabo safari'],
     diasRecomendados: 12,
     mejorEpoca: 'Mayo–Septiembre',
-    imagen: '/destinos/sudafrica.jpg',
   },
   {
     slug: 'nepal',
@@ -479,7 +446,6 @@ export const DESTINOS: Destino[] = [
     keywords: ['viaje a nepal', 'katmandu everest trekking'],
     diasRecomendados: 10,
     mejorEpoca: 'Octubre–Noviembre o Marzo–Mayo',
-    imagen: '/destinos/nepal.jpg',
   },
   {
     slug: 'cambodia',
@@ -491,7 +457,6 @@ export const DESTINOS: Destino[] = [
     keywords: ['viaje a camboya', 'angkor wat siem reap'],
     diasRecomendados: 6,
     mejorEpoca: 'Noviembre–Febrero',
-    imagen: '/destinos/camboya.jpg',
   },
   {
     slug: 'chile',
@@ -503,7 +468,6 @@ export const DESTINOS: Destino[] = [
     keywords: ['viaje a chile', 'santiago atacama patagonia'],
     diasRecomendados: 12,
     mejorEpoca: 'Noviembre–Marzo',
-    imagen: '/destinos/chile.jpg',
   },
   {
     slug: 'uruguay',
@@ -515,7 +479,6 @@ export const DESTINOS: Destino[] = [
     keywords: ['viaje a uruguay', 'montevideo punta del este'],
     diasRecomendados: 6,
     mejorEpoca: 'Diciembre–Marzo',
-    imagen: '/destinos/uruguay.jpg',
   },
   {
     slug: 'panama',
@@ -527,19 +490,6 @@ export const DESTINOS: Destino[] = [
     keywords: ['viaje a panama', 'ciudad de panama canal bocas del toro'],
     diasRecomendados: 6,
     mejorEpoca: 'Diciembre–Abril',
-    imagen: '/destinos/panama.jpg',
-  },
-  {
-    slug: 'colombia',
-    nombre: 'Colombia',
-    nombreCorto: 'Colombia',
-    pais: 'Colombia',
-    descripcion:
-      'Cartagena colonial, Medellín de la transformación y la Sierra Nevada.',
-    keywords: ['viaje a colombia', 'cartagena medellin bogota'],
-    diasRecomendados: 10,
-    mejorEpoca: 'Diciembre–Marzo',
-    imagen: '/destinos/colombia.jpg',
   },
   {
     slug: 'filipinas',
@@ -551,7 +501,6 @@ export const DESTINOS: Destino[] = [
     keywords: ['viaje a filipinas', 'palawan boracay manila'],
     diasRecomendados: 12,
     mejorEpoca: 'Noviembre–Mayo',
-    imagen: '/destinos/filipinas.jpg',
   },
   {
     slug: 'suiza',
@@ -563,7 +512,6 @@ export const DESTINOS: Destino[] = [
     keywords: ['viaje a suiza', 'zurich ginebra alps'],
     diasRecomendados: 7,
     mejorEpoca: 'Junio–Septiembre o Diciembre–Marzo',
-    imagen: '/destinos/suiza.jpg',
   },
   {
     slug: 'austria',
@@ -575,7 +523,6 @@ export const DESTINOS: Destino[] = [
     keywords: ['viaje a austria', 'viena salzburgo alpes'],
     diasRecomendados: 7,
     mejorEpoca: 'Abril–Octubre o Diciembre',
-    imagen: '/destinos/austria.jpg',
   },
   {
     slug: 'hungria',
@@ -587,7 +534,6 @@ export const DESTINOS: Destino[] = [
     keywords: ['viaje a hungria', 'budapest danubio', 'balnearios budapest'],
     diasRecomendados: 5,
     mejorEpoca: 'Abril–Octubre',
-    imagen: '/destinos/hungria.jpg',
   },
   {
     slug: 'republica-checa',
@@ -599,7 +545,6 @@ export const DESTINOS: Destino[] = [
     keywords: ['viaje a republica checa', 'praga viena'],
     diasRecomendados: 5,
     mejorEpoca: 'Abril–Octubre',
-    imagen: '/destinos/checa.jpg',
   },
   {
     slug: 'escocia',
@@ -610,7 +555,6 @@ export const DESTINOS: Destino[] = [
     keywords: ['viaje a escocia', 'edimburgo highlands loch ness'],
     diasRecomendados: 7,
     mejorEpoca: 'Mayo–Septiembre',
-    imagen: '/destinos/escocia.jpg',
   },
   {
     slug: 'irlanda',
@@ -622,7 +566,6 @@ export const DESTINOS: Destino[] = [
     keywords: ['viaje a irlanda', 'dublin acantilados de moher'],
     diasRecomendados: 7,
     mejorEpoca: 'Mayo–Agosto',
-    imagen: '/destinos/irlanda.jpg',
   },
   {
     slug: 'belgica',
@@ -634,7 +577,6 @@ export const DESTINOS: Destino[] = [
     keywords: ['viaje a belgica', 'bruselas brujas chocolate'],
     diasRecomendados: 5,
     mejorEpoca: 'Abril–Septiembre',
-    imagen: '/destinos/belgica.jpg',
   },
   {
     slug: 'paises-bajos',
@@ -646,9 +588,16 @@ export const DESTINOS: Destino[] = [
     keywords: ['viaje a holanda', 'amsterdam paises bajos tulipanes'],
     diasRecomendados: 5,
     mejorEpoca: 'Abril–Octubre',
-    imagen: '/destinos/holanda.jpg',
   },
 ]
+
+/**
+ * Lista publicada: sin slugs repetidos (generateStaticParams y el sitemap no
+ * admiten duplicados) y con la imagen social genérica.
+ */
+export const DESTINOS: Destino[] = DATOS.filter(
+  (d, i, todos) => todos.findIndex((x) => x.slug === d.slug) === i
+).map((d) => ({ ...d, imagen: OG_IMAGEN_GENERICA }))
 
 export function getDestino(slug: string): Destino | undefined {
   return DESTINOS.find((d) => d.slug === slug)

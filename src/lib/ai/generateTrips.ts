@@ -1,36 +1,74 @@
 import * as Sentry from '@sentry/nextjs'
-import { aiClient } from '@/lib/ai/client'
-import type { TripForm } from '@/lib/validations/tripForm'
+import type { z } from 'zod'
+import { aiGenerate, describeAiError, type AiErrorCode } from '@/lib/ai/client'
+import { aiConfigured } from '@/lib/ai/config'
+import { extractJson } from '@/lib/ai/extractJson'
 import {
-  buildItineraryPrompt,
+  buildBloquePrompt,
+  buildEsqueletoPrompt,
+  buildViajeCompletoPrompt,
+  DIAS_POR_BLOQUE,
+  SYSTEM_PROMPT,
+  UMBRAL_UNA_LLAMADA,
   type ItineraryContext,
 } from '@/lib/ai/generateItinerary'
-import { extractJson } from '@/lib/ai/extractJson'
-import { getWeatherByCity } from '@/lib/api/openweather'
-import type { WeatherData } from '@/lib/api/openweather'
-import { getTravelTimes } from '@/lib/api/googlemaps'
-import { geocode } from '@/lib/api/geocode'
-import { buildViatorLink } from '@/constants/affiliateLinks'
+import {
+  BloqueDiasSchema,
+  EsqueletoSchema,
+  ViajeCompletoSchema,
+  jsonSchemaOf,
+  type DiaIA,
+  type EsqueletoIA,
+} from '@/lib/ai/itinerarySchemas'
+import {
+  descartarCoordsLejanas,
+  haversineKm,
+  normalizeDay,
+  num,
+  str,
+  TIPOS_ACTIVIDAD,
+} from '@/lib/ai/normalize'
+import { ajustarTiemposTraslado } from '@/lib/ai/travelTimes'
+import { geocode, type GeoPoint } from '@/lib/api/geocode'
+import { getTripWeather, type WeatherData } from '@/lib/api/openweather'
 import { getCachedTrip, saveCachedTrip } from '@/lib/cache/tripCache'
 import { buildDemoTrips } from '@/lib/demo/mockTrip'
-import { aiConfigured } from '@/lib/ai/config'
-import type { Trip, Day } from '@/types/trip'
-import type { Activity } from '@/types/activity'
+import {
+  diasEntre,
+  type Moneda,
+  type TripForm,
+} from '@/lib/validations/tripForm'
+import type { Activity, ActivityType } from '@/types/activity'
+import type { Day, Trip } from '@/types/trip'
 
 export interface GenerateResult {
   basico: Trip
   confort: Trip
   premium: Trip
   weather: WeatherData | null
+  /** Moneda de todos los importes. */
+  moneda: Moneda
+  /** true solo cuando NO hay IA configurada (datos de ejemplo). */
   demo?: boolean
-  /** Motivo legible cuando se cae a demo (p. ej. límite de tokens). */
+  /** Motivo legible del modo demo. */
   motivo?: string
 }
 
 /** Fase de progreso reportada al cliente durante el streaming. */
 export interface ProgressEvent {
-  fase: 'cache' | 'demo' | 'contexto' | 'ia' | 'coords' | 'listo' | 'error'
+  fase:
+    | 'cache'
+    | 'demo'
+    | 'contexto'
+    | 'plan'
+    | 'ia'
+    | 'dias'
+    | 'coords'
+    | 'listo'
+    | 'error'
   label: string
+  /** Avance aproximado 0..1 (opcional). */
+  progreso?: number
 }
 
 export type ProgressFn = (p: ProgressEvent) => void
@@ -38,335 +76,538 @@ export type ProgressFn = (p: ProgressEvent) => void
 export interface GenerateOptions {
   noCache?: boolean
   onProgress?: ProgressFn
+  signal?: AbortSignal
+  userId?: string | null
 }
 
 export interface GenerateOutcome {
   result: GenerateResult
   cacheHit: boolean
-  /** demo "puro" (sin IA) vs. fallback tras error de IA se distingue por motivo. */
   demo: boolean
 }
 
-/** Resultado de demostración (sin IA) para previsualizar la app. */
-function demoResult(form: TripForm): GenerateResult {
-  return { ...buildDemoTrips(form), demo: true }
-}
-
-/** Traduce un error de generación a un mensaje claro para el usuario. */
-function describeFailure(err: unknown): string {
-  const msg = err instanceof Error ? err.message : String(err)
-  if (/429|rate.?limit|tokens per day|TPD/i.test(msg)) {
-    return 'Se alcanzó el límite diario de tokens del proveedor de IA. Mostramos un ejemplo mientras tanto; vuelve a intentarlo más tarde o configura otra API key.'
-  }
-  if (/401|403|invalid|api.?key|unauthorized/i.test(msg)) {
-    return 'La API key de IA no es válida. Revisa tu configuración en .env.local.'
-  }
-  return 'La IA no pudo generar el itinerario en este momento. Mostramos un ejemplo de muestra.'
-}
-
-async function buscarClima(form: TripForm): Promise<WeatherData | null> {
-  try {
-    return await getWeatherByCity(form.destino)
-  } catch {
-    return null
-  }
-}
-
-async function enrichDayWithTravelTimes(day: Day): Promise<Day> {
-  if (day.actividades.length < 2) return day
-  try {
-    const times = await getTravelTimes(day.actividades)
-    const enriched: Activity[] = day.actividades.map((act, i) => ({
-      ...act,
-      tiempoHastaSiguiente: times[i] ?? act.tiempoHastaSiguiente,
-    }))
-    return { ...day, actividades: enriched }
-  } catch {
-    return day
-  }
-}
-
-type PartialTrip = Omit<
-  Trip,
-  | 'id'
-  | 'origen'
-  | 'personas'
-  | 'fechaInicio'
-  | 'fechaFin'
-  | 'paquete'
-  | 'listaActividades'
-  | 'actividadesPendientes'
->
-
-const sleep = (ms: number): Promise<void> =>
-  new Promise((r) => setTimeout(r, ms))
-
-/**
- * Corrige las coordenadas de las actividades principales geocodificándolas con
- * OpenStreetMap (gratis). Nominatim limita a ~1 req/s, así que solo afinamos
- * hasta `max` lugares reales (saltando traslados) y los hacemos en serie. El
- * resto se geocodifica en background desde el cliente (useBackgroundGeocode).
- * Muta el trip en sitio: las coords del modelo son aproximadas; estas son reales.
- */
-async function geocodeKeyActivities(trip: Trip, max = 6): Promise<void> {
-  const candidatas = trip.dias
-    .flatMap((d) => d.actividades.map((a) => ({ act: a, ciudad: d.ciudad })))
-    .filter(({ act }) => act.tipo !== 'traslado' && act.nombre)
-    .slice(0, max)
-
-  for (const { act, ciudad } of candidatas) {
-    const punto = await geocode(`${act.nombre}, ${ciudad}`)
-    if (punto) {
-      act.lat = punto.lat
-      act.lng = punto.lng
-    }
-    await sleep(1100) // respeta el rate-limit de Nominatim
-  }
-}
-
-async function generatePackage(
-  form: TripForm,
-  paquete: 'basico' | 'confort' | 'premium',
-  context: ItineraryContext
-): Promise<Trip> {
-  const formWithPaquete: TripForm = { ...form, paquete }
-  const prompt = buildItineraryPrompt(formWithPaquete, context)
-
-  const message = await aiClient.messages.create({
-    model: process.env.AI_ITINERARY_MODEL ?? 'claude-sonnet-4-6',
-    // Un itinerario de pocos días cabe holgado en 4096 tokens; bajarlo de 8000
-    // reduce el consumo diario ~2x (clave en planes gratuitos de Groq).
-    max_tokens: Number(process.env.AI_ITINERARY_MAX_TOKENS) || 4096,
-    messages: [{ role: 'user', content: prompt }],
-  })
-
-  const text =
-    (
-      message.content.find((b) => b.type === 'text') as
-        | { type: 'text'; text: string }
-        | undefined
-    )?.text ?? ''
-
-  const partial = extractJson<PartialTrip>(text)
-
-  if (!Array.isArray(partial.dias) || partial.dias.length === 0) {
-    throw new Error('La IA no devolvió días válidos')
-  }
-
-  // Enrich each day's activities with real Google Maps travel times in parallel
-  const enrichedDias = await Promise.all(
-    partial.dias.map(enrichDayWithTravelTimes)
-  )
-
-  // Adjuntar enlace de afiliado (reserva de actividades) a cada lugar de pago.
-  const diasConLinks = enrichedDias.map((dia) => ({
-    ...dia,
-    actividades: dia.actividades.map((act) =>
-      act.tipo !== 'traslado' && !act.linkAfiliado
-        ? { ...act, linkAfiliado: buildViatorLink(act.nombre, dia.ciudad) }
-        : act
-    ),
-  }))
-
-  return {
-    ...partial,
-    dias: diasConLinks,
-    id: crypto.randomUUID(),
-    origen: form.origen,
-    personas: form.personas,
-    fechaInicio: form.fechaInicio,
-    fechaFin: form.fechaFin,
-    paquete,
-    listaActividades: [],
-    actividadesPendientes: [],
+/** Error de generación con un mensaje apto para el usuario. */
+export class GenerationError extends Error {
+  readonly code: AiErrorCode | 'invalid'
+  readonly mensaje: string
+  constructor(code: AiErrorCode | 'invalid', mensaje: string, cause?: unknown) {
+    super(mensaje, cause !== undefined ? { cause } : undefined)
+    this.name = 'GenerationError'
+    this.code = code
+    this.mensaje = mensaje
   }
 }
 
 type Tier = 'basico' | 'confort' | 'premium'
 
+const hoyISO = (): string => new Date().toISOString().slice(0, 10)
+
+// ---------------------------------------------------------------------------
+// Llamadas a la IA con JSON garantizado, reintento por truncamiento y reparación
+// ---------------------------------------------------------------------------
+
+const MAX_TOKENS_TOPE = 64_000
+
 /**
- * Variante por tier que la IA adjunta a cada actividad sustituible en la MISMA
- * generación. Permite que cada paquete tenga hoteles/restaurantes/experiencias
- * genuinamente distintos (no solo precio escalado). Es opcional: si falta (modelo
- * pequeño, demo o caché antigua) caemos al escalado de precio de siempre.
+ * Validación tolerante: los enum no se imponen en structured outputs, así que
+ * aceptamos la forma general y dejamos que normalize.ts sanee los detalles.
  */
-interface TierVariant {
-  nombre?: string
-  descripcion?: string
-  tipo?: Activity['tipo']
-  precioEstimado?: number
-  reservaRequerida?: boolean
-}
+type Tolerante<T> = (json: unknown) => T | null
 
-/** Actividad tal como llega de la IA: igual que Activity + variantes opcionales. */
-type ActivityWithVariants = Activity & {
-  variantesTier?: Partial<Record<'basico' | 'premium', TierVariant>>
-}
+const conDias = <T>(json: unknown): T | null =>
+  json &&
+  typeof json === 'object' &&
+  Array.isArray((json as { dias?: unknown }).dias)
+    ? (json as T)
+    : null
 
-/** Quita el campo transitorio variantesTier antes de exponer la actividad. */
-function stripVariants(act: ActivityWithVariants): Activity {
-  if (!act.variantesTier) return act
-  const { variantesTier: _omit, ...rest } = act
-  void _omit
-  return rest
-}
-
-/** Aplica (si existe) la variante del tier a una actividad y la limpia. */
-function applyVariant(
-  act: ActivityWithVariants,
-  target: Tier,
-  ratio: number
-): Activity {
-  const variant = target === 'confort' ? undefined : act.variantesTier?.[target]
-  const base = stripVariants(act)
-  if (act.tipo === 'traslado' || !variant) {
-    // Sin variante real → comportamiento clásico: escalar solo el precio.
-    return { ...base, precioEstimado: Math.round(base.precioEstimado * ratio) }
-  }
-  // El link de afiliado cambia con el lugar: se quita aquí y deriveTier lo
-  // recalcula a partir del nuevo nombre.
-  const { linkAfiliado: _drop, ...sinLink } = base
-  void _drop
+function esqueletoTolerante(json: unknown): EsqueletoIA | null {
+  if (!json || typeof json !== 'object') return null
+  const j = json as Record<string, unknown>
+  if (!Array.isArray(j.dias) || j.dias.length === 0) return null
+  const arr = (v: unknown): string[] =>
+    Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []
   return {
-    ...sinLink,
-    nombre: variant.nombre ?? base.nombre,
-    descripcion: variant.descripcion ?? base.descripcion,
-    tipo: variant.tipo ?? base.tipo,
-    reservaRequerida: variant.reservaRequerida ?? base.reservaRequerida,
-    precioEstimado:
-      typeof variant.precioEstimado === 'number'
-        ? Math.round(variant.precioEstimado)
-        : Math.round(base.precioEstimado * ratio),
+    destino: str(j.destino),
+    resumenViaje: str(j.resumenViaje),
+    vueloIdaVueltaPorPersona: num(j.vueloIdaVueltaPorPersona, 0),
+    advertencias: arr(j.advertencias),
+    consejos: arr(j.consejos),
+    presupuestoActividadesPorDia: num(j.presupuestoActividadesPorDia, 0),
+    estancias: (Array.isArray(j.estancias) ? j.estancias : [])
+      .filter(
+        (e): e is Record<string, unknown> => Boolean(e) && typeof e === 'object'
+      )
+      .map((e) => ({
+        ciudad: str(e.ciudad),
+        desdeDia: num(e.desdeDia, 1),
+        hastaDia: num(e.hastaDia, 1),
+        zona: str(e.zona),
+        hotelBasico: str(e.hotelBasico),
+        hotelConfort: str(e.hotelConfort),
+        hotelPremium: str(e.hotelPremium),
+        costeTotalBasico: num(e.costeTotalBasico, 0),
+        costeTotalConfort: num(e.costeTotalConfort, 0),
+        costeTotalPremium: num(e.costeTotalPremium, 0),
+      })),
+    dias: j.dias
+      .filter(
+        (d): d is Record<string, unknown> => Boolean(d) && typeof d === 'object'
+      )
+      .map((d, i) => ({
+        numero: num(d.numero, i + 1),
+        ciudad: str(d.ciudad),
+        titulo: str(d.titulo),
+        foco: str(d.foco),
+        lugaresClave: arr(d.lugaresClave),
+        esDiaDeTraslado: Boolean(d.esDiaDeTraslado),
+      })),
   }
 }
 
-// Multiplicador de gasto relativo de cada tier. Se usa como fallback para
-// derivar los tiers cuando la IA no devolvió variantes reales (modelo pequeño,
-// demo o caché antigua), escalando el presupuesto del tier base.
-const TIER_FACTOR: Record<Tier, number> = {
-  basico: 0.65,
-  confort: 1,
-  premium: 1.9,
-}
-
-const TIER_NOTA: Record<Tier, string> = {
-  basico:
-    'Versión económica: alojamiento sencillo y actividades de bajo costo.',
-  confort: 'Versión equilibrada: buen confort y mezcla de experiencias.',
-  premium: 'Versión premium: alojamiento de lujo y experiencias exclusivas.',
-}
-
-/**
- * Deriva un tier a partir del tier CONFORT generado por la IA. Si la IA adjuntó
- * variantesTier (hoteles/actividades reales por nivel), las aplica para que cada
- * paquete difiera en el TIPO de experiencia, no solo en precio. Cuando no hay
- * variantes, cae al escalado de precio clásico. En ambos casos evita una segunda
- * llamada de IA (clave en planes gratuitos con límite por minuto).
- *
- * `base` debe ser el trip CONFORT (las variantes están relativas a ese nivel).
- */
-function deriveTier(base: Trip, target: Tier): Trip {
-  const ratio = TIER_FACTOR[target] / TIER_FACTOR.confort
-  const round = (n: number): number => Math.round(n)
-
-  const dias = base.dias.map((d) => {
-    let dayHasVariant = false
-    const actividades = (d.actividades as ActivityWithVariants[]).map((a) => {
-      const before = a.nombre
-      const swapped = applyVariant(a, target, ratio)
-      if (swapped.nombre !== before) dayHasVariant = true
-      // Reasignar link de afiliado si la actividad cambió de lugar.
-      return swapped.tipo !== 'traslado' && !swapped.linkAfiliado
-        ? {
-            ...swapped,
-            linkAfiliado: buildViatorLink(swapped.nombre, d.ciudad),
-          }
-        : swapped
+async function llamarJson<S extends z.ZodType>(
+  schema: S,
+  prompt: string,
+  maxTokens: number,
+  opts: GenerateOptions & { endpoint: string },
+  tolerante: Tolerante<z.infer<S>> = conDias
+): Promise<z.infer<S>> {
+  let tokens = Math.min(maxTokens, MAX_TOKENS_TOPE)
+  let ultimoTexto = ''
+  for (let intento = 0; intento < 3; intento++) {
+    const reparar =
+      intento > 0 && ultimoTexto
+        ? `\n\nTu respuesta anterior no era un JSON válido según el esquema. Vuelve a generarla COMPLETA y válida.`
+        : ''
+    const r = await aiGenerate({
+      task: 'itinerario',
+      system: SYSTEM_PROMPT,
+      messages: [{ role: 'user', content: prompt + reparar }],
+      maxTokens: tokens,
+      schema: jsonSchemaOf(schema),
+      endpoint: opts.endpoint,
+      ...(opts.userId !== undefined ? { userId: opts.userId } : {}),
+      ...(opts.signal ? { signal: opts.signal } : {}),
     })
-    // Si el día tuvo swaps reales, recomputar su presupuesto desde los precios
-    // reales de las variantes; si no, escalar como antes.
-    const presupuestoDia = dayHasVariant
-      ? actividades.reduce((s, x) => s + (x.precioEstimado || 0), 0)
-      : round(d.presupuestoDia * ratio)
-    return { ...d, presupuestoDia, actividades }
-  })
+    if (r.stopReason === 'max_tokens') {
+      // Truncado: reintentamos con más margen (la salida estructurada no se
+      // puede "continuar").
+      if (tokens >= MAX_TOKENS_TOPE) {
+        throw new GenerationError(
+          'truncated',
+          'El itinerario salió demasiado largo. Vuelve a intentarlo o acorta el viaje.'
+        )
+      }
+      tokens = Math.min(Math.round(tokens * 1.7), MAX_TOKENS_TOPE)
+      ultimoTexto = ''
+      continue
+    }
+    ultimoTexto = r.text
+    try {
+      const json = extractJson<unknown>(r.text)
+      const parsed = schema.safeParse(json)
+      if (parsed.success) return parsed.data as z.infer<S>
+      const aceptado = tolerante(json)
+      if (aceptado) return aceptado
+    } catch {
+      // JSON irrecuperable → reintento con aviso de reparación
+    }
+  }
+  throw new GenerationError(
+    'unknown',
+    'La IA no pudo generar un itinerario válido. Inténtalo de nuevo.'
+  )
+}
 
-  // El total siempre es la suma de los días: coherente con o sin variantes.
-  const presupuestoTotal = dias.reduce((s, d) => s + d.presupuestoDia, 0)
-  const personas = base.personas || 1
+/** Ejecuta tareas con un máximo de `n` simultáneas. */
+async function enParalelo<T, R>(
+  items: T[],
+  n: number,
+  fn: (item: T, i: number) => Promise<R>
+): Promise<R[]> {
+  const out = new Array<R>(items.length)
+  let next = 0
+  await Promise.all(
+    Array.from({ length: Math.min(n, items.length) }, async () => {
+      while (next < items.length) {
+        const i = next++
+        out[i] = await fn(items[i] as T, i)
+      }
+    })
+  )
+  return out
+}
 
+// ---------------------------------------------------------------------------
+// Variantes por paquete
+// ---------------------------------------------------------------------------
+
+interface Variante {
+  nombre: string
+  descripcion: string
+  tipo: ActivityType
+  direccion: string
+  lat: number
+  lng: number
+  precioEstimado: number
+  reservaRequerida: boolean
+}
+
+type MapaVariantes = Map<string, { basico?: Variante; premium?: Variante }>
+
+function leerVariante(v: unknown): Variante | undefined {
+  if (!v || typeof v !== 'object') return undefined
+  const r = v as Record<string, unknown>
+  const nombre = str(r.nombre)
+  if (!nombre) return undefined
+  const tipo = str(r.tipo) as ActivityType
   return {
+    nombre,
+    descripcion: str(r.descripcion),
+    tipo: TIPOS_ACTIVIDAD.includes(tipo) ? tipo : 'actividad',
+    direccion: str(r.direccion),
+    lat: num(r.lat, 0),
+    lng: num(r.lng, 0),
+    precioEstimado: Math.max(0, Math.round(num(r.precioEstimado, 0))),
+    reservaRequerida: Boolean(r.reservaRequerida),
+  }
+}
+
+/**
+ * Normaliza los días de la IA asignando ids únicos ANTES de normalizar (para
+ * no perder la relación con sus variantes al reordenar por hora).
+ */
+function normalizarDias(
+  diasIA: DiaIA[],
+  nDias: number
+): { dias: Day[]; variantes: MapaVariantes } {
+  const variantes: MapaVariantes = new Map()
+  const usados = new Set<string>()
+  const ordenados = [...diasIA]
+    .filter((d) => d && typeof d === 'object')
+    .sort((a, b) => num(a.numero, 0) - num(b.numero, 0))
+    .slice(0, nDias)
+
+  const dias = ordenados.map((d, i) => {
+    const actividades = (Array.isArray(d.actividades) ? d.actividades : []).map(
+      (a) => {
+        const id = crypto.randomUUID()
+        const vt = (a as { variantesTier?: unknown }).variantesTier
+        if (vt && typeof vt === 'object') {
+          const basico = leerVariante((vt as Record<string, unknown>).basico)
+          const premium = leerVariante((vt as Record<string, unknown>).premium)
+          if (basico || premium) {
+            variantes.set(id, {
+              ...(basico ? { basico } : {}),
+              ...(premium ? { premium } : {}),
+            })
+          }
+        }
+        return { ...(a as Record<string, unknown>), id }
+      }
+    )
+    return normalizeDay({ ...(d as Record<string, unknown>), actividades }, i, {
+      usados,
+    })
+  })
+  return { dias, variantes }
+}
+
+/** Factor de coste de los traslados por paquete (transporte público vs privado). */
+const FACTOR_TRASLADO: Record<Tier, number> = {
+  basico: 0.55,
+  confort: 1,
+  premium: 2.2,
+}
+
+function aplicarTier(
+  base: Trip,
+  tier: Tier,
+  variantes: MapaVariantes,
+  anclasDia: (GeoPoint | null)[]
+): Trip {
+  if (tier === 'confort') return base
+  const dias = base.dias.map((d, di) => {
+    let delta = 0
+    const actividades = d.actividades.map((a): Activity => {
+      const v = variantes.get(a.id)?.[tier]
+      if (v && a.tipo !== 'traslado') {
+        const ancla = anclasDia[di]
+        const coordsOk =
+          !(v.lat === 0 && v.lng === 0) &&
+          Math.abs(v.lat) <= 90 &&
+          Math.abs(v.lng) <= 180 &&
+          (!ancla || haversineKm(ancla, v) <= 80)
+        delta += v.precioEstimado - a.precioEstimado
+        return {
+          ...a,
+          nombre: v.nombre,
+          descripcion: v.descripcion || a.descripcion,
+          tipo: v.tipo,
+          direccion: v.direccion || a.direccion,
+          lat: coordsOk ? v.lat : 0,
+          lng: coordsOk ? v.lng : 0,
+          coordsVerificadas: false,
+          precioEstimado: v.precioEstimado,
+          reservaRequerida: v.reservaRequerida,
+        }
+      }
+      if (a.tipo === 'traslado' && a.precioEstimado > 0) {
+        const nuevo = Math.round(a.precioEstimado * FACTOR_TRASLADO[tier])
+        delta += nuevo - a.precioEstimado
+        return { ...a, precioEstimado: nuevo }
+      }
+      return a
+    })
+    return {
+      ...d,
+      actividades,
+      presupuestoDia: Math.max(0, Math.round(d.presupuestoDia + delta)),
+    }
+  })
+  return recalcularTotales({
     ...base,
     id: crypto.randomUUID(),
-    paquete: target,
-    presupuestoTotal,
-    presupuestoPorPersona: round(presupuestoTotal / personas),
-    resumenViaje: `${TIER_NOTA[target]} ${base.resumenViaje}`,
+    paquete: tier,
     dias,
-  }
+  })
 }
 
-/** Escala todos los importes de un trip por `factor` (sube o baja). */
-function scaleTripMoney(trip: Trip, factor: number): Trip {
-  if (!Number.isFinite(factor) || factor <= 0 || factor === 1) return trip
-  const r = (n: number): number => Math.round(n)
+function recalcularTotales(trip: Trip): Trip {
+  const presupuestoTotal = trip.dias.reduce((s, d) => s + d.presupuestoDia, 0)
   return {
     ...trip,
-    presupuestoTotal: r(trip.presupuestoTotal * factor),
-    presupuestoPorPersona: r(trip.presupuestoPorPersona * factor),
-    dias: trip.dias.map((d) => ({
-      ...d,
-      presupuestoDia: r(d.presupuestoDia * factor),
-      actividades: d.actividades.map((a) => ({
-        ...a,
-        precioEstimado: r(a.precioEstimado * factor),
-      })),
-    })),
+    presupuestoTotal,
+    presupuestoPorPersona: Math.round(
+      presupuestoTotal / Math.max(1, trip.personas)
+    ),
   }
 }
 
-/**
- * Garantiza que el precio crezca con el tier: básico ≤ confort ≤ premium.
- * Las variantesTier de la IA pueden no ser monótonas (un premium con precios
- * más bajos que el confort), lo que confunde al usuario. Mantenemos CONFORT como
- * ancla (es el plan real de la IA) y reescalamos básico/premium solo si quedaron
- * fuera de orden.
- */
-function enforceTierOrder(t: Record<Tier, Trip>): Record<Tier, Trip> {
+/** Escala todos los importes de un trip por `factor`. */
+function escalarDinero(trip: Trip, factor: number): Trip {
+  if (!Number.isFinite(factor) || factor <= 0 || factor === 1) return trip
+  const r = (n: number): number => Math.round(n * factor)
+  return recalcularTotales({
+    ...trip,
+    dias: trip.dias.map((d) => ({
+      ...d,
+      presupuestoDia: r(d.presupuestoDia),
+      actividades: d.actividades.map((a) => ({
+        ...a,
+        precioEstimado: r(a.precioEstimado),
+      })),
+    })),
+  })
+}
+
+/** Garantiza básico < confort < premium (las variantes pueden no serlo). */
+function ordenarTiers(t: Record<Tier, Trip>): Record<Tier, Trip> {
   let { basico, premium } = t
   const { confort } = t
-  const cTotal = confort.presupuestoTotal
-  if (cTotal > 0) {
-    if (basico.presupuestoTotal >= cTotal) {
-      basico = scaleTripMoney(basico, (cTotal * 0.8) / basico.presupuestoTotal)
+  const c = confort.presupuestoTotal
+  if (c > 0) {
+    if (basico.presupuestoTotal >= c * 0.95) {
+      basico = escalarDinero(
+        basico,
+        (c * 0.75) / Math.max(1, basico.presupuestoTotal)
+      )
     }
-    if (premium.presupuestoTotal <= cTotal * 1.2) {
-      premium = scaleTripMoney(
+    if (premium.presupuestoTotal <= c * 1.15) {
+      premium = escalarDinero(
         premium,
-        (cTotal * 1.35) / premium.presupuestoTotal
+        (c * 1.45) / Math.max(1, premium.presupuestoTotal)
       )
     }
   }
   return { basico, confort, premium }
 }
 
+const NOTA_TIER: Record<Tier, string> = {
+  basico:
+    'Versión económica: alojamiento sencillo, transporte público y planes de bajo coste.',
+  confort: '',
+  premium:
+    'Versión premium: alojamiento de lujo, traslados privados y experiencias exclusivas.',
+}
+
+// ---------------------------------------------------------------------------
+// Coordenadas
+// ---------------------------------------------------------------------------
+
+/** Geocodifica una lista de ciudades (máx. 8, en serie por Nominatim). */
+async function geocodeCiudades(
+  ciudades: string[],
+  previas: Map<string, GeoPoint | null> = new Map()
+): Promise<Map<string, GeoPoint | null>> {
+  const mapa = new Map(previas)
+  const unicas = [...new Set(ciudades.map((c) => c.trim()).filter(Boolean))]
+  for (const c of unicas.slice(0, 8)) {
+    if (!mapa.has(c)) mapa.set(c, await geocode(c))
+  }
+  return mapa
+}
+
+/** Ancla (centro de la ciudad) de cada día; cae al centro del viaje. */
+async function anclasPorDia(
+  dias: Day[],
+  anclaViaje: GeoPoint | null,
+  previas?: Map<string, GeoPoint | null>
+): Promise<(GeoPoint | null)[]> {
+  const mapa = await geocodeCiudades(
+    dias.map((d) => d.ciudad),
+    previas
+  )
+  return dias.map((d) => mapa.get(d.ciudad.trim()) ?? anclaViaje)
+}
+
 /**
- * Orquesta la generación completa de los 3 paquetes (con caché, clima,
- * geocoding y fallback a demo). `onProgress` permite emitir hitos reales al
- * cliente vía SSE; sin él, funciona igual que la versión no-streaming.
+ * Verifica con el geocoder las actividades principales (máx `max`) y descarta
+ * coordenadas inventadas lejos de la ciudad del día. El resto se completa en
+ * segundo plano desde el cliente (useBackgroundGeocode).
+ */
+async function verificarCoordenadas(
+  dias: Day[],
+  anclas: (GeoPoint | null)[],
+  max: number,
+  esCrucero: boolean
+): Promise<Day[]> {
+  // 1) Descartar coords lejanas del ancla del día.
+  let out = dias.map((d, i) => ({
+    ...d,
+    actividades: descartarCoordsLejanas(
+      d.actividades,
+      anclas[i] ?? null,
+      esCrucero ? 400 : 120
+    ),
+  }))
+
+  // 2) Geocodificar las más relevantes: primero las que no tienen coords.
+  const candidatas: { di: number; ai: number; prioridad: number }[] = []
+  out.forEach((d, di) =>
+    d.actividades.forEach((a, ai) => {
+      if (a.tipo === 'traslado' || /check-?in|check-?out/i.test(a.nombre))
+        return
+      const sinCoords = a.lat === 0 && a.lng === 0
+      candidatas.push({ di, ai, prioridad: (sinCoords ? 0 : 10) + ai })
+    })
+  )
+  candidatas.sort((x, y) => x.prioridad - y.prioridad)
+
+  for (const c of candidatas.slice(0, max)) {
+    const d = out[c.di]
+    const a = d?.actividades[c.ai]
+    if (!d || !a) continue
+    const ancla = anclas[c.di] ?? null
+    const punto = await geocode(`${a.nombre}, ${d.ciudad}`, {
+      ...(ancla ? { near: ancla, radiusKm: 60 } : {}),
+    })
+    if (!punto) continue
+    out = out.map((dd, di) =>
+      di !== c.di
+        ? dd
+        : {
+            ...dd,
+            actividades: dd.actividades.map((aa, ai) =>
+              ai !== c.ai
+                ? aa
+                : {
+                    ...aa,
+                    lat: punto.lat,
+                    lng: punto.lng,
+                    coordsVerificadas: true,
+                  }
+            ),
+          }
+    )
+  }
+
+  return out.map((d) => ({
+    ...d,
+    actividades: ajustarTiemposTraslado(d.actividades),
+  }))
+}
+
+// ---------------------------------------------------------------------------
+// Presupuesto: advertencia automática si el plan se sale
+// ---------------------------------------------------------------------------
+
+const fmt = (n: number, moneda: Moneda): string =>
+  new Intl.NumberFormat('es', {
+    style: 'currency',
+    currency: moneda,
+    maximumFractionDigits: 0,
+  }).format(n)
+
+function advertirPresupuesto(trip: Trip, form: TripForm): Trip {
+  const vuelos = (trip.vueloEstimadoPorPersona ?? 0) * trip.personas
+  const total = trip.presupuestoTotal + vuelos
+  if (total <= form.presupuesto * 1.08) return trip
+  const yaAvisa = trip.advertencias.some((a) =>
+    /presupuesto|no alcanza|insuficiente|excede|ajustad/i.test(a)
+  )
+  if (yaAvisa) return trip
+  const detalle =
+    vuelos > 0
+      ? ` (${fmt(trip.presupuestoTotal, form.moneda)} en destino + ~${fmt(vuelos, form.moneda)} en vuelos)`
+      : ''
+  return {
+    ...trip,
+    advertencias: [
+      `Este plan cuesta aprox. ${fmt(total, form.moneda)}${detalle}, por encima de tu presupuesto de ${fmt(form.presupuesto, form.moneda)}. Prueba el paquete básico o pide a la IA que lo abarate.`,
+      ...trip.advertencias,
+    ],
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Orquestador
+// ---------------------------------------------------------------------------
+
+function demoResult(form: TripForm): GenerateResult {
+  return {
+    ...buildDemoTrips(form),
+    moneda: form.moneda,
+    demo: true,
+    motivo:
+      'Estás viendo un itinerario de ejemplo: la generación con IA todavía no está activada en esta instalación.',
+  }
+}
+
+interface ViajeBase {
+  destino: string
+  resumenViaje: string
+  vueloIdaVueltaPorPersona: number
+  advertencias: string[]
+  consejos: string[]
+  dias: DiaIA[]
+}
+
+/**
+ * Genera los 3 paquetes del viaje (con caché, contexto real, generación por
+ * bloques en paralelo para viajes largos y validación/normalización de todo
+ * lo que devuelve la IA). Lanza GenerationError si la IA falla.
  */
 export async function generateTrips(
   form: TripForm,
   opts: GenerateOptions = {}
 ): Promise<GenerateOutcome> {
   const { noCache = false, onProgress } = opts
-  const emit = (fase: ProgressEvent['fase'], label: string): void =>
-    onProgress?.({ fase, label })
+  const emit = (
+    fase: ProgressEvent['fase'],
+    label: string,
+    progreso?: number
+  ): void =>
+    onProgress?.({
+      fase,
+      label,
+      ...(progreso !== undefined ? { progreso } : {}),
+    })
 
   if (!noCache) {
     const cached = await getCachedTrip(form)
     if (cached) {
-      emit('cache', 'Recuperando un plan que ya teníamos listo')
+      emit('cache', 'Recuperando un plan que ya teníamos listo', 1)
       return {
         result: JSON.parse(cached) as GenerateResult,
         cacheHit: true,
@@ -375,59 +616,195 @@ export async function generateTrips(
     }
   }
 
-  // Sin IA configurada → datos de demostración (ver la app sin API keys)
   if (!aiConfigured()) {
-    emit('demo', 'Mostrando un ejemplo (sin API key de IA configurada)')
+    emit('demo', 'Mostrando un itinerario de ejemplo', 1)
     return { result: demoResult(form), cacheHit: false, demo: true }
   }
 
-  // Búsqueda real previa: clima (OpenWeather) + geocodificación del destino
-  // (OpenStreetMap, sin key). Se la pasamos a la IA para anclar el itinerario.
-  emit('contexto', 'Buscando clima y ubicación del destino')
-  const destinoParaGeo = form.destinoSorpresa ? '' : form.destino
-  const [weather, anchor] = await Promise.all([
-    buscarClima(form),
-    destinoParaGeo ? geocode(destinoParaGeo) : Promise.resolve(null),
-  ])
-
-  const context: ItineraryContext = {
-    anchor,
-    clima: weather
-      ? { temp: weather.temp, description: weather.description }
-      : null,
-  }
+  const hoy = hoyISO()
+  const nDias = diasEntre(form.fechaInicio, form.fechaFin)
+  const esCrucero = form.tipo === 'crucero'
 
   try {
-    emit('ia', 'La IA está armando las 3 versiones de tu viaje')
-    // Generamos siempre el nivel CONFORT como base: la IA adjunta variantesTier
-    // (básico/premium) ancladas a ese punto medio, y de ahí derivamos los 3.
-    const base = await generatePackage(
-      { ...form, paquete: 'confort' },
-      'confort',
-      context
+    // 1) Contexto real: centro del destino y clima de esas fechas.
+    emit('contexto', 'Ubicando tu destino y revisando el clima', 0.05)
+    let anclaViaje = form.destinoSorpresa ? null : await geocode(form.destino)
+    const climaViaje = anclaViaje
+      ? await getTripWeather(anclaViaje, form.fechaInicio, form.fechaFin, hoy)
+      : null
+    const ctx: ItineraryContext = {
+      anchor: anclaViaje,
+      clima: climaViaje?.resumen ? { resumen: climaViaje.resumen } : null,
+      hoy,
+    }
+    const base = { ...opts, endpoint: 'generate' }
+
+    // 2) Generación.
+    let viaje: ViajeBase
+    // En viajes largos geocodificamos las ciudades del esqueleto MIENTRAS la
+    // IA detalla los días (Nominatim va en serie y así no suma latencia).
+    let ciudadesPrevias: Promise<Map<string, GeoPoint | null>> =
+      Promise.resolve(new Map())
+    if (nDias <= UMBRAL_UNA_LLAMADA) {
+      emit('ia', 'La IA está diseñando tu viaje', 0.15)
+      const completo = await llamarJson(
+        ViajeCompletoSchema,
+        buildViajeCompletoPrompt(form, ctx),
+        5000 * nDias + 8000,
+        base
+      )
+      viaje = completo
+    } else {
+      emit('plan', 'Trazando la ruta y eligiendo hoteles', 0.12)
+      const esqueleto: EsqueletoIA = await llamarJson(
+        EsqueletoSchema,
+        buildEsqueletoPrompt(form, ctx),
+        700 * nDias + 8000,
+        { ...base, endpoint: 'generate:esqueleto' },
+        esqueletoTolerante
+      )
+      if (form.destinoSorpresa && !anclaViaje) {
+        anclaViaje = await geocode(esqueleto.destino)
+        ctx.anchor = anclaViaje
+      }
+      ciudadesPrevias = geocodeCiudades(
+        esqueleto.dias.map((d) => d.ciudad)
+      ).catch(() => new Map<string, GeoPoint | null>())
+      const bloques: [number, number][] = []
+      for (let d = 1; d <= nDias; d += DIAS_POR_BLOQUE) {
+        bloques.push([d, Math.min(nDias, d + DIAS_POR_BLOQUE - 1)])
+      }
+      let hechos = 0
+      emit('dias', `Detallando los ${nDias} días en paralelo`, 0.25)
+      const resultados = await enParalelo(
+        bloques,
+        6,
+        async ([desde, hasta]) => {
+          const esperados = hasta - desde + 1
+          let dias: DiaIA[] = []
+          // Un reintento si el bloque vuelve incompleto o con días vacíos.
+          for (let intento = 0; intento < 2; intento++) {
+            const r = await llamarJson(
+              BloqueDiasSchema,
+              buildBloquePrompt(form, ctx, esqueleto, desde, hasta),
+              5000 * esperados + 8000,
+              { ...base, endpoint: 'generate:bloque' }
+            )
+            dias = r.dias.filter(
+              (d) => Array.isArray(d.actividades) && d.actividades.length > 0
+            )
+            if (dias.length >= esperados) break
+          }
+          hechos++
+          emit(
+            'dias',
+            hasta > desde
+              ? `Días ${desde} y ${hasta} listos`
+              : `Día ${desde} listo`,
+            0.25 + 0.55 * (hechos / bloques.length)
+          )
+          // Fuerza la numeración esperada del bloque.
+          return dias
+            .slice(0, esperados)
+            .map((d, i) => ({ ...d, numero: desde + i }))
+        }
+      )
+      viaje = {
+        destino: esqueleto.destino,
+        resumenViaje: esqueleto.resumenViaje,
+        vueloIdaVueltaPorPersona: esqueleto.vueloIdaVueltaPorPersona,
+        advertencias: esqueleto.advertencias,
+        consejos: esqueleto.consejos,
+        dias: resultados.flat(),
+      }
+    }
+
+    // 3) Normalización y validación.
+    const { dias: diasNorm, variantes } = normalizarDias(viaje.dias, nDias)
+    if (diasNorm.length < nDias) {
+      throw new GenerationError(
+        'invalid',
+        'La IA devolvió un itinerario incompleto. Inténtalo de nuevo.'
+      )
+    }
+    if (diasNorm.some((d) => d.actividades.length === 0)) {
+      throw new GenerationError(
+        'invalid',
+        'La IA devolvió días vacíos. Inténtalo de nuevo.'
+      )
+    }
+
+    // 4) Coordenadas reales.
+    emit('coords', 'Verificando las ubicaciones en el mapa', 0.85)
+    const destino = str(viaje.destino) || form.destino
+    if (!anclaViaje) anclaViaje = await geocode(destino)
+    const anclas = await anclasPorDia(
+      diasNorm,
+      anclaViaje,
+      await ciudadesPrevias
     )
-    // Afinar coordenadas reales de los lugares clave antes de derivar tiers.
-    emit('coords', 'Afinando las coordenadas reales de los lugares')
-    await geocodeKeyActivities(base)
-    const rawTiers = (['basico', 'confort', 'premium'] as const).reduce(
-      (acc, t) => {
-        acc[t] = deriveTier(base, t)
-        return acc
-      },
-      {} as Record<Tier, Trip>
+    const dias = await verificarCoordenadas(
+      diasNorm,
+      anclas,
+      nDias <= 3 ? 8 : 10,
+      esCrucero
     )
-    const tiers = enforceTierOrder(rawTiers)
-    const result: GenerateResult = { ...tiers, weather }
+
+    // 5) Paquetes.
+    const confort: Trip = advertirPresupuesto(
+      recalcularTotales({
+        id: crypto.randomUUID(),
+        destino,
+        origen: form.origen,
+        personas: form.personas,
+        fechaInicio: form.fechaInicio,
+        fechaFin: form.fechaFin,
+        presupuestoTotal: 0,
+        presupuestoPorPersona: 0,
+        dias,
+        paquete: 'confort',
+        moneda: form.moneda,
+        vueloEstimadoPorPersona: Math.max(
+          0,
+          Math.round(num(viaje.vueloIdaVueltaPorPersona, 0))
+        ),
+        resumenViaje: str(viaje.resumenViaje),
+        consejos: (viaje.consejos ?? []).filter(
+          (c) => typeof c === 'string' && c.trim()
+        ),
+        advertencias: (viaje.advertencias ?? []).filter(
+          (c) => typeof c === 'string' && c.trim()
+        ),
+        listaActividades: [],
+        actividadesPendientes: [],
+      }),
+      form
+    )
+    const tiers = ordenarTiers({
+      basico: aplicarTier(confort, 'basico', variantes, anclas),
+      confort,
+      premium: aplicarTier(confort, 'premium', variantes, anclas),
+    })
+    for (const t of ['basico', 'premium'] as const) {
+      tiers[t] = {
+        ...tiers[t],
+        resumenViaje: `${NOTA_TIER[t]} ${tiers[t].resumenViaje}`.trim(),
+      }
+    }
+
+    const result: GenerateResult = {
+      ...tiers,
+      weather: climaViaje?.weather ?? null,
+      moneda: form.moneda,
+    }
     await saveCachedTrip(form, JSON.stringify(result))
-    emit('listo', '¡Tu viaje está listo!')
+    emit('listo', '¡Tu viaje está listo!', 1)
     return { result, cacheHit: false, demo: false }
   } catch (err) {
+    if (opts.signal?.aborted) throw err
     Sentry.captureException(err, { tags: { area: 'generate-itinerary' } })
-    emit('demo', 'No se pudo generar; mostramos un ejemplo')
-    return {
-      result: { ...demoResult(form), weather, motivo: describeFailure(err) },
-      cacheHit: false,
-      demo: true,
-    }
+    if (err instanceof GenerationError) throw err
+    const { code, mensaje } = describeAiError(err)
+    throw new GenerationError(code, mensaje, err)
   }
 }

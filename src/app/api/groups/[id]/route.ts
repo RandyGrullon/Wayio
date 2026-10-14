@@ -1,12 +1,26 @@
-import { createClient } from '@/lib/supabase/server'
+import { exigirMiembro, unirsePorLink } from '../_lib/grupo'
+import { autenticar, errorDb, okJson } from '@/app/api/trips/_lib/http'
+import { rateLimit, tooManyRequests } from '@/lib/security/rateLimit'
+import type { TripMemberRow } from '@/types/database'
 
-// GET — list members of a group trip
+type Ctx = { params: Promise<{ id: string }> }
+
+/**
+ * GET /api/groups/[tripId] — miembros del viaje (solo para miembros).
+ * Respuesta: { members: TripMemberRow[] }
+ */
 export async function GET(
-  _request: Request,
-  { params }: { params: Promise<{ id: string }> }
+  request: Request,
+  { params }: Ctx
 ): Promise<Response> {
   const { id } = await params
-  const supabase = await createClient()
+
+  const auth = await autenticar(request)
+  if (!auth.ok) return auth.response
+  const { supabase } = auth
+
+  const rechazo = await exigirMiembro(supabase, id)
+  if (rechazo) return rechazo
 
   const { data, error } = await supabase
     .from('trip_members')
@@ -14,62 +28,33 @@ export async function GET(
     .eq('trip_id', id)
     .order('joined_at', { ascending: true })
 
-  if (error) {
-    return Response.json({ error: error.message }, { status: 500 })
-  }
-
-  return Response.json({ members: data })
+  if (error) return errorDb(error, 'groups.members')
+  return okJson({ members: (data ?? []) as TripMemberRow[] })
 }
 
-// POST — join a group trip
+/**
+ * POST /api/groups/[grupoLink] — COMPATIBILIDAD: aquí [id] es el enlace de
+ * invitación, no el id del viaje. Delega en la misma lógica que
+ * POST /api/groups/join/[link] (la ruta nueva que debe usar la UI).
+ * Respuesta 200: { tripId: string, member: TripMemberRow | null }
+ */
 export async function POST(
-  _request: Request,
-  { params }: { params: Promise<{ id: string }> }
+  request: Request,
+  { params }: Ctx
 ): Promise<Response> {
   const { id } = await params
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
 
-  if (!user) {
-    return Response.json({ error: 'No autenticado' }, { status: 401 })
-  }
+  const auth = await autenticar(request)
+  if (!auth.ok) return auth.response
+  const { supabase, user } = auth
 
-  // Verify the trip exists via grupo_link
-  const { data: tripRow, error: tripError } = await supabase
-    .from('trips')
-    .select('id')
-    .eq('grupo_link', id)
-    .single()
+  const limite = await rateLimit({
+    bucket: 'group-join',
+    id: user.id,
+    limit: 20,
+    windowSec: 600,
+  })
+  if (!limite.ok) return tooManyRequests(limite)
 
-  if (tripError || !tripRow) {
-    return Response.json({ error: 'Grupo no encontrado' }, { status: 404 })
-  }
-
-  const nombre =
-    (user.user_metadata['full_name'] as string | undefined) ??
-    user.email ??
-    'Viajero'
-
-  const { data, error } = await supabase
-    .from('trip_members')
-    .upsert(
-      {
-        trip_id: tripRow.id,
-        user_id: user.id,
-        nombre,
-        avatar_url:
-          (user.user_metadata['avatar_url'] as string | undefined) ?? null,
-      },
-      { onConflict: 'trip_id,user_id' }
-    )
-    .select()
-    .single()
-
-  if (error) {
-    return Response.json({ error: error.message }, { status: 500 })
-  }
-
-  return Response.json({ member: data, tripId: tripRow.id })
+  return unirsePorLink(supabase, user, id)
 }

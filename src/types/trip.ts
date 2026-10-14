@@ -21,6 +21,17 @@ export interface Trip {
   presupuestoPorPersona: number
   dias: Day[]
   paquete: 'basico' | 'confort' | 'premium'
+  /**
+   * Moneda de todos los importes del viaje. Opcional por compatibilidad con
+   * viajes guardados antes de existir el campo (se asume USD).
+   */
+  moneda?: 'USD' | 'EUR' | 'DOP'
+  /**
+   * Estimación de la IA del vuelo ida y vuelta por persona desde el origen (en
+   * `moneda`). No está incluida en presupuestoTotal (que es el gasto en
+   * destino). 0 si no hace falta volar.
+   */
+  vueloEstimadoPorPersona?: number
   resumenViaje: string
   consejos: string[]
   advertencias: string[]

@@ -1,6 +1,5 @@
+import { getBaseUrl } from '@/lib/utils/baseUrl'
 import type { Destino } from './destinos'
-
-const BASE_URL = process.env['NEXT_PUBLIC_BASE_URL'] ?? 'https://wayio.app'
 
 export interface TravelActionSchema {
   '@context': 'https://schema.org'
@@ -33,7 +32,8 @@ export interface TravelActionSchema {
 }
 
 export function buildTravelActionSchema(destino: Destino): TravelActionSchema {
-  const pageUrl = `${BASE_URL}/viaje/${destino.slug}`
+  const base = getBaseUrl()
+  const pageUrl = `${base}/viaje/${destino.slug}`
   return {
     '@context': 'https://schema.org',
     '@type': 'TravelAction',
@@ -48,7 +48,7 @@ export function buildTravelActionSchema(destino: Destino): TravelActionSchema {
       '@type': 'SoftwareApplication',
       name: 'Wayio',
       applicationCategory: 'TravelApplication',
-      url: BASE_URL,
+      url: base,
     },
     object: {
       '@type': 'Trip',
@@ -65,12 +65,62 @@ export function buildTravelActionSchema(destino: Destino): TravelActionSchema {
   }
 }
 
+/** JSON-LD FAQPage de las preguntas frecuentes de un destino. */
+export function buildFaqSchema(
+  preguntas: readonly { pregunta: string; respuesta: string }[]
+) {
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'FAQPage',
+    mainEntity: preguntas.map((q) => ({
+      '@type': 'Question',
+      name: q.pregunta,
+      acceptedAnswer: { '@type': 'Answer', text: q.respuesta },
+    })),
+  } as const
+}
+
+/** JSON-LD BreadcrumbList: Destinos › País › Destino. */
+export function buildBreadcrumbSchema(destino: Destino) {
+  const base = getBaseUrl()
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      {
+        '@type': 'ListItem',
+        position: 1,
+        name: 'Destinos',
+        item: `${base}/#destinos`,
+      },
+      {
+        '@type': 'ListItem',
+        position: 2,
+        name: destino.nombre,
+        item: `${base}/viaje/${destino.slug}`,
+      },
+    ],
+  } as const
+}
+
+/**
+ * Serializa JSON-LD para <script type="application/ld+json"> sin que un
+ * texto pueda cerrar la etiqueta (escapa <, > y &).
+ */
+export function jsonLd(datos: unknown): string {
+  return JSON.stringify(datos)
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/&/g, '\\u0026')
+}
+
 export function buildOrganizationSchema() {
+  const base = getBaseUrl()
   return {
     '@context': 'https://schema.org',
     '@type': 'Organization',
     name: 'Wayio',
-    url: BASE_URL,
+    url: base,
     description: 'Planificador de viajes con inteligencia artificial',
   }
 }

@@ -291,14 +291,14 @@ function buildTrip(
     presupuestoPorPersona: Math.round(presupuestoTotal / Math.max(1, personas)),
     dias,
     paquete,
-    resumenViaje: `Itinerario de ejemplo por Tokio (paquete ${paquete}). Son datos de demostración para que veas la app completa sin configurar ninguna API key.`,
+    moneda: 'USD',
+    vueloEstimadoPorPersona: 0,
+    resumenViaje: `Itinerario de ejemplo por Tokio (paquete ${paquete}) para que veas cómo funciona Wayio.`,
     consejos: [
       'Compra una tarjeta Suica para el transporte.',
       'Lleva efectivo: muchos sitios no aceptan tarjeta.',
     ],
-    advertencias: [
-      'Datos de demostración. Configura una API key de IA (Groq o Anthropic) en el .env para generar itinerarios reales.',
-    ],
+    advertencias: ['Itinerario de ejemplo con datos ilustrativos.'],
     listaActividades: [],
     actividadesPendientes: [],
   }
