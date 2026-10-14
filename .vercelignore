@@ -1,0 +1,8 @@
+# Vercel solo despliega la web: fuera la app móvil, la documentación, los
+# resultados de la evaluación de IA y, sobre todo, cualquier archivo .env
+# (las variables de producción viven en el panel de Vercel).
+mobile/
+docs/
+graphify-out/
+scripts/eval-ia/resultados/
+.env*
