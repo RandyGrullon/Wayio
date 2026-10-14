@@ -46,3 +46,7 @@ graphify-out/
 
 # resultados de la evaluación de IA (scripts/eval-ia)
 scripts/eval-ia/resultados/
+
+# cualquier .env con claves (lo añadió `vercel link`); las plantillas sí se versionan
+.env*
+!.env.example
