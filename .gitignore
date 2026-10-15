@@ -47,6 +47,10 @@ graphify-out/
 # resultados de la evaluación de IA (scripts/eval-ia)
 scripts/eval-ia/resultados/
 
+# videos de lanzamiento (/brag + Hyperframes): pesados, no se versionan
+brag-output*/
+brag-serie/
+
 # cualquier .env con claves (lo añadió `vercel link`); las plantillas sí se versionan
 .env*
 !.env.example
