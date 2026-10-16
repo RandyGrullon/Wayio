@@ -43,3 +43,7 @@ next-env.d.ts
 
 # graphify (knowledge graph, generado por la tool — no se versiona)
 graphify-out/
+
+# videos de lanzamiento (/brag + Hyperframes): pesados, no se versionan
+brag-output*/
+brag-serie/
