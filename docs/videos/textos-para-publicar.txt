@@ -1,0 +1,29 @@
+TEXTOS PARA PUBLICAR · serie de videos de Wayio (2026-10-15)
+
+[01 · global]
+Wayio en 25 segundos: le cuentas tu viaje, eliges entre tres versiones, lo recorres en el mapa por calles reales y te acompaña mientras viajas, solo o en grupo. Hecho en RD.
+
+Pruébalo: wayio-ten.vercel.app
+
+[02 · cuentalo]
+Wayio: cuéntalo a tu manera. Escribe tu viaje como se lo contarías a un amigo y la IA entiende destino, viajeros y presupuesto, rellena el formulario y solo te pregunta lo que falta antes de trazarlo. wayio-ten.vercel.app
+
+[03 · versiones]
+Wayio no te da un plan: te da tres. Básico, Confort y Premium del mismo viaje, cada uno con cuánto encaja en tu presupuesto y en tu moneda (USD, EUR o DOP). Tú eliges y, si dudas, las comparas en tabla: wayio-ten.vercel.app
+
+[04 · mapa]
+En Wayio el itinerario no une las paradas con una regla: cada día va por las calles reales, a pie o en carro, con su color y sus horas. Y cada parada abre «Cómo llegar» en Google Maps, Waze o Apple Maps. wayio-ten.vercel.app
+
+[05 · asistente]
+Se te hizo tarde. Pasa. Durante el viaje, el modo en vivo de Wayio sabe cuándo llegas a cada parada, te avisa si vas tarde y la IA te propone mover la actividad al mejor hueco libre de tu itinerario: tú decides si la aceptas.
+
+[06 · ajustar]
+Wayio · Ajustar con IA: con el itinerario ya hecho, pides cambios en lenguaje natural y el plan se reacomoda conservando lo que ya tenías, con lo nuevo resaltado. Y siempre puedes deshacer el último ajuste o editarlo a mano.
+
+[07 · grupo]
+En Wayio un viaje se comparte con un enlace y se vuelve una sala de grupo: el mismo itinerario para todos, un chat por viaje, votaciones donde gana la mayoría y los gastos con las cuentas hechas. Samaná con los panas, sin perder el hilo.
+
+[08 · tutorial]
+Cómo usar Wayio en 90 segundos: cuéntale tu viaje, elige entre tres versiones, recórrelo en el mapa, ajústalo con IA, compártelo con tu grupo y deja que te acompañe mientras viajas.
+
+Empieza gratis, sin tarjeta: wayio-ten.vercel.app
