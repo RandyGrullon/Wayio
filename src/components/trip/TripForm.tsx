@@ -122,6 +122,10 @@ export interface TripFormProps {
   envioSoloEscritorio?: boolean | undefined
   /** layoutId del CTA (se encoge hasta el aro de origen de RutaDeFases). */
   ctaLayoutId?: string | undefined
+  /** Texto del CTA (por defecto «Trazar mi viaje»; sin sesión, otro). */
+  textoEnvio?: string | undefined
+  /** Icono final del CTA (por defecto la flecha). */
+  iconoEnvio?: ReactNode
 }
 
 export function TripForm({
@@ -140,6 +144,8 @@ export function TripForm({
   onDesdeVideo,
   envioSoloEscritorio = false,
   ctaLayoutId,
+  textoEnvio = 'Trazar mi viaje',
+  iconoEnvio,
 }: TripFormProps) {
   const [interno, setInterno] = useState<TripFormDraft>(() => ({
     ...borradorVacio(),
@@ -213,11 +219,11 @@ export function TripForm({
       type="submit"
       size="xl"
       fullWidth
-      iconEnd={<ArrowRight />}
+      iconEnd={iconoEnvio ?? <ArrowRight />}
       loading={loading}
       loadingText="Trazando tu viaje…"
     >
-      Trazar mi viaje
+      {textoEnvio}
     </Button>
   )
 

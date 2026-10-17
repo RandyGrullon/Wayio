@@ -2,7 +2,7 @@
 
 import { useState, useSyncExternalStore } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
-import { ArrowRight, ChevronDown, Users } from 'lucide-react'
+import { ArrowRight, ChevronDown, LogIn, UserRound, Users } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { useToast, useToastOffset } from '@/components/ui/Toast'
 import { TripForm, enfocarCampo } from '@/components/trip/TripForm'
@@ -51,6 +51,13 @@ export interface PasoDatosProps {
   /** Errores del servidor (400) asignados a cada campo. */
   errores?: ErroresForm | undefined
   onSubmit: (data: TripFormData) => void
+  /**
+   * Ya se sabe que no hay sesión (y trazar la exige): el CTA dice «Inicia
+   * sesión y traza» y una línea fija explica por qué.
+   */
+  sinSesion?: boolean | undefined
+  /** «Trazar» espera a saber si hay sesión (CTA en carga). */
+  trazando?: boolean | undefined
 }
 
 /**
@@ -65,6 +72,8 @@ export function PasoDatos({
   onInterpretacion,
   errores,
   onSubmit,
+  sinSesion = false,
+  trazando = false,
 }: PasoDatosProps) {
   const { success } = useToast()
   const [videoAbierto, setVideoAbierto] = useState(false)
@@ -186,6 +195,16 @@ export function PasoDatos({
             Cuéntalo a tu manera o ve campo por campo. Con lo que nos des,
             trazamos tres versiones para que elijas.
           </p>
+          {sinSesion ? (
+            <p className="mt-3 flex max-w-[60ch] items-start gap-2 text-body-s text-fg-muted">
+              <UserRound
+                aria-hidden="true"
+                strokeWidth={1.75}
+                className="mt-0.5 size-4 shrink-0 text-fg-subtle"
+              />
+              Necesitas una cuenta gratis para que la IA trace tu viaje.
+            </p>
+          ) : null}
 
           <div className="mt-10">
             <TripForm
@@ -204,6 +223,10 @@ export function PasoDatos({
               extraDescripcion={<div className="lg:hidden">{lqe}</div>}
               envioSoloEscritorio
               ctaLayoutId={escritorio ? 'ruta-origen' : undefined}
+              loading={trazando}
+              {...(sinSesion
+                ? { textoEnvio: 'Inicia sesión y traza', iconoEnvio: <LogIn /> }
+                : {})}
             />
           </div>
         </div>
@@ -238,9 +261,11 @@ export function PasoDatos({
           type="submit"
           form={ID_FORMULARIO}
           size="md"
-          iconEnd={<ArrowRight />}
+          iconEnd={sinSesion ? <LogIn /> : <ArrowRight />}
+          loading={trazando}
+          loadingText="Trazando…"
         >
-          Trazar
+          {sinSesion ? 'Inicia sesión y traza' : 'Trazar'}
         </Button>
       </BarraInferior>
 

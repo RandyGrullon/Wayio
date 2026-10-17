@@ -1,9 +1,9 @@
 'use client'
 
 import { useEffect, useState, useSyncExternalStore, useTransition } from 'react'
-import type { ReactNode } from 'react'
+import type { MouseEvent, ReactNode } from 'react'
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import { AnimatePresence, m } from 'framer-motion'
 import {
   ArrowLeft,
@@ -25,6 +25,7 @@ import { ThemeToggle } from '@/components/ui/ThemeToggle'
 import { DUR, EASE } from '@/components/ui/motion'
 import { useUser } from '@/hooks/useUser'
 import { signOut } from '@/lib/auth/actions'
+import { urlLogin } from '@/lib/auth/irALogin'
 import { isSupabaseConfigured } from '@/lib/supabase/config'
 import { cn } from '@/lib/utils/cn'
 import {
@@ -120,6 +121,7 @@ export function SiteHeader({
   className,
 }: SiteHeaderProps = {}) {
   const pathname = usePathname()
+  const router = useRouter()
   const { user, loading } = useUser()
   const demo = !isSupabaseConfigured()
   const scrolled = useSyncExternalStore(suscribirScroll, conScroll, sinScroll)
@@ -174,6 +176,25 @@ export function SiteHeader({
       }
       await signOut()
     })
+
+  // «Iniciar sesión» vuelve a la página actual. El href lleva la ruta (sirve
+  // sin JS y en el render del servidor); al pulsar se usa también la query
+  // del momento (el planificador cambia ?paso= con history.pushState).
+  const hrefLogin = urlLogin(pathname)
+  const irALogin = (e: MouseEvent<HTMLAnchorElement>, alSalir?: () => void) => {
+    alSalir?.()
+    const destino = urlLogin(
+      `${window.location.pathname}${window.location.search}`
+    )
+    if (destino === hrefLogin) return
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) {
+      // Nueva pestaña o ventana: el navegador usa el href del momento.
+      e.currentTarget.href = destino
+      return
+    }
+    e.preventDefault()
+    router.push(destino)
+  }
 
   const nombre = user ? nombreDe(user) : ''
   const menuUsuario = user ? (
@@ -237,10 +258,11 @@ export function SiteHeader({
   const iniciarSesion =
     !user && !loading && !demo ? (
       <ButtonLink
-        href="/login"
+        href={hrefLogin}
         variant="ghost"
         size="sm"
         className="hidden sm:inline-flex"
+        onClick={(e) => irALogin(e)}
       >
         Iniciar sesión
       </ButtonLink>
@@ -451,8 +473,8 @@ export function SiteHeader({
               </>
             ) : !demo && !loading ? (
               <Link
-                href="/login"
-                onClick={() => setMenuMovil(false)}
+                href={hrefLogin}
+                onClick={(e) => irALogin(e, () => setMenuMovil(false))}
                 className="flex h-12 items-center justify-between border-b border-border text-[17px] font-medium text-fg"
               >
                 Iniciar sesión

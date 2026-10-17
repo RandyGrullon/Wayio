@@ -236,7 +236,7 @@ export default async function DestinoPage({ params }: Props) {
                     Trazar {destino.nombreCorto} con IA
                   </ButtonLink>
                   <p className="mt-3 text-caption text-fg-subtle">
-                    Gratis · Tres versiones en uno o dos minutos
+                    Gratis con tu cuenta · Tres versiones en uno o dos minutos
                   </p>
                 </div>
               </div>

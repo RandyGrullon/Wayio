@@ -9,7 +9,7 @@ import type { AuthMode } from './LoginForm'
 export const metadata: Metadata = {
   title: 'Iniciar sesión',
   description:
-    'Entra en Wayio para guardar tus viajes, compartirlos y planificar en grupo.',
+    'Entra en Wayio para trazar tus viajes con IA, guardarlos, compartirlos y planificar en grupo.',
   robots: { index: false, follow: true },
 }
 

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Pencil, RotateCcw } from 'lucide-react'
+import { LogIn, Pencil, RotateCcw } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Callout } from '@/components/ui/Callout'
 import { Card, CardKicker } from '@/components/ui/Card'
@@ -29,6 +29,12 @@ export interface EstadoGeneracion {
   rapido: boolean
   demo: boolean
   error?: string
+  /**
+   * Por qué falló, cuando no es un error cualquiera: «sesion» (la sesión se
+   * cerró: se ofrece iniciar sesión) o «tope_diario» (Wayio llegó a su límite
+   * de IA de hoy: reintentar no sirve).
+   */
+  motivo?: 'sesion' | 'tope_diario'
 }
 
 const CONSEJOS: readonly (readonly string[])[] = [
@@ -60,6 +66,8 @@ export interface PasoTrazadoProps {
   gen: EstadoGeneracion
   onReintentar: () => void
   onEditar: () => void
+  /** «Iniciar sesión» cuando la sesión se cerró (deja el trazado pendiente). */
+  onIniciarSesion?: (() => void) | undefined
 }
 
 export function PasoTrazado({
@@ -67,12 +75,15 @@ export function PasoTrazado({
   gen,
   onReintentar,
   onEditar,
+  onIniciarSesion,
 }: PasoTrazadoProps) {
   const destino = formData.destinoSorpresa
     ? 'Destino sorpresa'
     : formData.destino
   const rango = formatRangoFechas(formData.fechaInicio, formData.fechaFin)
   const error = gen.estado === 'error'
+  const sinSesion = error && gen.motivo === 'sesion'
+  const topeDiario = error && gen.motivo === 'tope_diario'
 
   return (
     <div className="reticula min-h-dvh">
@@ -93,11 +104,62 @@ export function PasoTrazado({
 
         <div aria-live="polite" className="mt-10">
           <p className="font-display text-h2 text-fg">
-            {error ? 'No pudimos trazar tu viaje' : gen.label}
+            {sinSesion
+              ? 'Inicia sesión para trazar tu viaje'
+              : topeDiario
+                ? 'Por hoy no podemos trazar más viajes'
+                : error
+                  ? 'No pudimos trazar tu viaje'
+                  : gen.label}
           </p>
         </div>
 
-        {error ? (
+        {sinSesion ? (
+          <Callout
+            tone="info"
+            title="Tu sesión se cerró"
+            className="mt-6"
+            action={
+              <>
+                {onIniciarSesion ? (
+                  <Button icon={<LogIn />} onClick={onIniciarSesion} size="sm">
+                    Iniciar sesión
+                  </Button>
+                ) : null}
+                <Button
+                  variant="outline"
+                  icon={<Pencil />}
+                  onClick={onEditar}
+                  size="sm"
+                >
+                  Editar datos
+                </Button>
+              </>
+            }
+          >
+            {gen.error ??
+              'Inicia sesión y seguimos trazando tu viaje con los mismos datos.'}
+          </Callout>
+        ) : topeDiario ? (
+          <Callout
+            tone="warning"
+            title="La IA de Wayio descansa por hoy"
+            className="mt-6"
+            action={
+              <Button
+                variant="outline"
+                icon={<Pencil />}
+                onClick={onEditar}
+                size="sm"
+              >
+                Editar datos
+              </Button>
+            }
+          >
+            {gen.error ??
+              'Wayio llegó a su límite de IA por hoy. Vuelve a intentarlo mañana.'}
+          </Callout>
+        ) : error ? (
           <Callout
             tone="danger"
             title="Algo falló mientras lo trazábamos"

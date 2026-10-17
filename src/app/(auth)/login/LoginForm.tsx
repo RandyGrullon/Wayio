@@ -21,6 +21,7 @@ import {
   PASSWORD_MIN,
   RECUPERAR_PATH,
 } from '@/lib/auth/constants'
+import { modoLocalSinCuentas } from '@/lib/auth/irALogin'
 import type { AuthResult } from '@/lib/auth/types'
 import { GoogleG } from './GoogleG'
 
@@ -132,12 +133,12 @@ export function LoginForm({
     mode === 'login' ? (
       <AuthTitulo
         titulo="Bienvenido de vuelta"
-        subtitulo="Inicia sesión para guardar y compartir tus viajes."
+        subtitulo="Inicia sesión para trazar, guardar y compartir tus viajes."
       />
     ) : (
       <AuthTitulo
         titulo="Crea tu cuenta"
-        subtitulo="Empieza gratis, sin tarjeta."
+        subtitulo="Traza tus viajes con IA gratis, sin tarjeta."
       />
     )
 
@@ -168,7 +169,7 @@ export function LoginForm({
     <>
       {titulo}
       <div className="mt-8">
-        {demo ? (
+        {demo && modoLocalSinCuentas() ? (
           <Aviso
             tipo="info"
             className="mb-6"
@@ -185,6 +186,15 @@ export function LoginForm({
           >
             Puedes trazar un viaje ahora mismo; para guardarlo hará falta
             iniciar sesión cuando las cuentas estén listas.
+          </Aviso>
+        ) : demo ? (
+          <Aviso
+            tipo="info"
+            className="mb-6"
+            titulo="Las cuentas todavía no están disponibles"
+          >
+            Para trazar, guardar y compartir viajes hace falta una cuenta.
+            Vuelve a intentarlo más tarde.
           </Aviso>
         ) : null}
 

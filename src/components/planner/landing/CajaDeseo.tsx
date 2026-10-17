@@ -21,7 +21,8 @@ import { guardarSemilla } from '@/components/planner/semilla'
  *
  * Debajo: «Prefiero el formulario paso a paso» y «Desde un video», que abre
  * RecreateTrip; al confirmar, el destino y los lugares viajan al planificador
- * por sessionStorage.
+ * por sessionStorage. Analizar exige cuenta: si hay que iniciar sesión, lo
+ * escrito en la caja se guarda como semilla y el login vuelve al planificador.
  */
 
 const IDEAS: readonly { label: string; frase: string }[] = [
@@ -134,7 +135,11 @@ export function CajaDeseo() {
       <RecreateTrip
         open={video}
         onClose={() => setVideo(false)}
-        loginRedirect="/"
+        loginRedirect="/planificar?paso=datos"
+        onAntesDeLogin={() => {
+          const t = texto.trim()
+          if (t) guardarSemilla({ descripcion: t })
+        }}
         onConfirm={(destino, lugares) => {
           guardarSemilla({
             ...(destino.trim() ? { destino: destino.trim() } : {}),

@@ -1,12 +1,19 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { Compass, Pencil, Send, Undo2 } from 'lucide-react'
+import { Compass, LogIn, Pencil, Send, Undo2 } from 'lucide-react'
 import type { Trip } from '@/types/trip'
-import { Button, Spinner } from '@/components/ui/Button'
+import { Button, ButtonLink, Spinner } from '@/components/ui/Button'
 import { Chip } from '@/components/ui/Chip'
 import { Textarea } from '@/components/ui/Textarea'
+import { esAuthRequired, hayLogin, urlLogin } from '@/lib/auth/irALogin'
 import { cn } from '@/lib/utils/cn'
+import {
+  MENSAJE_TOPE_DIARIO,
+  esTopeDiario,
+  segundosDeEspera,
+  textoEspera,
+} from './limitesIA'
 
 export interface MensajeAjuste {
   id: string
@@ -16,6 +23,8 @@ export interface MensajeAjuste {
   error?: boolean
   /** El ajuste no está disponible: se ofrece editar a mano. */
   manual?: boolean
+  /** La sesión se cerró (401): se ofrece iniciar sesión. */
+  login?: boolean
 }
 
 interface AdjustChatProps {
@@ -29,6 +38,11 @@ interface AdjustChatProps {
   onDeshacer?: () => void
   /** Si la IA no está disponible, cambiar a la edición manual. */
   onEditarManual?: () => void
+  /**
+   * Ruta a la que volver tras iniciar sesión (401). Por defecto el paso
+   * itinerario del planificador, que guarda el viaje en sessionStorage.
+   */
+  loginRedirect?: string
   className?: string
 }
 
@@ -37,6 +51,7 @@ interface RespuestaAjuste {
   resumenCambios?: string
   error?: string
   code?: string
+  motivo?: string
   retryAfter?: number
 }
 
@@ -66,6 +81,7 @@ export function AdjustChat({
   puedeDeshacer = false,
   onDeshacer,
   onEditarManual,
+  loginRedirect = '/planificar?paso=itinerario',
   className,
 }: AdjustChatProps) {
   const [texto, setTexto] = useState('')
@@ -103,19 +119,44 @@ export function AdjustChat({
         agregar({ id: idMensaje(), rol: 'wayio', texto: resumen })
         return
       }
-      if (res.status === 429) {
-        const espera = Number(
-          data.retryAfter ?? res.headers.get('Retry-After') ?? 0
-        )
+      // Sin sesión (401): el itinerario sigue en sessionStorage y el login
+      // vuelve aquí. Sin Supabase no hay login: queda la edición a mano.
+      if (esAuthRequired(res.status, data)) {
+        const conLogin = hayLogin()
         agregar({
           id: idMensaje(),
           rol: 'wayio',
           error: true,
-          texto:
-            espera > 0
-              ? `Hiciste muchos ajustes seguidos. Espera ${Math.ceil(espera)} s e inténtalo de nuevo.`
-              : (data.error ??
-                'Hiciste muchos ajustes seguidos. Espera un momento.'),
+          ...(conLogin ? { login: true } : { manual: true }),
+          texto: conLogin
+            ? 'Inicia sesión para ajustar tu viaje con IA. Tu itinerario te espera aquí.'
+            : 'Ajustar con IA no está disponible ahora mismo. Puedes editar tu itinerario a mano.',
+        })
+        return
+      }
+      // Tope diario de Wayio: el servidor responde 503 ia_no_disponible
+      // (motivo tope_diario) y se ofrece editar a mano; un 429 con ese code
+      // se trata igual por si acaso.
+      if (esTopeDiario(data)) {
+        agregar({
+          id: idMensaje(),
+          rol: 'wayio',
+          error: true,
+          manual: true,
+          texto: data.error ?? MENSAJE_TOPE_DIARIO,
+        })
+        return
+      }
+      if (res.status === 429) {
+        const espera = segundosDeEspera(data, res)
+        agregar({
+          id: idMensaje(),
+          rol: 'wayio',
+          error: true,
+          texto: espera
+            ? `Hiciste muchos ajustes seguidos. Podrás volver a intentarlo ${textoEspera(espera)}.`
+            : (data.error ??
+              'Hiciste muchos ajustes seguidos. Espera un momento.'),
         })
         return
       }
@@ -204,6 +245,17 @@ export function AdjustChat({
                   >
                     Editar a mano
                   </Button>
+                ) : null}
+                {m.login ? (
+                  <ButtonLink
+                    href={urlLogin(loginRedirect)}
+                    variant="link"
+                    size="sm"
+                    icon={<LogIn />}
+                    className="mt-1.5"
+                  >
+                    Iniciar sesión
+                  </ButtonLink>
                 ) : null}
               </div>
             )

@@ -18,6 +18,13 @@ import { Button } from '@/components/ui/Button'
 import { SkeletonPortada, SkeletonRegion } from '@/components/ui/Skeleton'
 import { useToast } from '@/components/ui/Toast'
 import { DUR, EASE } from '@/components/ui/motion'
+import {
+  MENSAJE_TOPE_DIARIO,
+  codigoDe,
+  esTopeDiario,
+  segundosDeEspera,
+  textoEspera,
+} from '@/components/trip/limitesIA'
 import { enfocarCampo } from '@/components/trip/TripForm'
 import { ResultView } from '@/components/trip/ResultView'
 import { useBackgroundGeocode } from '@/hooks/useBackgroundGeocode'
@@ -25,6 +32,7 @@ import { useUser } from '@/hooks/useUser'
 import type { GenerateResult, ProgressEvent } from '@/lib/ai/generateTrips'
 import { StreamGenerateError, streamGenerate } from '@/lib/ai/streamClient'
 import { track } from '@/lib/analytics/events'
+import { esAuthRequired, iaExigeSesion, urlLogin } from '@/lib/auth/irALogin'
 import { getDestino } from '@/lib/seo/destinos'
 import { isSupabaseConfigured } from '@/lib/supabase/config'
 import type { InterpretResult } from '@/lib/validations/interpret'
@@ -32,6 +40,7 @@ import type { TripForm } from '@/lib/validations/tripForm'
 import type { Trip } from '@/types/trip'
 import {
   MAX_DESCRIPCION_VISUAL,
+  borradorDesdeFormulario,
   borradorVacio,
   erroresDesdeServidor,
   type CampoForm,
@@ -40,12 +49,16 @@ import {
   type TripFormDraft,
 } from './borrador'
 import {
+  borrarGenerarPendiente,
   borrarPendiente,
   esTrip,
   firmaDe,
   guardarFlujo,
+  guardarGenerarPendiente,
   guardarPendiente,
+  hayFlujoGuardado,
   leerFlujo,
+  leerGenerarPendiente,
   leerPendiente,
   type GuardadoFlujo,
 } from './flujoStorage'
@@ -68,6 +81,12 @@ import { indiceDeFase } from './RutaDeFases'
  * - Al cambiar de paso: scroll a 0, foco al H1 y document.title.
  * - Guardar o compartir sin sesión deja el itinerario en
  *   'wayio-pendiente-v1' y lo guarda solo al volver del login (DA-14).
+ * - Trazar exige cuenta (la IA cuesta): «Trazar» sin sesión deja el
+ *   formulario en 'wayio-generar-pendiente-v1' (localStorage, 2 h) y lo
+ *   traza solo al volver de ESE login (el redirect lleva ?reanudar=1, sin
+ *   datos del formulario); cualquier otra visita no traza nada sola. Un 401
+ *   a mitad (sesión caducada) hace lo mismo. En local sin Supabase se traza
+ *   sin cuenta (modoLocalSinCuentas).
  */
 
 const PASOS: readonly PasoRuta[] = [
@@ -82,6 +101,27 @@ function parsePaso(v: string | null): PasoRuta | null {
 }
 
 const urlPaso = (paso: PasoRuta) => `/planificar?paso=${paso}`
+
+/**
+ * Bandera del redirect del login pedido por «Trazar»: solo con ella se retoma
+ * el trazado pendiente. No lleva datos del formulario (esos van en
+ * localStorage) y sobrevive a la confirmación por correo, que conserva el
+ * destino completo.
+ */
+const PARAM_REANUDAR = 'reanudar'
+const URL_REANUDAR_TRAZADO = `${urlPaso('datos')}&${PARAM_REANUDAR}=1`
+
+/** Quita ?reanudar de la URL (se consume una sola vez). */
+function quitarBanderaReanudar(): void {
+  const url = new URL(window.location.href)
+  if (!url.searchParams.has(PARAM_REANUDAR)) return
+  url.searchParams.delete(PARAM_REANUDAR)
+  window.history.replaceState(
+    null,
+    '',
+    `${url.pathname}${url.search}${url.hash}`
+  )
+}
 
 const sinSuscripcion = () => () => {}
 
@@ -99,8 +139,15 @@ const VARIANTES_PASO = {
   }),
 }
 
-/** Error con un mensaje apto para mostrar al usuario. */
-class ErrorVisible extends Error {}
+/** Error con un mensaje apto para mostrar al usuario (y el code del servidor). */
+class ErrorVisible extends Error {
+  readonly code: string | null
+
+  constructor(message: string, code: string | null = null) {
+    super(message)
+    this.code = code
+  }
+}
 
 function mensajeDe(data: unknown): string | null {
   if (typeof data !== 'object' || data === null) return null
@@ -108,33 +155,46 @@ function mensajeDe(data: unknown): string | null {
   return typeof e === 'string' && e.trim() ? e : null
 }
 
-/** «Espera …» del 429 con los segundos de Retry-After (si llegaron). */
+/**
+ * Límite personal (429 rate_limit) con los segundos de Retry-After: con las
+ * ventanas por hora y por día la espera puede ser de minutos, horas o hasta
+ * mañana.
+ */
 function mensajeLimite(retryAfter: number | null): string {
   if (retryAfter === null || retryAfter <= 0) {
     return 'Has trazado varios viajes seguidos. Espera unos minutos y vuelve a intentarlo.'
   }
-  const minutos = Math.ceil(retryAfter / 60)
-  const espera =
-    minutos <= 1
-      ? 'un minuto'
-      : minutos < 60
-        ? `${minutos} minutos`
-        : 'una hora'
-  return `Has trazado varios viajes seguidos. Podrás volver a intentarlo en ${espera}.`
-}
-
-/** retryAfter (segundos) del cuerpo JSON de un 429 de /api/generate. */
-function retryAfterDe(data: unknown): number | null {
-  if (typeof data !== 'object' || data === null) return null
-  const n = Number((data as { retryAfter?: unknown }).retryAfter)
-  return Number.isFinite(n) && n > 0 ? n : null
+  const espera = textoEspera(retryAfter)
+  return retryAfter < 3600
+    ? `Has trazado varios viajes seguidos. Podrás volver a intentarlo ${espera}.`
+    : `Llegaste al límite de viajes que puedes trazar por ahora. Podrás volver a intentarlo ${espera}.`
 }
 
 const ERROR_GENERICO = 'No pudimos trazar tu viaje. Inténtalo de nuevo.'
 
+const MENSAJE_SESION =
+  'Inicia sesión y seguimos trazando tu viaje con los mismos datos.'
+
+/** code del servidor que acompaña al error (cuerpo del 4xx o evento SSE). */
+function codigoDeError(err: unknown): string | null {
+  if (err instanceof StreamGenerateError) return err.code
+  if (err instanceof ErrorVisible) return err.code
+  return null
+}
+
+/** ¿El error pide iniciar sesión? (401 o code auth_required). */
+function esErrorDeSesion(err: unknown): boolean {
+  if (err instanceof StreamGenerateError) {
+    return esAuthRequired(err.status, err.code)
+  }
+  return codigoDeError(err) === 'auth_required'
+}
+
 function mensajeDeError(err: unknown): string {
   if (err instanceof ErrorVisible) return err.message
   if (err instanceof StreamGenerateError) {
+    // Tope diario de Wayio (429 antes del stream o evento SSE a mitad).
+    if (esTopeDiario(err.code)) return err.mensaje ?? MENSAJE_TOPE_DIARIO
     if (err.status === 429) return mensajeLimite(err.retryAfter)
     if (err.status !== null && err.status >= 500) {
       return 'El servicio está ocupado ahora mismo. Inténtalo de nuevo en un momento.'
@@ -195,14 +255,27 @@ function Flujo() {
   const { user, loading: cargandoUsuario } = useUser()
   const { success, error: toastError, toast } = useToast()
 
+  // ¿Esta visita es la vuelta del login que pidió «Trazar»? (ver
+  // PARAM_REANUDAR). Se lee al montar: la URL cambia en cuanto se traza.
+  const [vieneDeTrazar] = useState(() => params.get(PARAM_REANUDAR) === '1')
+
   // Estado inicial: sessionStorage + semillas de la URL o de la landing.
   const [inicial] = useState(() => {
+    const conFlujo = hayFlujoGuardado()
     const e = leerFlujo()
     const semilla = leerSemilla()
     const pendiente = leerPendiente()
+    // Solo en la vuelta de ese login: en un equipo compartido, otra visita no
+    // debe precargar el formulario que dejó otra persona.
+    const generarPendiente = vieneDeTrazar ? leerGenerarPendiente() : null
     const d = params.get('d')
     const slug = params.get('destino')
-    let borrador: TripFormDraft = e.borrador
+    // Vuelta del login en otra pestaña (confirmación por correo): esta pestaña
+    // no tiene el flujo, pero el trazado pendiente trae el formulario.
+    let borrador: TripFormDraft =
+      !conFlujo && generarPendiente
+        ? borradorDesdeFormulario(generarPendiente.form)
+        : e.borrador
     let interpretacion: InterpretResult | null = e.interpretacion
     const descripcion = d ?? semilla?.descripcion
     if (descripcion?.trim()) {
@@ -267,9 +340,26 @@ function Flujo() {
     accion: 'guardar' | 'compartir'
     trip: Trip
   } | null>(null)
+  // «Trazar» pulsado mientras useUser aún comprueba la sesión: igual que
+  // guardar, espera y sigue (traza o va al login) en cuanto se sabe.
+  const [trazarEnCola, setTrazarEnCola] = useState<{
+    form: TripForm
+    noCache: boolean
+  } | null>(null)
 
   const abortRef = useRef<AbortController | null>(null)
   const focoCampoRef = useRef<CampoForm | null>(null)
+  // Última petición de trazado (para «Iniciar sesión» tras un 401).
+  const ultimaPeticionRef = useRef<{ form: TripForm; noCache: boolean } | null>(
+    null
+  )
+  // El trazado en curso se relanzó al volver del login: si aun así da 401 no
+  // se vuelve a mandar al login solo (evita un bucle) y se ofrece el botón.
+  const trasLoginRef = useRef(false)
+
+  // Trazar exige cuenta salvo en local sin Supabase (modoLocalSinCuentas).
+  const exigeSesion = iaExigeSesion()
+  const sinSesion = exigeSesion && !cargandoUsuario && !user
 
   // ── Paso efectivo (la URL manda, pero solo si hay datos para él) ────────
   // El paso de la URL se refleja en estado local: ir() lo cambia al instante
@@ -460,11 +550,23 @@ function Flujo() {
     [ir]
   )
 
+  // Ir al login dejando el trazado pendiente (se define más abajo: usa el
+  // estado del flujo para guardarlo antes de salir).
+  const irALoginTrazarRef = useRef<(form: TripForm, noCache: boolean) => void>(
+    () => {}
+  )
+
   const generar = useCallback(
     async (form: TripForm, noCache = false) => {
+      // Cualquier trazado deja obsoleto el pendiente del login (si este da
+      // 401, irALoginParaTrazar lo vuelve a guardar).
+      borrarGenerarPendiente()
       abortRef.current?.abort()
       const ctrl = new AbortController()
       abortRef.current = ctrl
+      ultimaPeticionRef.current = { form, noCache }
+      const trasLogin = trasLoginRef.current
+      trasLoginRef.current = false
       const desdeTrazado =
         parsePaso(new URLSearchParams(window.location.search).get('paso')) ===
         'trazado'
@@ -541,10 +643,20 @@ function Flujo() {
               )
               return
             }
+            if (esAuthRequired(res.status, data)) {
+              throw new ErrorVisible(MENSAJE_SESION, 'auth_required')
+            }
+            if (esTopeDiario(data)) {
+              throw new ErrorVisible(
+                mensajeDe(data) ?? MENSAJE_TOPE_DIARIO,
+                codigoDe(data)
+              )
+            }
             throw new ErrorVisible(
               res.status === 429
-                ? mensajeLimite(retryAfterDe(data))
-                : (mensajeDe(data) ?? ERROR_GENERICO)
+                ? mensajeLimite(segundosDeEspera(data, res))
+                : (mensajeDe(data) ?? ERROR_GENERICO),
+              codigoDe(data)
             )
           }
           result = data as GenerateResult
@@ -599,8 +711,33 @@ function Flujo() {
       } catch (err) {
         if (ctrl.signal.aborted) return
         abortRef.current = null
+        // Sesión caducada (401 / auth_required): no es un error del trazado.
+        // Se deja pendiente y se va al login, salvo si este trazado ya venía
+        // del login (evita un bucle): entonces se ofrece el botón.
+        if (esErrorDeSesion(err)) {
+          setGen((g) =>
+            g
+              ? {
+                  ...g,
+                  estado: 'error',
+                  error: MENSAJE_SESION,
+                  motivo: 'sesion',
+                }
+              : g
+          )
+          if (!trasLogin) irALoginTrazarRef.current(form, noCache)
+          return
+        }
+        const tope = esTopeDiario(codigoDeError(err))
         setGen((g) =>
-          g ? { ...g, estado: 'error', error: mensajeDeError(err) } : g
+          g
+            ? {
+                ...g,
+                estado: 'error',
+                error: mensajeDeError(err),
+                ...(tope ? { motivo: 'tope_diario' as const } : {}),
+              }
+            : g
         )
       }
     },
@@ -718,7 +855,53 @@ function Flujo() {
       guardado,
       interpretacion,
     })
-    router.push(`/login?redirect=${encodeURIComponent(urlPaso('itinerario'))}`)
+    router.push(urlLogin(urlPaso('itinerario')))
+  }
+
+  // ── Trazar (exige cuenta) ────────────────────────────────────────────────
+
+  /**
+   * Deja el trazado pendiente (localStorage, 2 h) y va al login, que vuelve a
+   * /planificar?paso=datos&reanudar=1 y allí se traza solo. El flujo se
+   * guarda síncrono: la escritura con retardo se perdería al navegar.
+   */
+  const irALoginParaTrazar = (form: TripForm, noCache: boolean) => {
+    guardarGenerarPendiente(form, noCache)
+    guardarFlujo({
+      v: 1,
+      borrador,
+      formData,
+      resultado,
+      paquete,
+      itinerario,
+      guardado,
+      interpretacion,
+    })
+    router.push(urlLogin(URL_REANUDAR_TRAZADO))
+  }
+
+  /** «Trazar», «Reintentar» y «Otra versión»: sin sesión, primero el login. */
+  const trazar = (form: TripForm, noCache = false) => {
+    if (exigeSesion && !user) {
+      if (!isSupabaseConfigured()) {
+        toastError('Trazar viajes no está disponible ahora mismo.')
+        return
+      }
+      if (cargandoUsuario) {
+        setTrazarEnCola({ form, noCache })
+        return
+      }
+      irALoginParaTrazar(form, noCache)
+      return
+    }
+    void generar(form, noCache)
+  }
+
+  /** «Iniciar sesión» del paso trazado (tras un 401). */
+  const iniciarSesionDesdeTrazado = () => {
+    const ultima = ultimaPeticionRef.current
+    if (ultima) irALoginParaTrazar(ultima.form, ultima.noCache)
+    else router.push(urlLogin(urlPaso('datos')))
   }
 
   const guardarViaje = async (trip: Trip) => {
@@ -813,9 +996,10 @@ function Flujo() {
   }
 
   // Al volver del login: guarda (o comparte) lo que quedó pendiente.
-  const accionesRef = useRef({ guardarViaje, compartirViaje })
+  const accionesRef = useRef({ guardarViaje, compartirViaje, trazar })
   useEffect(() => {
-    accionesRef.current = { guardarViaje, compartirViaje }
+    accionesRef.current = { guardarViaje, compartirViaje, trazar }
+    irALoginTrazarRef.current = irALoginParaTrazar
   })
   const pendienteHecho = useRef(false)
   useEffect(() => {
@@ -844,6 +1028,41 @@ function Flujo() {
     return () => window.clearTimeout(id)
   }, [enCola, cargandoUsuario])
 
+  // Al volver del login que pidió «Trazar» (?reanudar=1): traza lo que quedó
+  // pendiente, una sola vez. Sin la bandera no se traza nada solo (login
+  // abandonado, otra cuenta en el mismo equipo, formulario editado después).
+  // Si el servidor aún responde 401, trasLoginRef evita el bucle de login.
+  const generarPendienteHecho = useRef(false)
+  useEffect(() => {
+    if (!vieneDeTrazar || generarPendienteHecho.current) return
+    if (cargandoUsuario || !user) return
+    generarPendienteHecho.current = true
+    quitarBanderaReanudar()
+    // «Trazar» pulsado mientras cargaba la sesión: gana lo que pidió ahora
+    // (si no, saldrían dos trazados y el límite contaría ambos).
+    if (trazarEnCola || paso !== 'datos') {
+      borrarGenerarPendiente()
+      return
+    }
+    const pendiente = leerGenerarPendiente()
+    if (!pendiente) return
+    borrarGenerarPendiente()
+    window.setTimeout(() => {
+      trasLoginRef.current = true
+      void generar(pendiente.form, pendiente.noCache)
+    }, 0)
+  }, [vieneDeTrazar, cargandoUsuario, user, paso, trazarEnCola, generar])
+
+  // La sesión ya se conoce: sigue el trazado que quedó en cola.
+  useEffect(() => {
+    if (!trazarEnCola || cargandoUsuario) return
+    const id = window.setTimeout(() => {
+      setTrazarEnCola(null)
+      accionesRef.current.trazar(trazarEnCola.form, trazarEnCola.noCache)
+    }, 0)
+    return () => window.clearTimeout(id)
+  }, [trazarEnCola, cargandoUsuario])
+
   // ── Render ───────────────────────────────────────────────────────────────
 
   const pasosHref: Partial<Record<PasoRuta, string>> = {
@@ -857,8 +1076,9 @@ function Flujo() {
       <PasoTrazado
         formData={formData}
         gen={gen}
-        onReintentar={() => void generar(formData)}
+        onReintentar={() => trazar(formData)}
         onEditar={editarDesdeError}
+        onIniciarSesion={iniciarSesionDesdeTrazado}
       />
     )
   } else if (paso === 'versiones' && resultado && formData) {
@@ -870,7 +1090,7 @@ function Flujo() {
         onPaquete={setPaquete}
         onVerItinerario={() => handleSelectPackage(paquete)}
         onEditar={editarCampo}
-        onReintentar={() => void generar(formData, true)}
+        onReintentar={() => trazar(formData, true)}
       />
     )
   } else if (paso === 'itinerario' && itinerario) {
@@ -895,7 +1115,7 @@ function Flujo() {
         onSave={() => void guardarViaje(itinerario)}
         onShare={() => void compartirViaje(itinerario)}
         onRegenerate={() => {
-          if (formData) void generar(formData, true)
+          if (formData) trazar(formData, true)
         }}
         onChangePackage={() => ir('versiones', 'push')}
         onNewTrip={nuevoViaje}
@@ -909,7 +1129,9 @@ function Flujo() {
         interpretacion={interpretacion}
         onInterpretacion={setInterpretacion}
         errores={erroresServidor}
-        onSubmit={(data) => void generar(data)}
+        onSubmit={(data) => trazar(data)}
+        sinSesion={sinSesion}
+        trazando={trazarEnCola !== null}
       />
     )
   }

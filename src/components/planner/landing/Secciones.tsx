@@ -77,7 +77,7 @@ export function Portada() {
           <div className="wy-hero-item mt-10" style={item(3)}>
             <CajaDeseo />
             <p className="mt-6 text-caption text-fg-subtle">
-              Gratis para empezar · Sin tarjeta · {DESTINOS.length} guías de
+              Gratis con tu cuenta · Sin tarjeta · {DESTINOS.length} guías de
               destino
             </p>
           </div>

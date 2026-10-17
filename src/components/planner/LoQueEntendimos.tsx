@@ -307,13 +307,15 @@ export function LoQueEntendimos({
         {estado.tipo === 'error' ? (
           <div className="text-body-s text-fg-muted">
             <p>{estado.mensaje}</p>
-            <Button
-              variant="link"
-              className="mt-1.5 text-[15px]"
-              onClick={onReintentar}
-            >
-              Reintentar
-            </Button>
+            {estado.reintentable !== false ? (
+              <Button
+                variant="link"
+                className="mt-1.5 text-[15px]"
+                onClick={onReintentar}
+              >
+                Reintentar
+              </Button>
+            ) : null}
           </div>
         ) : null}
         {resultado && estado.tipo !== 'error' ? (

@@ -1,6 +1,6 @@
 import type { GenerateResult } from '@/lib/ai/generateTrips'
 import type { InterpretResult } from '@/lib/validations/interpret'
-import type { TripForm } from '@/lib/validations/tripForm'
+import { TripFormSchema, type TripForm } from '@/lib/validations/tripForm'
 import type { Trip } from '@/types/trip'
 import {
   borradorVacio,
@@ -199,6 +199,74 @@ export function leerPendiente(): Pendiente | null {
 
 export function borrarPendiente(): void {
   borrar(CLAVE_PENDIENTE)
+}
+
+// ─── Trazar pendiente (sin sesión) ─────────────────────────────────────────
+
+/**
+ * Trazar exige cuenta: al pulsar «Trazar» sin sesión el formulario queda aquí
+ * y se traza solo al volver de ESE login (/planificar?paso=datos&reanudar=1,
+ * ver PlannerFlow). Va en localStorage (no en sessionStorage) para sobrevivir
+ * a la confirmación del registro o al enlace mágico abiertos desde el correo
+ * en otra pestaña; caduca a las 2 h y se borra al usarse o al empezar
+ * cualquier otro trazado. Nunca viaja en la URL.
+ */
+export const CLAVE_GENERAR_PENDIENTE = 'wayio-generar-pendiente-v1'
+
+export interface GenerarPendiente {
+  form: TripForm
+  noCache: boolean
+  creado: number
+}
+
+export function guardarGenerarPendiente(
+  form: TripForm,
+  noCache: boolean
+): boolean {
+  try {
+    window.localStorage.setItem(
+      CLAVE_GENERAR_PENDIENTE,
+      JSON.stringify({ form, noCache, creado: Date.now() })
+    )
+    return true
+  } catch {
+    return false
+  }
+}
+
+export function borrarGenerarPendiente(): void {
+  try {
+    window.localStorage.removeItem(CLAVE_GENERAR_PENDIENTE)
+  } catch {
+    // Sin almacenamiento: no hay nada que borrar.
+  }
+}
+
+export function leerGenerarPendiente(): GenerarPendiente | null {
+  let v: unknown = null
+  try {
+    const raw = window.localStorage.getItem(CLAVE_GENERAR_PENDIENTE)
+    v = raw ? (JSON.parse(raw) as unknown) : null
+  } catch {
+    return null
+  }
+  if (!esObjeto(v)) return null
+  const creado = Number(v['creado'])
+  const form = TripFormSchema.safeParse(v['form'])
+  if (
+    !form.success ||
+    !Number.isFinite(creado) ||
+    Date.now() - creado > CADUCIDAD_PENDIENTE
+  ) {
+    borrarGenerarPendiente()
+    return null
+  }
+  return { form: form.data, noCache: v['noCache'] === true, creado }
+}
+
+/** ¿Esta pestaña tiene un flujo guardado? (otra pestaña empieza vacía). */
+export function hayFlujoGuardado(): boolean {
+  return leer(CLAVE_FLUJO) !== null
 }
 
 // ─── Firma de un itinerario ────────────────────────────────────────────────

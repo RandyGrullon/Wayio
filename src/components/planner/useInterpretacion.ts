@@ -6,6 +6,11 @@ import {
   type InterpretResult,
 } from '@/lib/validations/interpret'
 import { MAX_DESCRIPCION } from '@/lib/validations/tripForm'
+import {
+  MENSAJE_TOPE_DIARIO,
+  esTopeDiario,
+  segundosDeEspera,
+} from '@/components/trip/limitesIA'
 import { track } from '@/lib/analytics/events'
 import { hoyLocal } from '@/lib/utils/formatters'
 
@@ -14,13 +19,18 @@ import { hoyLocal } from '@/lib/utils/formatters'
  * 00-generacion.md). Se lanza sola al dejar de escribir (debounce), al salir
  * del campo o con «Entender mi viaje». Si la IA no está configurada (503) el
  * bloque «Lo que entendimos» desaparece y el formulario sigue a mano.
+ *
+ * Un 429 (límite personal o tope diario de Wayio, code 'tope_diario') NO
+ * apaga la función para toda la sesión: muestra el aviso, deja seguir con el
+ * formulario y no vuelve a llamar sola hasta que pase la espera.
  */
 
 export type EstadoInterpretacion =
   | { tipo: 'inactivo' }
   | { tipo: 'cargando'; previo: InterpretResult | null }
   | { tipo: 'listo'; resultado: InterpretResult }
-  | { tipo: 'error'; mensaje: string }
+  /** reintentable: false oculta «Reintentar» (límite o tope: hay que esperar). */
+  | { tipo: 'error'; mensaje: string; reintentable?: boolean }
   | { tipo: 'no-disponible' }
 
 /** Marca de sesión: la interpretación no está disponible en esta instalación. */
@@ -28,6 +38,9 @@ const CLAVE_NO_DISPONIBLE = 'wayio-interpret-off'
 /** Mínimo de caracteres para interpretar sola (el botón admite desde 3). */
 const MIN_AUTO = 15
 const ESPERA_MS = 1200
+/** Sin Retry-After, cuánto se deja de interpretar sola tras un 429. */
+const PAUSA_429_MS = 10 * 60 * 1000
+const SEGUIR = 'Puedes seguir con el formulario.'
 
 function noDisponible(): boolean {
   try {
@@ -70,6 +83,8 @@ export function useInterpretacion({
   // Último texto interpretado: no se repite la llamada si no cambió.
   const ultimoRef = useRef<string>(inicial ? texto.trim() : '')
   const abortRef = useRef<AbortController | null>(null)
+  // Tras un 429: hasta cuándo (Date.now()) no se interpreta sola.
+  const pausaHastaRef = useRef(0)
   const onResultadoRef = useRef(onResultado)
   useEffect(() => {
     onResultadoRef.current = onResultado
@@ -102,6 +117,25 @@ export function useInterpretacion({
         signal: ctrl.signal,
       })
       const data: unknown = await res.json().catch(() => null)
+      // Límite personal o tope diario de Wayio: aviso y a seguir a mano (sin
+      // marcar 'wayio-interpret-off', que apagaría la función toda la sesión).
+      if (res.status === 429 || esTopeDiario(data)) {
+        const espera = segundosDeEspera(data, res)
+        pausaHastaRef.current =
+          Date.now() + (espera ? espera * 1000 : PAUSA_429_MS)
+        const base =
+          mensajeDe(data) ??
+          (esTopeDiario(data)
+            ? MENSAJE_TOPE_DIARIO
+            : 'Leímos varias descripciones seguidas.')
+        setEstado({
+          tipo: 'error',
+          mensaje: `${base} ${SEGUIR}`,
+          reintentable: false,
+        })
+        track('interpretacion_usada', { fuente: 'texto', exito: false })
+        return
+      }
       if (res.status === 503) {
         marcarNoDisponible()
         setEstado({ tipo: 'no-disponible' })
@@ -139,6 +173,7 @@ export function useInterpretacion({
   useEffect(() => {
     const limpio = texto.trim()
     if (limpio.length < MIN_AUTO || limpio === ultimoRef.current) return
+    if (Date.now() < pausaHastaRef.current) return
     const id = window.setTimeout(() => void interpretar(limpio), ESPERA_MS)
     return () => window.clearTimeout(id)
   }, [texto, interpretar])
@@ -151,6 +186,7 @@ export function useInterpretacion({
 
   const alSalir = useCallback(() => {
     const limpio = texto.trim()
+    if (Date.now() < pausaHastaRef.current) return
     if (limpio.length >= MIN_AUTO && limpio !== ultimoRef.current) {
       void interpretar(limpio)
     }

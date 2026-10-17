@@ -20,6 +20,7 @@ import { Segmented } from '@/components/ui/Segmented'
 import { Skeleton, SkeletonRegion } from '@/components/ui/Skeleton'
 import { useToast } from '@/components/ui/Toast'
 import { useUser } from '@/hooks/useUser'
+import { modoLocalSinCuentas } from '@/lib/auth/irALogin'
 import { cn } from '@/lib/utils/cn'
 import {
   contarDias,
@@ -267,7 +268,11 @@ export function ListaViajes({ suscripcionOk }: { suscripcionOk: boolean }) {
     return (
       <EmptyState
         title="Tus viajes guardados aparecerán aquí"
-        description="Guardar viajes necesita una cuenta, y las cuentas todavía no están disponibles. Mientras tanto puedes trazar un viaje sin iniciar sesión."
+        description={
+          modoLocalSinCuentas()
+            ? 'Guardar viajes necesita una cuenta, y las cuentas todavía no están disponibles. Mientras tanto puedes trazar un viaje sin iniciar sesión.'
+            : 'Guardar viajes necesita una cuenta, y las cuentas todavía no están disponibles. Vuelve a intentarlo más tarde.'
+        }
         action={
           <ButtonLink
             href="/planificar"

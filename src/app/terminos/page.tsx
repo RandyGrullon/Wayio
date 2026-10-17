@@ -72,10 +72,10 @@ export default function TerminosPage() {
 
       <h2 id="cuenta">Tu cuenta</h2>
       <p>
-        Puedes planificar sin cuenta, pero para guardar viajes y usar la sala de
-        grupo necesitas una. Eres responsable de mantener segura tu contraseña y
-        de lo que se haga desde tu cuenta. Si notas un uso que no reconoces,
-        escríbenos.
+        Para trazar viajes con la IA, guardarlos y usar la sala de grupo
+        necesitas una cuenta, que es gratis. Eres responsable de mantener segura
+        tu contraseña y de lo que se haga desde tu cuenta. Si notas un uso que
+        no reconoces, escríbenos.
       </p>
 
       <h2 id="uso">Uso aceptable</h2>
@@ -104,8 +104,8 @@ export default function TerminosPage() {
       <h2 id="planes">Planes y pagos</h2>
       <ul>
         <li>
-          Planificar es gratis. Los planes de pago (Pro mensual, Pro anual, Pro
-          por viaje y Pro grupo) se describen en{' '}
+          Planificar es gratis con tu cuenta. Los planes de pago (Pro mensual,
+          Pro anual, Pro por viaje y Pro grupo) se describen en{' '}
           <Link href="/precios">Planes y precios</Link>.
         </li>
         <li>

@@ -15,7 +15,20 @@ import { Modal } from '@/components/ui/Modal'
 import { Segmented } from '@/components/ui/Segmented'
 import type { PlaceFromVideo, VideoAnalysisResult } from '@/lib/ai/analyzeVideo'
 import { track } from '@/lib/analytics/events'
+import {
+  esAuthRequired,
+  hayLogin,
+  haySesionLocal,
+  iaExigeSesion,
+  urlLogin,
+} from '@/lib/auth/irALogin'
 import { cn } from '@/lib/utils/cn'
+import {
+  MENSAJE_TOPE_DIARIO,
+  esTopeDiario,
+  segundosDeEspera,
+  textoEspera,
+} from './limitesIA'
 
 /**
  * «Desde un video o una foto» (docs/DISENO.md §6.1 y contrato de
@@ -24,8 +37,10 @@ import { cn } from '@/lib/utils/cn'
  *
  * El destino detectado va al formulario y los lugares a lugaresDeseados. Si el
  * análisis de videos está desactivado (503 video_desactivado) ofrece subir una
- * foto o escribir el destino. Las fotos se reducen en el cliente (< ~2,8 MB
- * en base64) por el límite de cuerpo de Vercel.
+ * foto o escribir el destino; si Wayio llegó a su tope de IA del día (429
+ * tope_diario), escribir el destino (la foto también usa la IA). Las fotos se
+ * reducen en el cliente (< ~2,8 MB en base64) por el límite de cuerpo de
+ * Vercel. Exige sesión: se comprueba antes de comprimir y subir nada.
  */
 
 interface RecreateTripProps {
@@ -35,13 +50,16 @@ interface RecreateTripProps {
   onClose: () => void
   /** Ruta a la que volver tras iniciar sesión (401). */
   loginRedirect?: string
+  /** Justo antes de ir al login (p. ej. guardar lo escrito en la landing). */
+  onAntesDeLogin?: () => void
   /** «Escribir el destino» (cuando el análisis no está disponible). */
   onEscribirDestino?: () => void
 }
 
 type Modo = 'video' | 'foto'
 
-type Accion = 'login' | 'alternativas' | null
+/** alternativas: subir una foto (si sirve) o escribir el destino. */
+type Accion = 'login' | 'alternativas' | 'solo-destino' | null
 
 type Estado =
   | { tipo: 'inicial' }
@@ -118,6 +136,7 @@ export function RecreateTrip({
   onConfirm,
   onClose,
   loginRedirect = '/planificar',
+  onAntesDeLogin,
   onEscribirDestino,
 }: RecreateTripProps) {
   const uid = useId().replace(/[^a-zA-Z0-9_-]/g, '')
@@ -148,15 +167,40 @@ export function RecreateTrip({
   }, [open])
   useEffect(() => () => abortRef.current?.abort(), [])
 
+  /** ¿Se puede analizar? Sin sesión avisa ANTES de comprimir y subir. */
+  const comprobarSesion = async (): Promise<boolean> => {
+    if (!iaExigeSesion()) return true
+    if (!hayLogin()) {
+      setEstado({
+        tipo: 'error',
+        mensaje:
+          'El análisis de videos y fotos no está disponible ahora mismo. Puedes escribir el destino.',
+        accion: 'solo-destino',
+      })
+      return false
+    }
+    // null = no se sabe: decide el servidor (401 si no hay sesión).
+    if ((await haySesionLocal()) === false) {
+      setEstado({
+        tipo: 'error',
+        mensaje: 'Inicia sesión para analizar videos y fotos.',
+        accion: 'login',
+      })
+      return false
+    }
+    return true
+  }
+
   const analizar = async () => {
     if (estado.tipo === 'analizando') return
+    if (modo === 'video' ? videoUrl.trim().length < 4 : !foto) return
+    setEstado({ tipo: 'analizando' })
+    if (!(await comprobarSesion())) return
     let body: Record<string, string>
     if (modo === 'video') {
-      if (videoUrl.trim().length < 4) return
       body = { videoUrl: videoUrl.trim() }
     } else {
       if (!foto) return
-      setEstado({ tipo: 'analizando' })
       try {
         body = {
           imageBase64: await comprimirImagen(foto),
@@ -199,7 +243,7 @@ export function RecreateTrip({
       }
       track('interpretacion_usada', { fuente, exito: false })
       const code = campo(data, 'code')
-      if (res.status === 401) {
+      if (esAuthRequired(res.status, data)) {
         setEstado({
           tipo: 'error',
           mensaje: 'Inicia sesión para analizar videos y fotos.',
@@ -207,11 +251,23 @@ export function RecreateTrip({
         })
         return
       }
+      // Tope diario: la foto también usa la IA, así que solo queda escribir
+      // el destino.
+      if (esTopeDiario(data)) {
+        setEstado({
+          tipo: 'error',
+          mensaje: campo(data, 'error') ?? MENSAJE_TOPE_DIARIO,
+          accion: 'solo-destino',
+        })
+        return
+      }
+      const espera = res.status === 429 ? segundosDeEspera(data, res) : null
       setEstado({
         tipo: 'error',
-        mensaje:
-          campo(data, 'error') ??
-          'No pudimos analizarlo en este momento. Inténtalo de nuevo en unos minutos.',
+        mensaje: espera
+          ? `Analizaste varios videos o fotos seguidos. Podrás volver a intentarlo ${textoEspera(espera)}.`
+          : (campo(data, 'error') ??
+            'No pudimos analizarlo en este momento. Inténtalo de nuevo en unos minutos.'),
         accion:
           res.status === 503 && code === 'video_desactivado'
             ? 'alternativas'
@@ -431,19 +487,31 @@ export function RecreateTrip({
 
           {estado.tipo === 'error' ? (
             <Callout
-              tone="danger"
-              title="No pudimos analizarlo"
+              tone={
+                estado.accion === 'login' || estado.accion === 'solo-destino'
+                  ? 'info'
+                  : 'danger'
+              }
+              title={
+                estado.accion === 'login'
+                  ? 'Necesitas una cuenta gratis'
+                  : estado.accion === 'solo-destino'
+                    ? 'Por ahora no podemos analizarlo'
+                    : 'No pudimos analizarlo'
+              }
               action={
                 estado.accion === 'login' ? (
                   <ButtonLink
                     variant="link"
-                    href={`/login?redirect=${encodeURIComponent(loginRedirect)}`}
+                    href={urlLogin(loginRedirect)}
+                    {...(onAntesDeLogin ? { onClick: onAntesDeLogin } : {})}
                   >
                     Iniciar sesión
                   </ButtonLink>
-                ) : estado.accion === 'alternativas' ? (
+                ) : estado.accion === 'alternativas' ||
+                  estado.accion === 'solo-destino' ? (
                   <>
-                    {modo === 'video' ? (
+                    {modo === 'video' && estado.accion === 'alternativas' ? (
                       <Button
                         variant="link"
                         onClick={() => {

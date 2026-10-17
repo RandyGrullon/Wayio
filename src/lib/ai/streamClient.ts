@@ -13,7 +13,11 @@ export interface DetalleStreamError {
   campos?: Record<string, string[]> | null
   /** Segundos hasta poder reintentar (429; cuerpo o cabecera Retry-After). */
   retryAfter?: number | null
-  /** Código del servidor (p. ej. 'rate_limit' en el evento `error`). */
+  /**
+   * Código del servidor: 'auth_required' (401, trazar exige sesión),
+   * 'rate_limit' (429 del límite personal o evento `error` del proveedor) o
+   * 'tope_diario' (429 o evento `error`: Wayio llegó a su límite de IA de hoy).
+   */
   code?: string | null
   /** Mensaje del servidor, ya en español (`mensaje` o `error` del cuerpo). */
   mensaje?: string | null
@@ -25,9 +29,10 @@ export interface DetalleStreamError {
  * llamador NO debe repetirla con /api/generate; solo debe caer al endpoint
  * clásico cuando el stream ni siquiera arrancó (started === false).
  *
- * En un 4xx también vale `started`: el formulario no es válido (400) o se
- * superó el límite (429) y repetir en /api/generate no ayuda. El cuerpo JSON
- * queda en `campos` (400), `retryAfter` (429), `code` y `mensaje`.
+ * En un 4xx también vale `started`: el formulario no es válido (400), falta
+ * la sesión (401) o se superó un límite (429: personal o tope diario) y
+ * repetir en /api/generate no ayuda. El cuerpo JSON queda en `campos` (400),
+ * `retryAfter` (429), `code` y `mensaje`.
  */
 export class StreamGenerateError extends Error {
   readonly started: boolean

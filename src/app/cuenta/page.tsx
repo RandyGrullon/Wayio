@@ -11,6 +11,7 @@ import { Card } from '@/components/ui/Card'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { PLANS } from '@/constants/pricing'
 import { RECUPERAR_PATH } from '@/lib/auth/constants'
+import { modoLocalSinCuentas } from '@/lib/auth/irALogin'
 import { tierEfectivo } from '@/lib/stripe/entitlements'
 import { createClient } from '@/lib/supabase/server'
 import { isSupabaseConfigured } from '@/lib/supabase/config'
@@ -133,7 +134,11 @@ export default async function CuentaPage({
             <EmptyState
               headingLevel="h1"
               title="Las cuentas todavía no están disponibles"
-              description="Mientras tanto puedes trazar tus viajes sin iniciar sesión."
+              description={
+                modoLocalSinCuentas()
+                  ? 'Mientras tanto puedes trazar tus viajes sin iniciar sesión.'
+                  : 'Para trazar, guardar y compartir viajes hace falta una cuenta. Vuelve a intentarlo más tarde.'
+              }
               action={
                 <ButtonLink
                   href="/planificar"

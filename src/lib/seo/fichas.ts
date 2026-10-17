@@ -1113,7 +1113,7 @@ export function preguntasDestino(
   lista.push({
     pregunta: `¿Cuánto cuesta planificar mi viaje a ${n} con Wayio?`,
     respuesta:
-      'Trazar tu viaje es gratis: recibes tres versiones (Básico, Confort y Premium) con horarios día a día, mapa y un presupuesto estimado. Los vuelos y las reservas no están incluidos en el plan.',
+      'Trazar tu viaje es gratis con tu cuenta de Wayio, sin tarjeta: recibes tres versiones (Básico, Confort y Premium) con horarios día a día, mapa y un presupuesto estimado. Los vuelos y las reservas no están incluidos en el plan.',
   })
   return lista
 }
