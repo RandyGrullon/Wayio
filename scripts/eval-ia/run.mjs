@@ -14,6 +14,14 @@
  *
  * Escribe un informe en scripts/eval-ia/resultados/<fecha>/ (resumen.md +
  * un JSON por caso) y termina con código 1 si algún caso tiene errores.
+ *
+ * Sesión: /api/generate exige cuenta. Si existe EVAL_IA_BEARER (en el entorno
+ * o en .env.local) se envía como `Authorization: Bearer <token>` en las
+ * llamadas a /api/generate y /api/interpret: pon el access_token de una
+ * cuenta de pruebas (el JWT de Supabase, caduca en ~1 h). Sin él solo
+ * funciona en desarrollo sin Supabase (modo local sin cuentas).
+ * Cada caso consume cupo del límite por cuenta (6/hora, 20/día en producción
+ * o con RATE_LIMIT_ENFORCE=true) y del tope diario AI_DAILY_BUDGET_USD.
  */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -47,6 +55,15 @@ const SIN_GENERAR = flag('sin-generar')
 // ---------------------------------------------------------------------------
 // Utilidades
 // ---------------------------------------------------------------------------
+
+/** Cabeceras de las llamadas a la app (con Bearer si hay EVAL_IA_BEARER). */
+function cabecerasApp() {
+  const token = process.env.EVAL_IA_BEARER?.trim()
+  return {
+    'Content-Type': 'application/json',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  }
+}
 
 function loadEnvLocal() {
   const file = path.join(root, '.env.local')
@@ -524,7 +541,7 @@ async function correrCaso(caso) {
   try {
     res = await fetch(`${BASE}/api/generate`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: cabecerasApp(),
       body: JSON.stringify({ ...form, noCache: true }),
       signal: AbortSignal.timeout(330_000),
     })
@@ -600,7 +617,7 @@ async function correrInterpret(caso) {
   try {
     const res = await fetch(`${BASE}/api/interpret`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: cabecerasApp(),
       body: JSON.stringify({ texto: caso.texto, hoy: isoLocal(new Date()) }),
       signal: AbortSignal.timeout(120_000),
     })

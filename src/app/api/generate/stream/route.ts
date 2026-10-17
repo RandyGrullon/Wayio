@@ -1,6 +1,12 @@
 import { TripFormSchema } from '@/lib/validations/tripForm'
 import { generateTrips, GenerationError } from '@/lib/ai/generateTrips'
-import { guardAi, LIMITES_GENERACION } from '@/lib/security/aiGuard'
+import { exigirSesion, leerJson, limitarIa } from '@/lib/ai/routeKit'
+import { LIMITES_GENERAR } from '@/lib/security/aiGuard'
+import {
+  comprobarTopeGenerar,
+  MAX_BODY_GENERAR,
+  pideNoCache,
+} from '../_lib/comun'
 
 export const maxDuration = 300
 
@@ -15,14 +21,19 @@ export const maxDuration = 300
  *   { type: 'result', result, demo }
  *   { type: 'error', message, code }
  * Cada 15 s se envía un comentario ": ping" para que proxies no corten.
+ *
+ * Sesión, límites por cuenta (los de /api/generate) y tope diario se
+ * comprueban ANTES de abrir el stream, para responder con su status real
+ * (401/429) en JSON. Si el tope salta a mitad (corte duro de aiGenerate),
+ * llega como evento { type: 'error', code: 'tope_diario' }.
  */
 export async function POST(request: Request): Promise<Response> {
-  let body: unknown
-  try {
-    body = await request.json()
-  } catch {
-    return Response.json({ error: 'Solicitud inválida' }, { status: 400 })
-  }
+  const sesion = await exigirSesion(request)
+  if (!sesion.ok) return sesion.response
+
+  const lectura = await leerJson(request, MAX_BODY_GENERAR)
+  if (!lectura.ok) return lectura.response
+  const body = lectura.data
   const parsed = TripFormSchema.safeParse(body)
   if (!parsed.success) {
     return Response.json(
@@ -34,13 +45,14 @@ export async function POST(request: Request): Promise<Response> {
     )
   }
 
-  const guard = await guardAi(request, 'generate', LIMITES_GENERACION)
-  if ('blocked' in guard) return guard.blocked
+  const limite = await limitarIa(sesion.llamante, 'generate', LIMITES_GENERAR)
+  if (limite) return limite
 
-  const noCache =
-    typeof body === 'object' && body !== null && 'noCache' in body
-      ? Boolean((body as { noCache?: unknown }).noCache)
-      : false
+  const noCache = pideNoCache(body)
+
+  const tope = await comprobarTopeGenerar(parsed.data, noCache)
+  if (tope) return tope
+  const userId = sesion.llamante.user?.id ?? null
 
   const encoder = new TextEncoder()
   const abort = new AbortController()
@@ -65,7 +77,7 @@ export async function POST(request: Request): Promise<Response> {
         const { result, demo } = await generateTrips(parsed.data, {
           noCache,
           signal: abort.signal,
-          userId: guard.userId,
+          userId,
           onProgress: (p) => send({ type: 'progress', ...p }),
         })
         send({ type: 'result', result, demo })
@@ -77,6 +89,7 @@ export async function POST(request: Request): Promise<Response> {
               err instanceof GenerationError
                 ? err.mensaje
                 : 'No pudimos generar tu viaje. Inténtalo de nuevo.',
+            // Incluye 'tope_diario' si saltó el corte duro de aiGenerate.
             code: err instanceof GenerationError ? err.code : 'unknown',
           })
         }

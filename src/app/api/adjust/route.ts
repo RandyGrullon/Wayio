@@ -11,15 +11,20 @@ import {
   TIPOS_ACTIVIDAD,
 } from '@/lib/ai/normalize'
 import {
+  MENSAJE_TOPE_DIARIO_AJUSTE,
+  presupuestoAgotado,
+} from '@/lib/ai/presupuesto'
+import {
   esObjeto,
   estadoPorErrorIA,
-  identificar,
+  exigirSesion,
   jsonError,
   leerJson,
-  limitar,
+  limitarIa,
   parsearJsonIA,
   textoSeguro,
 } from '@/lib/ai/routeKit'
+import { LIMITES_AJUSTAR } from '@/lib/security/aiGuard'
 import { MAX_DIAS_VIAJE, MONEDAS } from '@/lib/validations/tripForm'
 import type { Activity } from '@/types/activity'
 import type { Day, Trip } from '@/types/trip'
@@ -34,6 +39,10 @@ import type { Day, Trip } from '@/types/trip'
  * La IA devuelve el contenido; el servidor fusiona por id con el viaje
  * original para conservar estado, reservas pagadas, datos de crucero y
  * coordenadas verificadas, y mantiene fechas, personas, moneda y paquete.
+ *
+ * Exige sesión, tiene límites por cuenta (hora y día) y respeta el tope
+ * global de gasto diario: agotado, responde 503 ia_no_disponible con
+ * motivo 'tope_diario' para que el cliente ofrezca editar a mano.
  */
 
 export const maxDuration = 300
@@ -418,6 +427,13 @@ function fusionar(
 // Handler
 // ---------------------------------------------------------------------------
 
+/** 503 del contrato cuando se alcanzó el tope diario: el cliente pasa a manual. */
+const respuestaTopeAjuste = (): Response =>
+  jsonError(503, MENSAJE_TOPE_DIARIO_AJUSTE, {
+    code: 'ia_no_disponible',
+    motivo: 'tope_diario',
+  })
+
 export async function POST(request: Request): Promise<Response> {
   if (!aiConfigured()) {
     return jsonError(
@@ -426,6 +442,11 @@ export async function POST(request: Request): Promise<Response> {
       { code: 'ia_no_disponible' }
     )
   }
+
+  // Sesión antes de leer el body (hasta 400 KB de itinerario).
+  const sesion = await exigirSesion(request)
+  if (!sesion.ok) return sesion.response
+  const llamante = sesion.llamante
 
   const lectura = await leerJson(request, MAX_BODY_BYTES)
   if (!lectura.ok) return lectura.response
@@ -440,12 +461,10 @@ export async function POST(request: Request): Promise<Response> {
     return jsonError(400, mensaje, { code: 'bad_request' })
   }
 
-  const llamante = await identificar(request)
-  const limite = await limitar(llamante, 'adjust', {
-    conSesion: 60,
-    anonimo: 20,
-  })
+  const limite = await limitarIa(llamante, 'adjust', LIMITES_AJUSTAR)
   if (limite) return limite
+
+  if (await presupuestoAgotado()) return respuestaTopeAjuste()
 
   const trip = parsed.data.trip as unknown as Trip
   const instruccion = parsed.data.instruccion
@@ -502,6 +521,8 @@ export async function POST(request: Request): Promise<Response> {
       return jsonError(499, 'Se canceló el ajuste.', { code: 'cancelled' })
     }
     const { code, mensaje } = describeAiError(err)
+    // Corte duro del tope a mitad del ajuste: mismo contrato que arriba.
+    if (code === 'tope_diario') return respuestaTopeAjuste()
     if (code === 'unknown') {
       Sentry.captureException(err, { tags: { area: 'adjust-itinerary' } })
     }

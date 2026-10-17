@@ -43,7 +43,7 @@ GROQ_VISION_MODEL=qwen/qwen3.8-27b
 
 Los modelos antiguos (`llama-3.3-70b-versatile`, `llama-3.1-8b-instant`, `llama-4-scout`) fueron dados de baja por Groq: si tu `.env.local` los tiene, cámbialos.
 
-**Comprobar que la IA genera bien:** con el servidor corriendo, `npm run eval:ia -- --base http://localhost:3000` ejecuta la batería de 44 viajes de prueba (`scripts/eval-ia/casos.mjs`) y escribe un informe en `scripts/eval-ia/resultados/`. Opciones: `--interpret` (evalúa también la interpretación de texto libre), `--juez` (nota de calidad 1-5 de Claude), `--solo id1,id2`.
+**Comprobar que la IA genera bien:** con el servidor corriendo, `npm run eval:ia -- --base http://localhost:3000` ejecuta la batería de 44 viajes de prueba (`scripts/eval-ia/casos.mjs`) y escribe un informe en `scripts/eval-ia/resultados/`. Opciones: `--interpret` (evalúa también la interpretación de texto libre), `--juez` (nota de calidad 1-5 de Claude), `--solo id1,id2`. Generar exige sesión: con Supabase configurado pon `EVAL_IA_BEARER=<access_token de una cuenta de pruebas>` (en el entorno o en `.env.local`) y el script lo manda como `Authorization: Bearer`. Cada caso gasta del límite de esa cuenta y del tope diario.
 
 ## 2. Supabase
 
@@ -54,7 +54,7 @@ Los modelos antiguos (`llama-3.3-70b-versatile`, `llama-3.1-8b-instant`, `llama-
    SUPABASE_SERVICE_ROLE_KEY=...                          # la "service_role" (secreta), NO la anon
    NEXT_PUBLIC_BASE_URL=http://localhost:3000             # en producción, tu dominio
    ```
-2. **Esquema y seguridad:** SQL Editor → New query → pega TODO [`supabase/migrations/20261008120000_seguridad_y_flujos.sql`](supabase/migrations/20261008120000_seguridad_y_flujos.sql) → Run. Si el proyecto está vacío, pega en su lugar [`supabase/schema.sql`](supabase/schema.sql) (ya lo incluye). Ambos son idempotentes. Esta migración corrige huecos graves (cualquiera podía hacerse admin; los grupos eran legibles por cualquier usuario) y activa compartir, unirse a grupos, referidos, reservas y realtime.
+2. **Esquema y seguridad:** SQL Editor → New query → pega TODO [`supabase/migrations/20261008120000_seguridad_y_flujos.sql`](supabase/migrations/20261008120000_seguridad_y_flujos.sql) → Run, y después [`supabase/migrations/20261017120000_ai_gasto_diario.sql`](supabase/migrations/20261017120000_ai_gasto_diario.sql) (la RPC del tope diario de IA). Si el proyecto está vacío, pega en su lugar [`supabase/schema.sql`](supabase/schema.sql) (ya lo incluye todo). Todos son idempotentes. La primera corrige huecos graves (cualquiera podía hacerse admin; los grupos eran legibles por cualquier usuario) y activa compartir, unirse a grupos, referidos, reservas y realtime.
 3. Revisa admins: `select id, email from public.profiles where role = 'admin';` y hazte admin con `update public.profiles set role = 'admin' where email = '<tu-email>';`.
 4. **Realtime:** Database → Publications → `supabase_realtime`: deben estar `trip_members`, `group_messages`, `activity_votes`, `group_expenses`.
 5. **Auth** (detalle paso a paso en [`supabase/CONFIGURACION-AUTH.md`](supabase/CONFIGURACION-AUTH.md)):
@@ -73,7 +73,21 @@ UPSTASH_REDIS_REST_URL=https://...upstash.io
 UPSTASH_REDIS_REST_TOKEN=...
 ```
 
-Sin esto, los límites (6 itinerarios/hora sin sesión, 30 con sesión, etc.) se cuentan por instancia serverless y no son globales. En desarrollo están apagados salvo `RATE_LIMIT_ENFORCE=true`.
+Sin esto, los límites se cuentan por instancia serverless y no son globales. En desarrollo están apagados salvo `RATE_LIMIT_ENFORCE=true`; en producción se aplican siempre.
+
+**Límites por cuenta** (beta, en [`src/lib/security/aiGuard.ts`](src/lib/security/aiGuard.ts)). Generar itinerarios, ajustarlos con IA y analizar fotos o videos **exigen sesión** (sin cuenta: 401 `auth_required`); interpretar la descripción y validar siguen abiertos con límite por IP.
+
+| Función                               | Por hora                   | Por día |
+| ------------------------------------- | -------------------------- | ------- |
+| Generar (`/api/generate` y `/stream`) | 6                          | 20      |
+| Ajustar con IA (`/api/adjust`)        | 20                         | 60      |
+| Interpretar (`/api/interpret`)        | 20 sin cuenta, 60 con ella | —       |
+| Recrear desde foto                    | 10                         | 20      |
+| Recrear desde video                   | 5                          | 10      |
+
+Al pasarse, la API responde 429 `rate_limit` con `retryAfter` y un mensaje que dice cuánto esperar. Con Upstash la ventana diaria es fija y se reinicia a las 00:00 UTC (8:00 p. m. de RD).
+
+**Tope global de gasto diario:** `AI_DAILY_BUDGET_USD=25` (en USD, no es secreto) frena TODA la IA de la app cuando el gasto estimado de hoy (día natural de RD, desde ai_logs) llega al tope: generar, interpretar y analizar responden 429 `tope_diario` («Wayio llegó a su límite de IA por hoy») con `retryAfter` hasta las 12:00 a. m. de RD; ajustar y reagendar pasan a edición manual; validar y las alertas usan sus reglas locales. Al 125 % se corta también lo que ya estaba en marcha. Necesita la service role y la migración `20261017120000_ai_gasto_diario.sql`; si no puede leer el gasto, **deja pasar** y avisa en consola y Sentry. Es una estimación (precios de `src/lib/ai/pricing.ts`): como red final pon además un **límite de gasto mensual** en la consola de Anthropic (Settings → Limits), que corta en el proveedor aunque la app fallara.
 
 ## 4. Mapa, geocoding y clima
 

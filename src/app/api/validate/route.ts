@@ -1,5 +1,7 @@
 import { z } from 'zod'
+import { describeAiError } from '@/lib/ai/client'
 import { aiConfigured } from '@/lib/ai/config'
+import { presupuestoAgotado } from '@/lib/ai/presupuesto'
 import {
   dentroDelLimite,
   identificar,
@@ -26,7 +28,11 @@ import type { Day } from '@/types/trip'
  * - La pasada de IA solo si `ia: true` (bajo demanda, no en cada render):
  *   con caché por hash del itinerario (10 min) y rate limit propio. Si la IA
  *   no está disponible, falla o se superó el límite, se devuelven igualmente
- *   los conflictos locales y `ia.estado` lo indica.
+ *   los conflictos locales y `ia.estado` lo indica. Con el tope global de
+ *   gasto diario agotado, la pasada de IA responde 'no_disponible'.
+ * - Acepta anónimos: el itinerario que va al prompt se acota a unos 60K
+ *   caracteres (~20K tokens, ver validateSchedule.ts), así que una pasada de
+ *   IA cuesta como mucho unos $0,004 aunque el body llegue a 400 KB.
  */
 
 export const maxDuration = 60
@@ -91,14 +97,19 @@ export async function POST(request: Request): Promise<Response> {
   })
   if (!puede) return respuesta(locales, 'limite')
 
+  if (await presupuestoAgotado()) return respuesta(locales, 'no_disponible')
+
   try {
     const deIA = await conflictosConIA(dias, clave, {
       userId: llamante.user?.id ?? null,
       signal: request.signal,
     })
     return respuesta([...locales, ...deIA], 'ok')
-  } catch {
-    // Best-effort: los conflictos locales siguen siendo válidos.
-    return respuesta(locales, 'error')
+  } catch (err) {
+    // Best-effort: los conflictos locales siguen siendo válidos. Si saltó el
+    // corte duro del tope diario, la IA no está disponible (no es un fallo).
+    const estado =
+      describeAiError(err).code === 'tope_diario' ? 'no_disponible' : 'error'
+    return respuesta(locales, estado)
   }
 }

@@ -3,7 +3,13 @@ import type { SupabaseClient, User } from '@supabase/supabase-js'
 import type { AiErrorCode } from '@/lib/ai/client'
 import { isSupabaseConfigured } from '@/lib/supabase/config'
 import { getRequestAuth } from '@/lib/supabase/request'
-import { clientIp, rateLimit, tooManyRequests } from '@/lib/security/rateLimit'
+import type { LimitesIa } from '@/lib/security/aiGuard'
+import {
+  clientIp,
+  limitesActivos,
+  rateLimit,
+  tooManyRequests,
+} from '@/lib/security/rateLimit'
 
 /**
  * Utilidades comunes de las rutas de IA secundarias (ajuste, alertas,
@@ -131,7 +137,8 @@ export async function exigirSesion(request: Request): Promise<ResultadoSesion> {
 
 /**
  * Aplica el rate limit. Devuelve la respuesta 429 si se superó, o null si
- * puede seguir.
+ * puede seguir. Solo limita si `limitesActivos()` (producción, o desarrollo
+ * con RATE_LIMIT_ENFORCE=true).
  */
 export async function limitar(
   llamante: Llamante,
@@ -139,6 +146,7 @@ export async function limitar(
   limites: { conSesion: number; anonimo: number },
   ventanaSeg = 3600
 ): Promise<Response | null> {
+  if (!limitesActivos()) return null
   const r = await rateLimit({
     bucket,
     id: llamante.clave,
@@ -146,6 +154,21 @@ export async function limitar(
     windowSec: ventanaSeg,
   })
   return r.ok ? null : tooManyRequests(r)
+}
+
+/**
+ * Límites por cuenta de una ruta de IA (src/lib/security/aiGuard.ts): primero
+ * el bucket por hora y, si pasa, el diario (`<bucket>-dia`, 86 400 s). En ese
+ * orden, insistir mientras te frena la hora no gasta el cupo del día.
+ */
+export async function limitarIa(
+  llamante: Llamante,
+  bucket: string,
+  limites: LimitesIa
+): Promise<Response | null> {
+  const porHora = await limitar(llamante, bucket, limites.hora, 3600)
+  if (porHora || !limites.dia) return porHora
+  return limitar(llamante, `${bucket}-dia`, limites.dia, 86_400)
 }
 
 /** Igual que `limitar` pero solo dice si se puede seguir (sin respuesta). */
@@ -165,6 +188,8 @@ export function estadoPorErrorIA(code: AiErrorCode): number {
     case 'auth':
     case 'model':
       return 503
+    case 'tope_diario':
+      return 429
     case 'refusal':
       return 422
     case 'timeout':

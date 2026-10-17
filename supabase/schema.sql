@@ -6,7 +6,7 @@
 -- proyecto vacío como en uno que ya tenía una versión anterior del esquema.
 --
 -- Es la fuente completa: equivale a aplicar, en orden, todas las migraciones
--- de supabase/migrations (la última: 20261008120000_seguridad_y_flujos.sql).
+-- de supabase/migrations (la última: 20261017120000_ai_gasto_diario.sql).
 --
 -- Incluye:
 --   1. Tablas de la app (perfiles, viajes, grupos, suscripciones, referidos,
@@ -14,7 +14,7 @@
 --   2. Tablas del panel de administración (logs de IA, feature flags,
 --      anuncios, tokens de push, auditoría, settings)
 --   3. Funciones y RPC (membresía, unirse por link, vista pública, referidos,
---      dispositivos, plan efectivo), triggers e índices
+--      dispositivos, plan efectivo, gasto diario de IA), triggers e índices
 --   4. Privilegios por columna + RLS (row level security) por membresía
 --   5. Publicación de Realtime para las tablas de grupo
 --   6. Seed y backfills
@@ -744,6 +744,22 @@ as $$
   ), 'free');
 $$;
 
+-- RPC ai_gasto_desde: suma ai_logs.cost_usd desde un instante. La usa el
+-- servidor (src/lib/ai/presupuesto.ts, service role) para el tope global de
+-- gasto diario AI_DAILY_BUDGET_USD: pasa las 00:00 de hoy en hora de RD.
+-- Usa el índice idx_ai_logs_created. Solo service_role (ver sección 9).
+create or replace function public.ai_gasto_desde(p_desde timestamptz)
+returns numeric
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select coalesce(sum(cost_usd), 0)::numeric
+    from public.ai_logs
+   where created_at >= p_desde;
+$$;
+
 -- Al registrarse (web o mobile): crea perfil + suscripción free + código de
 -- referido, para que la cuenta quede lista de inmediato. El código de
 -- referido nunca puede impedir el alta.
@@ -862,6 +878,10 @@ grant execute on function public.register_device(text, text)
 
 revoke execute on function public.my_effective_tier() from public, anon;
 grant execute on function public.my_effective_tier() to authenticated, service_role;
+
+revoke execute on function public.ai_gasto_desde(timestamptz)
+  from public, anon, authenticated;
+grant execute on function public.ai_gasto_desde(timestamptz) to service_role;
 
 -- ----------------------------------------------------------------------------
 -- 10. RLS (Row Level Security)

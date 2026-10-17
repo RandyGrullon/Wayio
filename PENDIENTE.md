@@ -1,6 +1,14 @@
 # Wayio — estado y pasos para terminar
 
-> Actualizado el 2026-10-09, tras el análisis completo, la reconstrucción de la IA, los arreglos de seguridad, el rediseño y la integración final. Los detalles de cada servicio están en [API-KEYS-GUIA.md](API-KEYS-GUIA.md).
+> Actualizado el 2026-10-09, tras el análisis completo, la reconstrucción de la IA, los arreglos de seguridad, el rediseño y la integración final; el 2026-10-17 se añadió el freno al gasto de IA. Los detalles de cada servicio están en [API-KEYS-GUIA.md](API-KEYS-GUIA.md).
+
+## ✅ Freno al gasto de IA (rama `feat/tope-gasto-ia`, 2026-10-17)
+
+- **Sesión obligatoria** para generar (`/api/generate` y `/stream`), ajustar con IA y analizar fotos o videos (401 `auth_required`). Interpretar y validar siguen abiertos con límite por IP. El modelo por defecto no cambia (Opus 5.5).
+- **Límites por cuenta** por hora y por día, siempre activos en producción (en desarrollo con `RATE_LIMIT_ENFORCE=true`): generar 6/h y 20/día, ajustar 20/h y 60/día, foto 10/h y 20/día, video 5/h y 10/día, interpretar 20/h sin cuenta y 60/h con ella. El 429 trae `code: 'rate_limit'`, `retryAfter` y un mensaje con la espera real.
+- **Tope global diario** `AI_DAILY_BUDGET_USD` (día natural de RD, coste estimado de `ai_logs` vía la RPC `ai_gasto_desde`, caché de 30 s por instancia más el gasto local aún sin registrar). Al llegar: 429 `tope_diario` en generar, interpretar y analizar; ajustar y reagendar pasan a edición manual (503 `ia_no_disponible`, `motivo: 'tope_diario'`); validar y alertas usan sus reglas locales. Corte duro al 125 % dentro de `aiGenerate`. Si no puede leer el gasto, deja pasar y avisa (consola y Sentry, una vez por hora). Aviso en Sentry al alcanzar el tope (una vez por día).
+- Cuerpos de `/api/generate` y `/stream` con tope de 64 KB; precios de `claude-opus-4-8` y `claude-fable-5-1` (destinos del _fallback_) para que no se registren a 0.
+- Admin: tarjeta «Tope diario de IA» en `/admin/ai` y fila en «Estado del entorno».
 
 ## ✅ Hecho en esta ronda (rama `rediseno-ui-ia`)
 
@@ -60,15 +68,17 @@
 
 ## 🔴 Lo que tienes que hacer tú (en este orden)
 
-1. **IA**: pon `ANTHROPIC_API_KEY` en `.env.local`, arranca `npm run dev` y ejecuta `npm run eval:ia -- --base http://localhost:3000 --interpret`. Todos los casos deberían salir sin errores (ver el informe en `scripts/eval-ia/resultados/`).
+1. **IA**: pon `ANTHROPIC_API_KEY` en `.env.local`, arranca `npm run dev` y ejecuta `npm run eval:ia -- --base http://localhost:3000 --interpret`. Todos los casos deberían salir sin errores (ver el informe en `scripts/eval-ia/resultados/`). Generar exige sesión: con Supabase configurado, pon `EVAL_IA_BEARER` con el access_token de una cuenta de pruebas.
 2. **Supabase**:
    - restaura el proyecto si está pausado;
-   - en el SQL Editor, pega y ejecuta `supabase/migrations/20261008120000_seguridad_y_flujos.sql`;
+   - en el SQL Editor, pega y ejecuta `supabase/migrations/20261008120000_seguridad_y_flujos.sql` y después `supabase/migrations/20261017120000_ai_gasto_diario.sql` (RPC del tope diario de IA; sin ella el tope queda abierto);
    - revisa los admins y comprueba realtime;
    - configura Auth (URLs, plantillas de correo, SMTP y Google), guía en `supabase/CONFIGURACION-AUTH.md`.
-3. **Upstash Redis** (gratis): `UPSTASH_REDIS_REST_URL` y `UPSTASH_REDIS_REST_TOKEN`, para que los límites de uso protejan tu factura de IA en producción.
+3. **Upstash Redis** (gratis): `UPSTASH_REDIS_REST_URL` y `UPSTASH_REDIS_REST_TOKEN`, para que los límites de uso protejan tu factura de IA en producción (sin Upstash cada instancia cuenta por su lado).
 4. **Vercel**:
    - variables de `.env.example`, con `NEXT_PUBLIC_BASE_URL` igual a tu dominio y `NEXT_PUBLIC_CONTACT_EMAIL` con tu email público (sin él, `/contacto` dice que el canal llega pronto);
+   - **`AI_DAILY_BUDGET_USD`** (p. ej. `25`) y las dos variables de **Upstash**; comprueba con `npm run verificar` que salen OK el tope, la migración 4 y Upstash;
+   - como red final, un **límite de gasto mensual** en la consola de Anthropic (Settings → Limits);
    - **Fluid Compute activado**, porque las rutas de IA usan hasta 300 s;
    - borra `AMADEUS_*`, `BOOKING_API_KEY` y `NEXT_PUBLIC_SITE_URL`.
 5. **Afiliados** (es donde ganas dinero sin cobrar al usuario): Viator Partner (`VIATOR_API_KEY`, `PID`, `MCID`), Booking vía Awin/CJ, Travelpayouts o Skyscanner, y Airalo. Después de desplegar, haz un clic de prueba en cada panel de afiliado.
@@ -90,7 +100,9 @@
 
 ## 🟡 Decisiones de producto pendientes
 
-- **Qué es «Pro»**: el helper `getEffectiveTier()` (`src/lib/stripe/entitlements.ts`) y la RPC `my_effective_tier` ya existen, pero las rutas de IA todavía no exigen plan (todo es gratis con límites de uso). Decide qué funciones son de pago y aplícalo en el servidor.
+- **Qué es «Pro»**: el helper `getEffectiveTier()` (`src/lib/stripe/entitlements.ts`) y la RPC `my_effective_tier` ya existen, pero las rutas de IA todavía no exigen plan (todo es gratis con cuenta y límites de uso). Decide qué funciones son de pago y aplícalo en el servidor.
+- **Modelo del itinerario**: sigue `claude-opus-5-5` ($4/$20 por millón). `AI_ITINERARY_MODEL=claude-sonnet-5-5` lo abarata a la mitad; es decisión tuya, el tope diario no lo cambia.
+- **Valores de los límites y del tope**: los de ahora son para la beta (`src/lib/security/aiGuard.ts` y `AI_DAILY_BUDGET_USD`). Revísalos con el gasto real de `/admin/ai`.
 - **Reservas con depósito**: desactivadas (`NEXT_PUBLIC_RESERVAS_ENABLED=false`) hasta que haya un proveedor real de reservas y una revisión legal.
 - **Precios reales de vuelos y hoteles**: hoy son enlaces de afiliado con fechas. Para precios en la app: Duffel o Travelpayouts (vuelos) y LiteAPI (hoteles).
 - **Video de TikTok/Instagram**: no funciona en Vercel serverless (necesita ffmpeg y yt-dlp). Muévelo a un worker en contenedor (Railway, Fly.io o Cloud Run) o déjalo desactivado.

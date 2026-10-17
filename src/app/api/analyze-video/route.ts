@@ -11,13 +11,18 @@ import {
 } from '@/lib/ai/analyzeVideo'
 import { describeAiError } from '@/lib/ai/client'
 import { aiConfigured } from '@/lib/ai/config'
+import { bloqueoPorTopeDiario, respuestaTopeDiario } from '@/lib/ai/presupuesto'
 import {
   estadoPorErrorIA,
   exigirSesion,
   jsonError,
   leerJson,
-  limitar,
+  limitarIa,
 } from '@/lib/ai/routeKit'
+import {
+  LIMITES_ANALIZAR_IMAGEN,
+  LIMITES_ANALIZAR_VIDEO,
+} from '@/lib/security/aiGuard'
 
 /**
  * POST /api/analyze-video — detecta lugares en un video de viaje o en una foto.
@@ -27,8 +32,11 @@ import {
  *   { imageBase64: string, mediaType?: 'image/jpeg'|'image/png'|'image/webp' }  (≤ 5 MB)
  * 200: VideoAnalysisResult { lugares, destinoSugerido, resumen, demo?, parcial? }
  *
- * Exige sesión y tiene rate limit. El modo video depende del flag
- * VIDEO_ANALYSIS_ENABLED (desactivado por defecto en producción).
+ * Exige sesión (antes de leer el body de hasta 5 MB), tiene límites por
+ * cuenta por hora y por día y respeta el tope global de gasto diario (429
+ * code 'tope_diario'; el resultado de ejemplo sin IA nunca se bloquea). El
+ * modo video depende del flag VIDEO_ANALYSIS_ENABLED (desactivado por
+ * defecto en producción).
  */
 
 export const maxDuration = 300
@@ -62,6 +70,10 @@ const DEMO_RESULT: VideoAnalysisResult = {
 }
 
 function respuestaDeError(err: unknown): Response {
+  if (err instanceof VideoAnalysisError && err.code === 'tope_diario') {
+    // Corte duro del tope a mitad del análisis (aiGenerate).
+    return respuestaTopeDiario()
+  }
   if (err instanceof VideoAnalysisError) {
     if (err.code === 'herramientas' || err.status >= 500) {
       Sentry.captureException(err, { tags: { area: 'analyze-video' } })
@@ -79,6 +91,9 @@ function respuestaDeError(err: unknown): Response {
 
 export async function POST(request: Request): Promise<Response> {
   const inicio = Date.now()
+  const sesion = await exigirSesion(request)
+  if (!sesion.ok) return sesion.response
+
   const lectura = await leerJson(request, MAX_BODY_BYTES)
   if (!lectura.ok) return lectura.response
 
@@ -101,15 +116,18 @@ export async function POST(request: Request): Promise<Response> {
       return respuestaDeError(err)
     }
 
-    const sesion = await exigirSesion(request)
-    if (!sesion.ok) return sesion.response
-    const limite = await limitar(sesion.llamante, 'analyze-video', {
-      conSesion: 5,
-      anonimo: 5,
-    })
+    const limite = await limitarIa(
+      sesion.llamante,
+      'analyze-video',
+      LIMITES_ANALIZAR_VIDEO
+    )
     if (limite) return limite
 
     if (!aiConfigured()) return Response.json(DEMO_RESULT)
+
+    // Antes de la descarga y ffmpeg, que también son caros.
+    const tope = await bloqueoPorTopeDiario()
+    if (tope) return tope
 
     try {
       const resultado = await analyzeVideoFromUrl(url, {
@@ -137,15 +155,17 @@ export async function POST(request: Request): Promise<Response> {
     return respuestaDeError(err)
   }
 
-  const sesion = await exigirSesion(request)
-  if (!sesion.ok) return sesion.response
-  const limite = await limitar(sesion.llamante, 'analyze-image', {
-    conSesion: 15,
-    anonimo: 5,
-  })
+  const limite = await limitarIa(
+    sesion.llamante,
+    'analyze-image',
+    LIMITES_ANALIZAR_IMAGEN
+  )
   if (limite) return limite
 
   if (!aiConfigured()) return Response.json(DEMO_RESULT)
+
+  const tope = await bloqueoPorTopeDiario()
+  if (tope) return tope
 
   try {
     const resultado = await analyzeImage(imagen, {

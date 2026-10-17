@@ -3,13 +3,14 @@ import { AlertTriangle, CheckCircle2, MinusCircle } from 'lucide-react'
 import { Badge } from '@/components/ui/Badge'
 import { Card } from '@/components/ui/Card'
 import { aiConfigured, aiProvider } from '@/lib/ai/config'
+import { topeDiarioUsd } from '@/lib/ai/presupuesto'
 import {
   isStripeConfigured,
   isStripeWebhookConfigured,
   reservasHabilitadas,
 } from '@/lib/stripe/server'
 import { isSupabaseConfigured } from '@/lib/supabase/config'
-import { ETIQUETA_PROVEEDOR_IA } from './etiquetas'
+import { ETIQUETA_PROVEEDOR_IA, usd } from './etiquetas'
 
 type Estado = 'ok' | 'falta' | 'apagado'
 
@@ -31,6 +32,8 @@ function videoActivo(): boolean {
 
 function filas(): Fila[] {
   const proveedor = aiProvider()
+  // El tope no es secreto: se muestra el monto.
+  const tope = topeDiarioUsd()
   return [
     {
       nombre: 'Base de datos',
@@ -46,6 +49,14 @@ function filas(): Fila[] {
       nombre: 'Inteligencia artificial',
       detalle: `Proveedor: ${ETIQUETA_PROVEEDOR_IA[proveedor] ?? proveedor}`,
       estado: aiConfigured() ? 'ok' : 'falta',
+    },
+    {
+      nombre: 'Tope diario de IA',
+      detalle:
+        tope === null
+          ? 'AI_DAILY_BUDGET_USD: sin freno global de gasto'
+          : `AI_DAILY_BUDGET_USD: ${usd(tope)} por día de RD`,
+      estado: tope === null ? 'falta' : 'ok',
     },
     {
       nombre: 'Pagos',
@@ -94,7 +105,8 @@ const ICONO = { ok: CheckCircle2, falta: AlertTriangle, apagado: MinusCircle }
 
 /**
  * Card de solo lectura «Estado del entorno» (docs/DISENO.md §6.12): qué
- * servicios tiene configurados este servidor. No muestra ningún valor.
+ * servicios tiene configurados este servidor. No muestra ningún secreto (el
+ * tope diario de IA sí, porque no lo es).
  */
 export function EstadoEntorno() {
   return (

@@ -52,7 +52,7 @@ Entra a `/admin`. Si no eres admin te redirige a la home; si no hay sesión, al 
 | Suscripciones | `/admin/subscriptions` | MRR/ARR (solo planes cobrados en Stripe; los concedidos a mano se marcan «Concedido» y no cuentan), tiers, lista |
 | Grupos        | `/admin/groups`        | Moderar mensajes y gastos de los viajes en grupo                                                                 |
 | Referidos     | `/admin/referrals`     | Códigos, conversiones, leaderboard                                                                               |
-| Uso de IA     | `/admin/ai`            | Tokens, costo, latencia y éxito por proveedor/modelo                                                             |
+| Uso de IA     | `/admin/ai`            | Tokens, costo, latencia y éxito por proveedor/modelo; gasto de hoy frente al tope diario                         |
 | Feature Flags | `/admin/flags`         | Guardar flags por plataforma (⚠️ la web y la app aún no las leen: ver abajo)                                     |
 | Anuncios      | `/admin/announcements` | Publicar banners para web y mobile                                                                               |
 | Auditoría     | `/admin/audit`         | Registro de todas las acciones de admin                                                                          |
@@ -92,3 +92,44 @@ se registra automáticamente en `ai_logs` con proveedor, modelo, endpoint
 estimado (`src/lib/ai/pricing.ts`) y latencia. Los truncamientos
 (`max_tokens`) quedan como `success=false` con error `max_tokens`. Requiere la
 service role key; aparece en `/admin/ai`.
+
+### Tope diario de gasto
+
+`AI_DAILY_BUDGET_USD` (variable del servidor, en USD; no es secreta) pone un
+techo GLOBAL al gasto de IA de cada día. La lógica está en
+`src/lib/ai/presupuesto.ts`:
+
+- **Día**: el natural de RD (America/Santo_Domingo, UTC-4 fijo). Se reinicia a
+  las 12:00 a. m. de RD, igual que el «Costo diario» del panel.
+- **Gasto de hoy**: `sum(ai_logs.cost_usd)` desde las 00:00 de RD con la RPC
+  `ai_gasto_desde` (migración `20261017120000_ai_gasto_diario.sql`, solo
+  service role), cacheado 30 s por instancia. Como las filas se escriben al
+  terminar cada respuesta (`after()`), cada instancia suma además el coste de
+  sus llamadas ya terminadas que la BD todavía no tiene.
+- **Al llegar al tope** (1 ×): generar, interpretar y analizar responden 429
+  `tope_diario` con `retryAfter` hasta la medianoche de RD; ajustar y
+  reagendar responden 503 `ia_no_disponible` con `motivo: 'tope_diario'`
+  (el cliente ofrece editar a mano); validar devuelve `ia.estado:
+'no_disponible'` y las alertas el mensaje local. El modo demo (sin IA) y
+  los viajes que ya están en la caché siguen saliendo.
+- **Corte duro** (1,25 ×): `aiGenerate` deja de llamar al proveedor aunque la
+  ruta ya hubiera pasado la comprobación (generaciones largas o concurrentes).
+- **Si no se puede leer el gasto** (sin service role, sin la RPC, red): falla
+  ABIERTO y avisa con `console.warn` y Sentry (`area: ai-presupuesto`), como
+  mucho una vez por hora por instancia. Al alcanzar el tope hay un aviso en
+  Sentry por día.
+- **Es una estimación**: precios de `pricing.ts` (con la tarifa de más de 100K
+  tokens de Haiku 5.5 y, si un modelo no tiene precio, el más alto conocido de
+  su familia, con aviso en Sentry para añadirlo). Las llamadas abortadas,
+  cortadas por timeout o rechazadas también se facturan y se registran con un
+  coste estimado prudente (entrada real o estimada y salida acotada por el
+  tiempo transcurrido); con fallback del servidor se suman todos los intentos.
+  Con Groq gratis el coste es el de su tarifa de pago. Lo que Vercel corta por
+  `maxDuration` no llega a registrarse. Como red final, pon un límite de gasto
+  mensual en la consola de Anthropic.
+
+La tarjeta «Tope diario de IA» de `/admin/ai` compara la última barra del
+«Costo diario» (hoy) con el tope: sin tope, dentro, cerca (≥ 80 %) o agotado.
+«Estado del entorno» (`/admin/settings`) muestra si está configurado y el
+monto. Los límites por cuenta (por hora y por día) están en
+`src/lib/security/aiGuard.ts`.

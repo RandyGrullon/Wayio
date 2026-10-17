@@ -1,6 +1,13 @@
 import { TripFormSchema } from '@/lib/validations/tripForm'
 import { generateTrips, GenerationError } from '@/lib/ai/generateTrips'
-import { guardAi, LIMITES_GENERACION } from '@/lib/security/aiGuard'
+import { respuestaTopeDiario } from '@/lib/ai/presupuesto'
+import { exigirSesion, leerJson, limitarIa } from '@/lib/ai/routeKit'
+import { LIMITES_GENERAR } from '@/lib/security/aiGuard'
+import {
+  comprobarTopeGenerar,
+  MAX_BODY_GENERAR,
+  pideNoCache,
+} from './_lib/comun'
 
 // Los viajes largos se generan en bloques paralelos; aun así dejamos margen
 // (con Fluid Compute de Vercel el máximo en Hobby es 300 s).
@@ -10,13 +17,19 @@ export const maxDuration = 300
 // la ruta. La lógica vive en @/lib/ai/generateTrips (reutilizada por el stream).
 export type { GenerateResult } from '@/lib/ai/generateTrips'
 
+/**
+ * POST /api/generate — genera el itinerario (versión sin streaming).
+ *
+ * Exige sesión (cookie o Bearer), con límites por cuenta por hora y por día
+ * (compartidos con /api/generate/stream) y el tope global de gasto diario.
+ */
 export async function POST(request: Request): Promise<Response> {
-  let body: unknown
-  try {
-    body = await request.json()
-  } catch {
-    return Response.json({ error: 'Solicitud inválida' }, { status: 400 })
-  }
+  const sesion = await exigirSesion(request)
+  if (!sesion.ok) return sesion.response
+
+  const lectura = await leerJson(request, MAX_BODY_GENERAR)
+  if (!lectura.ok) return lectura.response
+  const body = lectura.data
   const parsed = TripFormSchema.safeParse(body)
   if (!parsed.success) {
     return Response.json(
@@ -28,20 +41,20 @@ export async function POST(request: Request): Promise<Response> {
     )
   }
 
-  const guard = await guardAi(request, 'generate', LIMITES_GENERACION)
-  if ('blocked' in guard) return guard.blocked
+  const limite = await limitarIa(sesion.llamante, 'generate', LIMITES_GENERAR)
+  if (limite) return limite
 
   // Permite forzar regeneración ("Otra versión") saltando la caché.
-  const noCache =
-    typeof body === 'object' && body !== null && 'noCache' in body
-      ? Boolean((body as { noCache?: unknown }).noCache)
-      : false
+  const noCache = pideNoCache(body)
+
+  const tope = await comprobarTopeGenerar(parsed.data, noCache)
+  if (tope) return tope
 
   try {
     const { result, cacheHit, demo } = await generateTrips(parsed.data, {
       noCache,
       signal: request.signal,
-      userId: guard.userId,
+      userId: sesion.llamante.user?.id ?? null,
     })
     return Response.json(result, {
       headers: {
@@ -52,6 +65,8 @@ export async function POST(request: Request): Promise<Response> {
     })
   } catch (err) {
     if (err instanceof GenerationError) {
+      // Corte duro del tope a mitad de la generación (aiGenerate).
+      if (err.code === 'tope_diario') return respuestaTopeDiario()
       return Response.json(
         { error: err.mensaje, code: err.code },
         { status: err.code === 'rate_limit' ? 503 : 502 }

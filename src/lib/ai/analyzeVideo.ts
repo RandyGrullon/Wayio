@@ -54,6 +54,8 @@ export type VideoErrorCode =
   | 'sin_fotogramas'
   | 'imagen_no_valida'
   | 'ia'
+  /** Se alcanzó el tope global de gasto diario de IA (presupuesto.ts). */
+  | 'tope_diario'
 
 /** Error con mensaje apto para el usuario y status HTTP sugerido. */
 export class VideoAnalysisError extends Error {
@@ -695,6 +697,9 @@ async function consolidar(
 
 function errorDeIA(err: unknown): VideoAnalysisError {
   const { code, mensaje } = describeAiError(err)
+  if (code === 'tope_diario') {
+    return new VideoAnalysisError('tope_diario', mensaje, 429, err)
+  }
   return new VideoAnalysisError(
     'ia',
     code === 'rate_limit' || code === 'network'

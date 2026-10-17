@@ -5,6 +5,7 @@ import { DataTable } from '@/components/admin/DataTable'
 import type { Columna } from '@/components/admin/DataTable'
 import { Encabezado, TituloBloque } from '@/components/admin/Encabezado'
 import { StatCard } from '@/components/admin/StatCard'
+import { TopeDiarioIa } from '@/components/admin/TopeDiarioIa'
 import {
   ETIQUETA_PROVEEDOR_IA,
   cantidad,
@@ -16,6 +17,7 @@ import { Badge } from '@/components/ui/Badge'
 import { Card } from '@/components/ui/Card'
 import { EmptyState } from '@/components/ui/EmptyState'
 import type { AiUsageStats } from '@/lib/admin/queries'
+import { MARGEN_CORTE_DURO, topeDiarioUsd } from '@/lib/ai/presupuesto'
 import { formatNumero, formatPorcentaje } from '@/lib/utils/formatters'
 import type { AiLogRow } from '@/types/admin'
 import { exigirAdmin } from '../_lib/acceso'
@@ -171,6 +173,9 @@ export default async function AiUsagePage() {
   const s = await datosIa(DIAS)
   const hayLlamadas = s.totalCalls > 0
   const exito = s.successRate * 100
+  // La serie es por día de RD y termina hoy: su última barra es el gasto que
+  // cuenta para el tope diario (en modo demo, el de ejemplo).
+  const gastadoHoy = s.series.at(-1)?.value ?? 0
 
   return (
     <div className="space-y-8">
@@ -211,6 +216,12 @@ export default async function AiUsagePage() {
           className="col-span-2 lg:col-span-1"
         />
       </div>
+
+      <TopeDiarioIa
+        gastadoHoy={gastadoHoy}
+        tope={topeDiarioUsd()}
+        margenCorte={MARGEN_CORTE_DURO}
+      />
 
       <Card as="section" aria-labelledby="graf-costo" className="p-5 md:p-6">
         <TituloBloque id="graf-costo">Costo diario</TituloBloque>

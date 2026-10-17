@@ -130,6 +130,28 @@ async function ia() {
   }
 }
 
+// ── Tope global de gasto diario de IA (src/lib/ai/presupuesto.ts) ──────────
+async function topeIa() {
+  const crudo = env('AI_DAILY_BUDGET_USD')
+  const tope = Number.parseFloat(crudo)
+  if (!crudo) {
+    return anotar(
+      'IA',
+      'Tope diario de gasto',
+      'OPCIONAL',
+      'AI_DAILY_BUDGET_USD vacía: sin tope global (recomendado en producción)'
+    )
+  }
+  anotar(
+    'IA',
+    'Tope diario de gasto',
+    Number.isFinite(tope) && tope > 0 ? 'OK' : 'ERROR',
+    Number.isFinite(tope) && tope > 0
+      ? `US$${tope} por día de RD (necesita la service role y la migración 4)`
+      : `AI_DAILY_BUDGET_USD="${crudo}" no es un número > 0: se ignora (sin tope)`
+  )
+}
+
 // ── Supabase: conexión, migraciones, admin y auth ───────────────────────────
 const TABLAS_MIG_1 = [
   'profiles',
@@ -163,6 +185,7 @@ const RPC_MIG_3 = [
   'apply_referral',
   'register_device',
 ]
+const RPC_MIG_4 = ['ai_gasto_desde']
 
 async function supabase() {
   const url = env('NEXT_PUBLIC_SUPABASE_URL').replace(/\/+$/, '')
@@ -252,6 +275,15 @@ async function supabase() {
     falta3.length
       ? `faltan: ${falta3.join(', ')} → ejecuta 20261008120000_seguridad_y_flujos.sql`
       : 'RLS, compartir, grupos, referidos y reservas'
+  )
+  const falta4 = RPC_MIG_4.filter((f) => !hayRpc(f))
+  anotar(
+    'Base de datos',
+    'Migración 4 · gasto diario de IA',
+    falta4.length ? 'FALTA' : 'OK',
+    falta4.length
+      ? `faltan: ${falta4.map((f) => `rpc ${f}`).join(', ')} → ejecuta 20261017120000_ai_gasto_diario.sql (sin ella el tope AI_DAILY_BUDGET_USD queda abierto)`
+      : 'RPC del tope diario de IA'
   )
 
   if (hay('profiles')) {
@@ -574,7 +606,15 @@ function plataforma() {
 
 // ── Ejecución e informe ─────────────────────────────────────────────────────
 const tieneEnv = existsSync(join(RAIZ, '.env.local'))
-await Promise.all([ia(), supabase(), upstash(), mapa(), busqueda(), stripe()])
+await Promise.all([
+  ia(),
+  topeIa(),
+  supabase(),
+  upstash(),
+  mapa(),
+  busqueda(),
+  stripe(),
+])
 plataforma()
 
 const ICONO = { OK: '✔', FALTA: '✖', ERROR: '✖', AVISO: '!', OPCIONAL: '·' }

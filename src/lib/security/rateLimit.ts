@@ -7,6 +7,10 @@ import 'server-only'
  *   (global entre instancias serverless, vía su API REST, sin dependencias).
  * - Si no, cae a un contador en memoria por instancia: suficiente en local y
  *   como freno básico, pero NO es global en producción (configura Upstash).
+ *
+ * Ojo con las ventanas: en Upstash son FIJAS y alineadas a epoch, así que una
+ * de 86 400 s (límites diarios) se reinicia a las 00:00 UTC (las 8:00 p. m.
+ * de RD), no a medianoche de RD. En memoria la ventana es deslizante.
  */
 
 export interface RateLimitResult {
@@ -111,12 +115,47 @@ export function clientIp(request: Request): string {
   )
 }
 
-/** Respuesta 429 estándar en español. */
+/**
+ * ¿Se aplican los límites de las rutas de IA? Siempre en producción; en
+ * desarrollo solo con RATE_LIMIT_ENFORCE=true (para poder correr la batería
+ * de evaluación sin topes).
+ */
+export function limitesActivos(): boolean {
+  return (
+    process.env.NODE_ENV === 'production' ||
+    process.env['RATE_LIMIT_ENFORCE'] === 'true'
+  )
+}
+
+const plural = (n: number, uno: string, varios: string) =>
+  `${n} ${n === 1 ? uno : varios}`
+
+/**
+ * Espera legible en minutos u horas («15 minutos», «1 hora y 20 minutos»,
+ * «unas 6 horas»). Redondea hacia arriba: nunca promete menos de lo real.
+ */
+export function describirEspera(segundos: number): string {
+  const minutos = Math.max(1, Math.ceil(segundos / 60))
+  if (minutos < 60) return plural(minutos, 'minuto', 'minutos')
+  const horas = Math.floor(minutos / 60)
+  const resto = minutos % 60
+  if (resto === 0) return plural(horas, 'hora', 'horas')
+  if (horas < 3) {
+    return `${plural(horas, 'hora', 'horas')} y ${plural(resto, 'minuto', 'minutos')}`
+  }
+  return `unas ${horas + 1} horas`
+}
+
+/**
+ * Respuesta 429 estándar en español: {error, retryAfter, code:'rate_limit'}
+ * más la cabecera Retry-After. El mensaje dice cuánto esperar de verdad.
+ */
 export function tooManyRequests(r: RateLimitResult): Response {
   return Response.json(
     {
-      error: 'Demasiadas solicitudes. Espera un momento y vuelve a intentarlo.',
+      error: `Has hecho muchas solicitudes seguidas. Vuelve a intentarlo en ${describirEspera(r.retryAfter)}.`,
       retryAfter: r.retryAfter,
+      code: 'rate_limit',
     },
     { status: 429, headers: { 'Retry-After': String(r.retryAfter) } }
   )

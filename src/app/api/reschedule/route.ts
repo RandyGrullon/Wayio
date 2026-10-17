@@ -2,6 +2,7 @@ import * as Sentry from '@sentry/nextjs'
 import { z } from 'zod'
 import { describeAiError } from '@/lib/ai/client'
 import { aiConfigured } from '@/lib/ai/config'
+import { presupuestoAgotado } from '@/lib/ai/presupuesto'
 import {
   calcularHuecos,
   huecoPublico,
@@ -128,6 +129,19 @@ export async function POST(request: Request): Promise<Response> {
     )
   }
 
+  // Tope global de gasto diario: mismo camino que sin IA (cambio manual).
+  const respuestaTope = (): Response =>
+    jsonError(
+      503,
+      'Wayio llegó a su límite de IA por hoy. Puedes mover la actividad a uno de los huecos libres.',
+      {
+        code: 'ia_no_disponible',
+        motivo: 'tope_diario',
+        huecos: huecosPublicos,
+      }
+    )
+  if (await presupuestoAgotado()) return respuestaTope()
+
   try {
     const resultado = await rescheduleActivity({
       actividad,
@@ -141,6 +155,7 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ ...resultado, huecos: huecosPublicos })
   } catch (err) {
     const { code } = describeAiError(err)
+    if (code === 'tope_diario') return respuestaTope()
     if (code === 'unknown') {
       Sentry.captureException(err, { tags: { area: 'reschedule-ai' } })
     }

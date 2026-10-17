@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { aiGenerate } from '@/lib/ai/client'
 import { aiConfigured } from '@/lib/ai/config'
+import { presupuestoAgotado } from '@/lib/ai/presupuesto'
 import {
   esObjeto,
   exigirSesion,
@@ -286,7 +287,10 @@ export async function POST(request: Request): Promise<Response> {
   // Ids estables para que la IA pueda señalar una actividad sin ambigüedad.
   const ids = datos.siguientes.map((s, i) => s.id?.trim() || `act-${i + 1}`)
 
-  if (!aiConfigured()) return Response.json(mensajeLocal(datos, ids))
+  // Sin IA o con el tope global de gasto diario agotado: aviso determinista.
+  if (!aiConfigured() || (await presupuestoAgotado())) {
+    return Response.json(mensajeLocal(datos, ids))
+  }
 
   try {
     const r = await aiGenerate({

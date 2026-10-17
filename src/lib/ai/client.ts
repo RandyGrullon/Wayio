@@ -8,6 +8,12 @@ import {
   type AiProvider,
   type AiTask,
 } from './config'
+import { estimateCost } from './pricing'
+import {
+  corteDuroAlcanzado,
+  MENSAJE_TOPE_DIARIO,
+  registrarGastoLocal,
+} from './presupuesto'
 import { logAiUsage } from './usageLog'
 
 /**
@@ -66,6 +72,17 @@ export class AiRefusalError extends Error {
   }
 }
 
+/**
+ * Se alcanzó el tope global de gasto diario (corte duro, ver presupuesto.ts):
+ * se lanza ANTES de llamar al proveedor, así que no cuesta nada.
+ */
+export class AiTopeDiarioError extends Error {
+  constructor() {
+    super('Tope diario de gasto de IA alcanzado')
+    this.name = 'AiTopeDiarioError'
+  }
+}
+
 /** Error HTTP de Groq con su status. */
 export class GroqHttpError extends Error {
   readonly status: number
@@ -110,10 +127,161 @@ function mapAnthropicStop(reason: string | null | undefined): AiStopReason {
   }
 }
 
-async function callAnthropic(
+/**
+ * Uso (tokens y coste estimado) de una llamada. En las que fallan (abortadas,
+ * rechazadas, cortadas a mitad) es una estimación prudente: Anthropic cobra
+ * la entrada ya procesada y la salida ya generada, y si se registrara 0 el
+ * tope diario no vería ese gasto.
+ */
+interface UsoLlamada {
+  inputTokens: number
+  outputTokens: number
+  costoUsd: number
+}
+
+const usoVacio = (): UsoLlamada => ({
+  inputTokens: 0,
+  outputTokens: 0,
+  costoUsd: 0,
+})
+
+/**
+ * Cota alta de la velocidad de salida (tokens/s, sin fast mode) para estimar
+ * la salida (pensamiento incluido) de un stream cortado: con pensamiento
+ * adaptativo el texto puede llegar vacío y el usage final solo viene al
+ * terminar, así que el tiempo transcurrido es la medida fiable. Haiku es el
+ * más rápido; para el resto, 150 tokens/s queda por encima de lo habitual.
+ */
+const tokensSalidaPorSegundo = (modelo: string): number =>
+  /haiku/i.test(modelo) ? 300 : 150
+/** Tokens prudentes por imagen (las de alta resolución rondan los 4.800). */
+const TOKENS_POR_IMAGEN = 5_000
+/** Caracteres por token prudentes (español; tokenizadores nuevos cuentan más). */
+const CARACTERES_POR_TOKEN = 3
+
+/**
+ * Tokens de entrada estimados de la petición, para cuando el stream se corta
+ * antes de message_start (que es el evento que trae input_tokens).
+ */
+function estimarTokensEntrada(req: AiRequest): number {
+  let caracteres =
+    (req.system?.length ?? 0) +
+    (req.schema ? JSON.stringify(req.schema).length : 0)
+  let imagenes = 0
+  for (const m of req.messages) {
+    if (typeof m.content === 'string') {
+      caracteres += m.content.length
+      continue
+    }
+    for (const b of m.content) {
+      if (b.type === 'text') caracteres += b.text.length
+      else if (b.type === 'image') imagenes++
+    }
+  }
+  return (
+    Math.ceil(caracteres / CARACTERES_POR_TOKEN) + imagenes * TOKENS_POR_IMAGEN
+  )
+}
+
+/**
+ * Uso facturado de un mensaje. Con fallbacks del lado del servidor, el usage
+ * de nivel superior solo cubre el intento que respondió; los intentos
+ * anteriores (de otros modelos) vienen en usage.iterations.
+ */
+function usoDelMensaje(
+  message: Anthropic.Beta.Messages.BetaMessage,
+  model: string
+): UsoLlamada {
+  const u = message.usage
+  const modelo = message.model || model
+  const entradaArriba =
+    u.input_tokens +
+    (u.cache_creation_input_tokens ?? 0) +
+    (u.cache_read_input_tokens ?? 0)
+  const arriba: UsoLlamada = {
+    inputTokens: entradaArriba,
+    outputTokens: u.output_tokens,
+    costoUsd: estimateCost(modelo, entradaArriba, u.output_tokens),
+  }
+  const iteraciones = u.iterations ?? []
+  if (iteraciones.length === 0) return arriba
+
+  const suma = usoVacio()
+  for (const it of iteraciones) {
+    const entrada =
+      it.input_tokens +
+      it.cache_creation_input_tokens +
+      it.cache_read_input_tokens
+    const modeloIt = ('model' in it && it.model) || modelo
+    suma.inputTokens += entrada
+    suma.outputTokens += it.output_tokens
+    suma.costoUsd += estimateCost(modeloIt, entrada, it.output_tokens)
+  }
+  // Por si la lista de iteraciones viniera incompleta: nunca menos que arriba.
+  return suma.costoUsd >= arriba.costoUsd ? suma : arriba
+}
+
+/**
+ * Uso estimado de un stream que falló antes de terminar (abortado por el
+ * cliente, timeout, error a mitad...). Con message_start ya recibido, la
+ * entrada es la real y la salida se acota por el tiempo transcurrido (nunca
+ * más de maxTokens). Sin él, se estima la entrada salvo que el fallo
+ * demuestre que la API no llegó a procesar la petición.
+ */
+function usoDeStreamCortado(
+  err: unknown,
+  snapshot: Anthropic.Beta.Messages.BetaMessage | undefined,
+  inicioSalida: number | null,
   req: AiRequest,
   model: string
-): Promise<Omit<AiResult, 'latencyMs'>> {
+): UsoLlamada {
+  if (snapshot) {
+    const uso = usoDelMensaje(snapshot, model)
+    const modelo = snapshot.model || model
+    const segundos =
+      inicioSalida === null ? 0 : (Date.now() - inicioSalida) / 1000
+    const salida = Math.min(
+      req.maxTokens,
+      Math.max(
+        uso.outputTokens,
+        Math.ceil(segundos * tokensSalidaPorSegundo(modelo))
+      )
+    )
+    if (salida <= uso.outputTokens) return uso
+    // La salida extra, con la tarifa que corresponda al tamaño del prompt.
+    const extra =
+      estimateCost(modelo, uso.inputTokens, salida) -
+      estimateCost(modelo, uso.inputTokens, uso.outputTokens)
+    return {
+      inputTokens: uso.inputTokens,
+      outputTokens: salida,
+      costoUsd: uso.costoUsd + Math.max(0, extra),
+    }
+  }
+  // Respuesta HTTP de error (400, 429, 5xx…) o fallo de conexión: la API no
+  // procesó la petición y no cobra. Un aborto o un timeout, en cambio, pueden
+  // llegar cuando la API ya estaba leyendo el prompt.
+  const sinCobro =
+    (err instanceof Anthropic.APIError && typeof err.status === 'number') ||
+    (err instanceof Anthropic.APIConnectionError &&
+      !(err instanceof Anthropic.APIConnectionTimeoutError))
+  if (sinCobro) return usoVacio()
+  const entrada = estimarTokensEntrada(req)
+  return {
+    inputTokens: entrada,
+    outputTokens: 0,
+    costoUsd: estimateCost(model, entrada, 0),
+  }
+}
+
+async function callAnthropic(
+  req: AiRequest,
+  model: string,
+  parcial: UsoLlamada
+): Promise<Omit<AiResult, 'latencyMs'> & { costoUsd: number }> {
+  // Ya abortada: no se envía nada (y no hay nada que cobrar).
+  if (req.signal?.aborted) throw new Anthropic.APIUserAbortError()
+
   const client = getAnthropic()
   const outputConfig: Anthropic.Beta.Messages.BetaOutputConfig = {
     effort: aiEffort(req.task),
@@ -144,10 +312,33 @@ async function callAnthropic(
       ...(req.signal ? { signal: req.signal } : {}),
     }
   )
-  const message = await stream.finalMessage()
+  // Desde message_start el modelo ya genera (pensamiento incluido).
+  let inicioSalida: number | null = null
+  stream.on('streamEvent', (ev) => {
+    if (ev.type === 'message_start' && inicioSalida === null) {
+      inicioSalida = Date.now()
+    }
+  })
 
+  let message: Anthropic.Beta.Messages.BetaMessage
+  try {
+    message = await stream.finalMessage()
+  } catch (err) {
+    // El snapshot sobrevive al error: trae input_tokens desde message_start.
+    Object.assign(
+      parcial,
+      usoDeStreamCortado(err, stream.currentMessage, inicioSalida, req, model)
+    )
+    throw err
+  }
+
+  const uso = usoDelMensaje(message, model)
   const stopReason = mapAnthropicStop(message.stop_reason)
-  if (stopReason === 'refusal') throw new AiRefusalError()
+  // Un rechazo (también a mitad del stream) se factura a tarifa normal.
+  if (stopReason === 'refusal') {
+    Object.assign(parcial, uso)
+    throw new AiRefusalError()
+  }
 
   const text = message.content
     .filter(
@@ -161,8 +352,9 @@ async function callAnthropic(
     stopReason,
     provider: 'anthropic',
     model: message.model || model,
-    inputTokens: message.usage.input_tokens,
-    outputTokens: message.usage.output_tokens,
+    inputTokens: uso.inputTokens,
+    outputTokens: uso.outputTokens,
+    costoUsd: uso.costoUsd,
   }
 }
 
@@ -286,49 +478,89 @@ async function callGroq(
 // Interfaz pública
 // ---------------------------------------------------------------------------
 
-/** Registra el uso tras responder (after) o en segundo plano fuera de una petición. */
-function logLater(entry: Parameters<typeof logAiUsage>[0]): void {
+/**
+ * Registra el uso tras responder (after) o en segundo plano fuera de una
+ * petición. `alEscribir` se llama solo si la fila llegó de verdad a ai_logs;
+ * si el insert falló, el gasto sigue contando en local (ver presupuesto.ts).
+ */
+function logLater(
+  entry: Parameters<typeof logAiUsage>[0],
+  alEscribir?: () => void
+): void {
+  const tarea = async (): Promise<void> => {
+    if (await logAiUsage(entry)) alEscribir?.()
+  }
   try {
-    after(() => logAiUsage(entry))
+    after(tarea)
   } catch {
-    void logAiUsage(entry)
+    void tarea()
   }
 }
 
 export async function aiGenerate(req: AiRequest): Promise<AiResult> {
+  // Corte duro del tope diario: freno ante generaciones largas o concurrentes
+  // que ya pasaron la comprobación de su ruta. Sin tope no consulta nada.
+  if (await corteDuroAlcanzado()) throw new AiTopeDiarioError()
+
   const provider = aiProvider()
   const model = req.model ?? aiModel(req.task)
   const start = Date.now()
+  // Lo ya gastado si la llamada falla (aborto, timeout, rechazo, corte).
+  const parcial = usoVacio()
   try {
-    const r =
+    const r: Omit<AiResult, 'latencyMs'> & { costoUsd?: number } =
       provider === 'groq'
         ? await callGroq(req, model)
-        : await callAnthropic(req, model)
+        : await callAnthropic(req, model, parcial)
     const latencyMs = Date.now() - start
-    logLater({
-      provider,
+    const costoUsd =
+      r.costoUsd ?? estimateCost(r.model, r.inputTokens, r.outputTokens)
+    // El coste cuenta para el tope de esta instancia desde ya, sin esperar a
+    // que after() escriba la fila en ai_logs.
+    const yaRegistrado = registrarGastoLocal(costoUsd)
+    logLater(
+      {
+        provider,
+        model: r.model,
+        endpoint: req.endpoint ?? req.task,
+        userId: req.userId ?? null,
+        promptTokens: r.inputTokens,
+        completionTokens: r.outputTokens,
+        costUsd: costoUsd,
+        latencyMs,
+        success: r.stopReason !== 'max_tokens',
+        ...(r.stopReason === 'max_tokens' ? { error: 'max_tokens' } : {}),
+      },
+      yaRegistrado
+    )
+    return {
+      text: r.text,
+      stopReason: r.stopReason,
+      provider: r.provider,
       model: r.model,
-      endpoint: req.endpoint ?? req.task,
-      userId: req.userId ?? null,
-      promptTokens: r.inputTokens,
-      completionTokens: r.outputTokens,
+      inputTokens: r.inputTokens,
+      outputTokens: r.outputTokens,
       latencyMs,
-      success: r.stopReason !== 'max_tokens',
-      ...(r.stopReason === 'max_tokens' ? { error: 'max_tokens' } : {}),
-    })
-    return { ...r, latencyMs }
+    }
   } catch (err) {
-    logLater({
-      provider,
-      model,
-      endpoint: req.endpoint ?? req.task,
-      userId: req.userId ?? null,
-      promptTokens: 0,
-      completionTokens: 0,
-      latencyMs: Date.now() - start,
-      success: false,
-      error: err instanceof Error ? err.message.slice(0, 500) : 'unknown',
-    })
+    // Abortos, timeouts y rechazos también se facturan: cuentan para el tope
+    // (estimación prudente, ver usoDeStreamCortado).
+    const yaRegistrado = registrarGastoLocal(parcial.costoUsd)
+    logLater(
+      {
+        provider,
+        model,
+        endpoint: req.endpoint ?? req.task,
+        userId: req.userId ?? null,
+        promptTokens: parcial.inputTokens,
+        completionTokens: parcial.outputTokens,
+        costUsd: parcial.costoUsd,
+        latencyMs: Date.now() - start,
+        success: false,
+        error: err instanceof Error ? err.message.slice(0, 500) : 'unknown',
+      },
+      yaRegistrado
+    )
     throw err
   }
 }
@@ -341,6 +573,7 @@ export type AiErrorCode =
   | 'timeout'
   | 'truncated'
   | 'network'
+  | 'tope_diario'
   | 'unknown'
 
 /**
@@ -351,6 +584,9 @@ export function describeAiError(err: unknown): {
   code: AiErrorCode
   mensaje: string
 } {
+  if (err instanceof AiTopeDiarioError) {
+    return { code: 'tope_diario', mensaje: MENSAJE_TOPE_DIARIO }
+  }
   if (err instanceof AiRefusalError) {
     return {
       code: 'refusal',
