@@ -1,0 +1,6 @@
+# Plantillas de correo de Supabase: supabase/config.toml las carga con
+# content_path y se pegan tal cual en el panel; se dejan byte a byte.
+supabase/templates/
+
+# Maqueta de diseño estática (HTML de referencia, no código de la app).
+docs/diseno/intro.html
