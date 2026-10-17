@@ -6,16 +6,17 @@
 
 ## Orden recomendado
 
-| #   | Servicio                                                      | Para qué                                                                                  | ¿Obligatorio?                 | Coste                  |
-| --- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------- | ----------------------------- | ---------------------- |
-| 1   | **Anthropic (Claude)**                                        | Generar itinerarios, interpretar la descripción libre, ajustes por chat, reagendar, video | Sí, para la IA real           | Pago por uso           |
-| 2   | **Supabase**                                                  | Login, guardar/compartir viajes, grupos, panel admin, caché                               | Sí, para cuentas              | Plan Free              |
-| 3   | **Upstash Redis**                                             | Límites de uso globales (protege tu factura de IA)                                        | Muy recomendado en producción | Plan Free              |
-| 4   | OpenWeather                                                   | Pronóstico real si el viaje empieza en ≤ 5 días                                           | Opcional                      | Gratis                 |
-| 5   | Afiliados (Viator, Booking, Skyscanner/Travelpayouts, Airalo) | Ganar comisión con los enlaces                                                            | Opcional                      | Gratis                 |
-| 6   | Stripe                                                        | Suscripciones Pro                                                                         | Solo si vas a cobrar          | Comisión por venta     |
-| 7   | PostHog / Sentry                                              | Analítica / errores                                                                       | Opcional                      | Planes gratis          |
-| 8   | Mapbox + Expo/EAS                                             | App móvil (mapa y builds)                                                                 | Solo móvil                    | Free / pago de tiendas |
+| #   | Servicio                                                      | Para qué                                                                                  | ¿Obligatorio?                 | Coste                   |
+| --- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------- | ----------------------------- | ----------------------- |
+| 1   | **Anthropic (Claude)**                                        | Generar itinerarios, interpretar la descripción libre, ajustes por chat, reagendar, video | Sí, para la IA real           | Pago por uso            |
+| 2   | **Supabase**                                                  | Login, guardar/compartir viajes, grupos, panel admin, caché                               | Sí, para cuentas              | Plan Free               |
+| 3   | **Upstash Redis**                                             | Límites de uso globales (protege tu factura de IA)                                        | Muy recomendado en producción | Plan Free               |
+| 4   | **Geoapify**                                                  | Ubicar lugares y rutas por calles en el mapa con uso comercial                            | Muy recomendado si cobras     | Plan Free (o US$59/mes) |
+| 5   | OpenWeather                                                   | Pronóstico real si el viaje empieza en ≤ 5 días                                           | Opcional                      | Gratis                  |
+| 6   | Afiliados (Viator, Booking, Skyscanner/Travelpayouts, Airalo) | Ganar comisión con los enlaces                                                            | Opcional                      | Gratis                  |
+| 7   | Stripe                                                        | Suscripciones Pro                                                                         | Solo si vas a cobrar          | Comisión por venta      |
+| 8   | PostHog / Sentry                                              | Analítica / errores                                                                       | Opcional                      | Planes gratis           |
+| 9   | Mapbox + Expo/EAS                                             | App móvil (mapa y builds)                                                                 | Solo móvil                    | Free / pago de tiendas  |
 
 ---
 
@@ -89,13 +90,52 @@ Al pasarse, la API responde 429 `rate_limit` con `retryAfter` y un mensaje que d
 
 **Tope global de gasto diario:** `AI_DAILY_BUDGET_USD=25` (en USD, no es secreto) frena TODA la IA de la app cuando el gasto estimado de hoy (día natural de RD, desde ai_logs) llega al tope: generar, interpretar y analizar responden 429 `tope_diario` («Wayio llegó a su límite de IA por hoy») con `retryAfter` hasta las 12:00 a. m. de RD; ajustar y reagendar pasan a edición manual; validar y las alertas usan sus reglas locales. Al 125 % se corta también lo que ya estaba en marcha. Necesita la service role y la migración `20261017120000_ai_gasto_diario.sql`; si no puede leer el gasto, **deja pasar** y avisa en consola y Sentry. Es una estimación (precios de `src/lib/ai/pricing.ts`): como red final pon además un **límite de gasto mensual** en la consola de Anthropic (Settings → Limits), que corta en el proveedor aunque la app fallara.
 
-## 4. Mapa, geocoding y clima
+## 4. Mapa, geocoding, rutas y clima
 
-- Mapa (MapLibre + OpenFreeMap) y geocoding (OpenStreetMap Nominatim): **gratis y sin clave**. Pon `NOMINATIM_EMAIL=tu@email` (lo pide su política de uso). Para tráfico alto, migra a un geocoder comercial (Geoapify, LocationIQ, OpenCage).
-- Rutas exactas por calles entre paradas (`POST /api/ruta`): **OSRM** sobre OpenStreetMap, con los servidores públicos de FOSSGIS (`routing.openstreetmap.de`, perfiles a pie y en carro). Son gratis y sin clave, pero de **uso justo**. Los tramos de ≤ 1,6 km van a pie, los de hasta 250 km en carro, y los más largos o por mar se dibujan como arco. Las rutas se cachean en el servidor (7 días) y en la sesión del navegador.
-  - Con tráfico real, monta tu propio OSRM (imagen Docker `osrm/osrm-backend` con el extracto de tu región de Geofabrik) y pon `OSRM_FOOT_URL` y `OSRM_CAR_URL` (URL base con el perfil, sin barra final). Otra opción es un proveedor comercial compatible (Stadia, GraphHopper, Mapbox Directions), adaptando `src/lib/api/rutas.ts`.
-  - Si el servicio no responde, el mapa dibuja arcos y el itinerario no se rompe.
-- Clima: <https://openweathermap.org/api> → API keys → `OPENWEATHER_API_KEY=` (tarda hasta 2 h en activarse). Si el viaje empieza en ≤ 5 días se usa el pronóstico real de esas fechas; si no, se muestra el clima actual con esa etiqueta.
+- **Mapa base** (MapLibre + OpenFreeMap): gratis y sin clave.
+- **Geocoding y rutas por calles**: con `GEOAPIFY_API_KEY` se usa **Geoapify**; sin ella, el respaldo gratuito de OpenStreetMap (Nominatim + OSRM de FOSSGIS). El respaldo es de **uso justo** y no sirve para uso comercial intensivo, así que en producción, y sobre todo si vas a cobrar, pon la clave de Geoapify. Los tramos de ≤ 1,6 km van a pie, los de hasta 250 km en carro, y los más largos o por mar se dibujan como arco (con cualquiera de los dos proveedores).
+
+### Geoapify (recomendado en producción)
+
+1. Entra en <https://myprojects.geoapify.com>, crea una cuenta gratis (plan **Free**, sin tarjeta) y un proyecto, y copia su **API key**.
+2. En `.env.local` y en Vercel:
+   ```
+   GEOAPIFY_API_KEY=...      # SECRETO: solo servidor, NUNCA con NEXT_PUBLIC_
+   ```
+   El servidor la manda en la cabecera `x-api-key`, nunca en la URL ni al navegador.
+3. **Vuelve a desplegar.** Los créditos del mapa web («Powered by Geoapify») se deciden al compilar: `next.config.ts` expone al navegador solo el nombre del proveedor (`WAYIO_GEO_PROVEEDOR` = `geoapify` u `osm`), nunca la clave.
+4. Comprueba con `npm run verificar` (hace una geocodificación y una ruta a pie de prueba en Santo Domingo).
+
+Opcionales:
+
+- `GEOAPIFY_BASE_URL`: URL base sin barra final. Por defecto `https://api.geoapify.com/v1`; `https://api-eu.geoapify.com/v1` para el endpoint de la UE o la URL de un mock local para pruebas.
+- `GEOAPIFY_RPS`: peticiones por segundo como máximo por instancia (por defecto **4**, con margen sobre el límite de 5 del plan Free; como mucho 4 en vuelo). Súbelo solo si cambias a un plan con más peticiones por segundo.
+- `GEOAPIFY_CREDITOS_DIA`: tope de créditos que la app puede gastar al día (día UTC), sumando todas las instancias si hay Upstash (`UPSTASH_REDIS_REST_*`; sin Upstash se cuenta por instancia). Por defecto **3000**, la cuota del plan Free. Al llegar al tope, la app deja de llamar a Geoapify hasta el día siguiente: las rutas salen estimadas (arcos) y los lugares sin verificar, pero nada se rompe y no hay sobrecostes. Súbelo si cambias de plan (p. ej. 10000 con API 10, o algo menos para dejar margen).
+
+Cómo funciona:
+
+- **Geocoding** (`/geocode/search`): sin la cola de 1,1 s de Nominatim. Las actividades se buscan dentro de una caja alrededor de la ciudad del día (la misma que con Nominatim) y con sesgo de proximidad, y se descartan siempre los aciertos gruesos (país, región, ciudad o código postal en vez del lugar), haya ciudad de referencia o no: cuando Geoapify no encuentra un sitio responde con la ciudad, y es mejor dejar el lugar sin verificar que poner el pin en el centro. Las búsquedas sin ciudad de referencia llevan un sesgo neutro (si no, Geoapify ordenaría según la IP del servidor de Vercel, en EE. UU.).
+- **Rutas** (`/routing`, `walk` a pie y `drive` en carro): cada tramo se guarda por separado y solo se piden los que faltan, en una petición por racha de paradas encadenadas con el mismo modo (hasta 20 paradas), en paralelo y con un plazo total de 25 s (lo que no llegue sale estimado). Agrupar ahorra peticiones, no créditos: Geoapify cobra un crédito por tramo.
+- **Caché**: en memoria y persistente entre instancias durante **30 días** (lo permiten sus términos). Los fallos transitorios (tiempo agotado, 429, 5xx) **no** se cachean; un «sin resultados» válido, sí. Un fallo de red, un 429 por ritmo o un 5xx se reintenta una vez; una cuota agotada (429 «Quota exceeded») no se reintenta.
+- **Límites por IP** (solo con Geoapify, además de los de peticiones): `/api/ruta` deja gastar a cada IP 300 créditos cada 10 minutos (solo cuentan los tramos que no estaban en caché; los que pasan del límite salen estimados) y `/api/geocode`, 200 (lugares + ciudades de cada petición; al pasarlo responde 429). El gasto total lo acota `GEOAPIFY_CREDITOS_DIA`.
+- **Si Geoapify falla**, el tramo se estima y el mapa dibuja un arco, y el lugar se queda con las coordenadas de la IA; el itinerario nunca se rompe y **no** se recurre a Nominatim ni a OSRM. Si una petición espera más de 8 s su turno en el limitador, se da por fallida, para que `/api/ruta` responda siempre a tiempo. Las claves inválidas (401/403) y la cuota agotada (429) dejan un aviso en los logs de Vercel (como mucho uno por minuto, sin la clave) y paran las llamadas un minuto; el presupuesto diario agotado también deja aviso.
+- **Mapa del planificador**: mientras se verifican en segundo plano las coordenadas de un viaje nuevo, el mapa espera para pedir las rutas (si no, cada tramo se cobraría dos veces: con las coordenadas de la IA y con las verificadas).
+
+**Límites del plan Free:** 3000 créditos al día y 5 peticiones por segundo. Una geocodificación cuesta 1 crédito y una ruta, paradas − 1 créditos (uno por tramo). Como referencia, un viaje nuevo de 5 días con unas 5 actividades por día gasta del orden de **45–50 créditos**: 1 del destino, 1–3 de las ciudades, 25 de los lugares (10 al generarlo y 15 en segundo plano) y 20 de los tramos de ruta, que se piden una sola vez. Eso da **≈ 60 viajes nuevos al día** en Free (≈ 200 con API 10). Volver a abrir un viaje (en otra pestaña, en el enlace compartido o en otro dispositivo) sale de la caché, y editar un día solo cobra los tramos que cambian.
+
+**Atribución obligatoria en el plan Free:** un enlace «Powered by Geoapify» a <https://www.geoapify.com/> (sin `nofollow`) cerca del mapa y «© OpenStreetMap contributors» con enlace a <https://www.openstreetmap.org/copyright>. El mapa web ya muestra los dos: el de Geoapify en los créditos del mapa y el de OpenStreetMap lo trae el estilo de OpenFreeMap. La **app móvil** también pinta coordenadas de Geoapify (las verifica el backend al generar el viaje), así que su mapa muestra un enlace «Powered by Geoapify» arriba a la izquierda (el de OpenStreetMap va en los créditos de Mapbox, botón «i»); solo se oculta con `EXPO_PUBLIC_GEO_PROVEEDOR=osm`, si el servidor no tiene clave. Si algún día muestras resultados de Geoapify en otro sitio (correos, PDF), añade también los créditos.
+
+**Cuándo pasar al plan API 10 (US$59 al mes, 10 000 créditos al día):** cuando el panel de Geoapify muestre que te acercas a los 3000 créditos diarios de forma sostenida o aparezcan avisos de cuota (429) en los logs de Vercel. Si el nuevo plan permite más peticiones por segundo, sube `GEOAPIFY_RPS`.
+
+### Respaldo sin clave (OpenStreetMap)
+
+- Geocoding con **Nominatim** público (1 petición/s global, con la cola del servidor y el candado de Upstash). Pon `NOMINATIM_EMAIL=tu@email` (lo pide su política de uso).
+- Rutas con **OSRM** sobre OpenStreetMap, con los servidores públicos de FOSSGIS (`routing.openstreetmap.de`, perfiles a pie y en carro). Las rutas se cachean en el servidor (7 días) y en la sesión del navegador. Si prefieres tu propio OSRM (imagen Docker `osrm/osrm-backend` con el extracto de tu región de Geofabrik), pon `OSRM_FOOT_URL` y `OSRM_CAR_URL` (URL base con el perfil, sin barra final); con `GEOAPIFY_API_KEY` se ignoran.
+- Si el servicio no responde, el mapa dibuja arcos y el itinerario no se rompe.
+
+### Clima
+
+- <https://openweathermap.org/api> → API keys → `OPENWEATHER_API_KEY=` (tarda hasta 2 h en activarse). Si el viaje empieza en ≤ 5 días se usa el pronóstico real de esas fechas; si no, se muestra el clima actual con esa etiqueta.
 
 ## 5. Búsqueda real y afiliados
 

@@ -27,16 +27,26 @@ export interface RateLimitOptions {
   id: string
   limit: number
   windowSec: number
+  /**
+   * Unidades que gasta esta llamada (por defecto 1). Sirve para limitar por
+   * créditos de un proveedor en vez de por petición.
+   */
+  coste?: number
 }
 
 const memoria = new Map<string, number[]>()
+
+/** Unidades de una llamada: entero ≥ 1. */
+const costeDe = (o: RateLimitOptions): number =>
+  Math.max(1, Math.ceil(o.coste ?? 1))
 
 function limitarEnMemoria(o: RateLimitOptions): RateLimitResult {
   const key = `${o.bucket}:${o.id}`
   const now = Date.now()
   const desde = now - o.windowSec * 1000
+  const coste = costeDe(o)
   const hits = (memoria.get(key) ?? []).filter((t) => t > desde)
-  if (hits.length >= o.limit) {
+  if (hits.length + coste > o.limit) {
     const masViejo = hits[0] ?? now
     memoria.set(key, hits)
     return {
@@ -48,7 +58,7 @@ function limitarEnMemoria(o: RateLimitOptions): RateLimitResult {
       remaining: 0,
     }
   }
-  hits.push(now)
+  for (let k = 0; k < coste; k++) hits.push(now)
   memoria.set(key, hits)
   // Limpieza ocasional para que el mapa no crezca sin límite.
   if (memoria.size > 5000) {
@@ -67,6 +77,7 @@ async function limitarEnUpstash(
   // Ventana fija alineada: clave por (bucket, id, ventana) con INCR + EXPIRE.
   const ventana = Math.floor(Date.now() / (o.windowSec * 1000))
   const key = `rl:${o.bucket}:${o.id}:${ventana}`
+  const coste = costeDe(o)
   const res = await fetch(`${url.replace(/\/$/, '')}/pipeline`, {
     method: 'POST',
     headers: {
@@ -74,7 +85,7 @@ async function limitarEnUpstash(
       'Content-Type': 'application/json',
     },
     body: JSON.stringify([
-      ['INCR', key],
+      coste === 1 ? ['INCR', key] : ['INCRBY', key, String(coste)],
       ['EXPIRE', key, String(o.windowSec)],
     ]),
     cache: 'no-store',

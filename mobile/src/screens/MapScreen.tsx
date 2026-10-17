@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { StyleSheet, View } from 'react-native'
+import { Linking, Pressable, StyleSheet, View } from 'react-native'
 import MapboxGL from '@rnmapbox/maps'
 import { config } from '../config'
 import { colorDia, useEstilos, useTheme, type Tema } from '../theme'
@@ -407,6 +407,25 @@ export function MapScreen({
         ) : null}
       </MapboxGL.MapView>
 
+      {config.creditosGeoapify ? (
+        // Las coordenadas de los lugares vienen de Geoapify (backend): su plan
+        // Free exige este enlace junto al mapa. El de OpenStreetMap ya va en
+        // los créditos de Mapbox (botón «i»).
+        <Pressable
+          accessibilityRole="link"
+          accessibilityLabel="Powered by Geoapify. Abre geoapify.com"
+          onPress={() => {
+            Linking.openURL('https://www.geoapify.com/').catch(() => undefined)
+          }}
+          hitSlop={8}
+          style={styles.creditos}
+        >
+          <Txt variant="caption" color="fgMuted">
+            Powered by Geoapify
+          </Txt>
+        </Pressable>
+      ) : null}
+
       <View style={styles.controles}>
         <IconButton
           label="Ajustar vista al día"
@@ -469,6 +488,16 @@ const crearEstilos = (t: Tema) =>
   StyleSheet.create({
     container: { flex: 1, backgroundColor: t.colors.surface2 },
     map: { flex: 1 },
+    creditos: {
+      position: 'absolute',
+      top: t.space[3],
+      left: t.space[3],
+      paddingHorizontal: t.space[2],
+      paddingVertical: 2,
+      borderRadius: t.radius.control,
+      backgroundColor: t.colors.surfaceRaised,
+      opacity: 0.9,
+    },
     controles: {
       position: 'absolute',
       top: t.space[3],

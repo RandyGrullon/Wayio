@@ -2,6 +2,14 @@ import type { NextConfig } from 'next'
 import { withSentryConfig } from '@sentry/nextjs'
 
 const nextConfig: NextConfig = {
+  env: {
+    // Proveedor de geocodificación y rutas, para los créditos del mapa en el
+    // navegador: 'geoapify' si hay GEOAPIFY_API_KEY, 'osm' (Nominatim + OSRM)
+    // si no. Se incrusta al compilar y SOLO expone el nombre, nunca la clave.
+    WAYIO_GEO_PROVEEDOR: process.env.GEOAPIFY_API_KEY?.trim()
+      ? 'geoapify'
+      : 'osm',
+  },
   serverExternalPackages: [
     '@ffmpeg-installer/ffmpeg',
     'fluent-ffmpeg',
