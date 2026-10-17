@@ -440,8 +440,12 @@ function Flujo() {
     return () => obs.disconnect()
   }, [paso, destinoTitulo])
 
-  // Completa en segundo plano las coordenadas del itinerario elegido.
-  useBackgroundGeocode(paso === 'itinerario' ? itinerario : null, setItinerario)
+  // Completa en segundo plano las coordenadas del itinerario elegido; mientras
+  // tanto el mapa no pide las rutas (se cobrarían dos veces con Geoapify).
+  const geocodificando = useBackgroundGeocode(
+    paso === 'itinerario' ? itinerario : null,
+    setItinerario
+  )
 
   // ── Generación ───────────────────────────────────────────────────────────
 
@@ -878,6 +882,7 @@ function Flujo() {
       <ResultView
         trip={itinerario}
         setTrip={setItinerario}
+        geocodificando={geocodificando}
         weather={resultado?.weather ?? null}
         form={formData}
         demo={

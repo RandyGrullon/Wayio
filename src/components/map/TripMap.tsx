@@ -83,6 +83,12 @@ export interface TripMapProps {
   /** Moneda de los importes de las fichas (la del viaje). */
   moneda?: string
   /**
+   * Aún llegan coordenadas verificadas (geocodificación de fondo): con
+   * Geoapify no se piden las rutas hasta que acabe, y mientras tanto el mapa
+   * dibuja arcos.
+   */
+  rutasEnPausa?: boolean
+  /**
    * Gestos cooperativos (dos dedos para mover el mapa).
    * - 'tactil' (por defecto): solo en pantallas táctiles y con el mapa dentro
    *   de la página, para que un dedo siga haciendo scroll. En pantalla
@@ -133,6 +139,22 @@ const ESTILO_URL: Record<TemaMapa, string> = {
   light: 'https://tiles.openfreemap.org/styles/positron',
   dark: 'https://tiles.openfreemap.org/styles/dark',
 }
+
+/**
+ * Créditos del proveedor de rutas y geocodificación (los del mapa base los
+ * añade MapLibre desde el estilo). WAYIO_GEO_PROVEEDOR lo fija next.config.ts
+ * al compilar: 'geoapify' si el servidor tiene GEOAPIFY_API_KEY (la clave
+ * nunca llega al navegador) u 'osm' con Nominatim + OSRM de FOSSGIS.
+ *
+ * Geoapify exige en su plan Free un enlace «Powered by Geoapify» sin nofollow
+ * y el crédito de OpenStreetMap. Este último no se repite aquí: la fuente
+ * vectorial de OpenFreeMap ya lo trae en su TileJSON («Data from
+ * OpenStreetMap», enlazado a openstreetmap.org/copyright).
+ */
+const CREDITOS_GEO =
+  process.env.WAYIO_GEO_PROVEEDOR === 'geoapify'
+    ? 'Powered by <a href="https://www.geoapify.com/" target="_blank" rel="noopener">Geoapify</a>'
+    : 'Rutas: OSRM · FOSSGIS'
 
 interface Paleta {
   fondo: string
@@ -688,6 +710,7 @@ export function TripMap({
   siguiente = null,
   enfocarActividadId = null,
   moneda = 'USD',
+  rutasEnPausa = false,
   cooperativo = 'tactil',
   miembros,
   etiqueta = 'Mapa del viaje',
@@ -750,7 +773,7 @@ export function TripMap({
   const enfocado = controlado ? diaEnfocado : diaInterno
   const hayCoords = dias.some((d) => d.actividades.some(tieneCoords))
   // Rutas exactas por calles entre paradas (llegan en segundo plano).
-  const rutasReales = useRutasReales(dias, isCrucero)
+  const rutasReales = useRutasReales(dias, isCrucero, rutasEnPausa)
 
   const datos = useMemo<Datos>(
     () => ({
@@ -847,7 +870,7 @@ export function TripMap({
           zoom: 12,
           attributionControl: {
             compact: true,
-            customAttribution: 'Rutas: OSRM · FOSSGIS',
+            customAttribution: CREDITOS_GEO,
           },
           // Los gestos cooperativos los decide el efecto de abajo (táctil,
           // en línea o a pantalla completa).

@@ -11,6 +11,12 @@ import type { Activity } from '@/types/activity'
  * el servicio falla) el mapa dibuja arcos provisionales. Las rutas se guardan
  * en memoria y en sessionStorage para no pedirlas otra vez al cambiar de día,
  * de tema o al volver a la página.
+ *
+ * Con Geoapify (WAYIO_GEO_PROVEEDOR = 'geoapify') cada tramo cuesta un
+ * crédito: con `enPausa` (la geocodificación de fondo aún mueve paradas) no
+ * se piden rutas, porque los tramos con las coordenadas de la IA se tirarían
+ * y se volverían a cobrar en cuanto llegasen las verificadas. Con OSRM, que
+ * es gratis, se piden como siempre.
  */
 
 export type ModoTramo = 'pie' | 'auto' | 'directo'
@@ -30,9 +36,14 @@ interface TramoPedido {
   modo?: ModoTramo
 }
 
-const CLAVE_SESION = 'wayio:rutas:v1'
+// v2: con Geoapify cambian las geometrías; se ignoran las guardadas con v1.
+const CLAVE_SESION = 'wayio:rutas:v2'
+const CLAVE_SESION_ANTIGUA = 'wayio:rutas:v1'
 const MAX_EN_SESION = 400
 const POR_PETICION = 60
+
+/** Lo fija next.config.ts al compilar; nunca expone la clave. */
+const RUTAS_DE_PAGO = process.env.WAYIO_GEO_PROVEEDOR === 'geoapify'
 
 const memoria = new Map<string, RutaTramo>()
 let sesionCargada = false
@@ -41,6 +52,7 @@ function cargarSesion(): void {
   if (sesionCargada || typeof window === 'undefined') return
   sesionCargada = true
   try {
+    window.sessionStorage.removeItem(CLAVE_SESION_ANTIGUA)
     const raw = window.sessionStorage.getItem(CLAVE_SESION)
     if (!raw) return
     const datos = JSON.parse(raw) as Record<string, RutaTramo>
@@ -109,14 +121,17 @@ function tramosDe(dias: Day[], crucero: boolean): TramoPedido[] {
 
 export function useRutasReales(
   dias: Day[],
-  crucero: boolean
+  crucero: boolean,
+  enPausa = false
 ): ReadonlyMap<string, RutaTramo> {
   const tramos = useMemo(() => tramosDe(dias, crucero), [dias, crucero])
   const firma = useMemo(() => tramos.map((t) => t.clave).join(';'), [tramos])
   const [version, setVersion] = useState(0)
+  const esperar = enPausa && RUTAS_DE_PAGO
 
   useEffect(() => {
     cargarSesion()
+    if (esperar) return
     const faltan = tramos.filter((t) => !memoria.has(t.clave))
     if (faltan.length === 0) return
     const control = new AbortController()
@@ -161,7 +176,7 @@ export function useRutasReales(
     return () => control.abort()
     // `tramos` cambia con `firma`; la firma evita peticiones por re-render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [firma])
+  }, [firma, esperar])
 
   return useMemo(() => {
     void version

@@ -1,6 +1,6 @@
 # Wayio — estado y pasos para terminar
 
-> Actualizado el 2026-10-09, tras el análisis completo, la reconstrucción de la IA, los arreglos de seguridad, el rediseño y la integración final. Los detalles de cada servicio están en [API-KEYS-GUIA.md](API-KEYS-GUIA.md).
+> Actualizado el 2026-10-17 (geocoding y rutas con Geoapify); antes, el 2026-10-09, tras el análisis completo, la reconstrucción de la IA, los arreglos de seguridad, el rediseño y la integración final. Los detalles de cada servicio están en [API-KEYS-GUIA.md](API-KEYS-GUIA.md).
 
 ## ✅ Hecho en esta ronda (rama `rediseno-ui-ia`)
 
@@ -58,6 +58,14 @@
 - Limpieza: 21 módulos web que ya nadie usaba (alertas, rastreador y paywall antiguos), `Loader3D` y dos componentes móviles; respaldo en el scratchpad de la sesión.
 - Verificado: `tsc` y ESLint sin errores ni avisos (web y móvil), Prettier, `next build` correcto (90 páginas) y QA en Chromium a 1440 px claro y 390 px oscuro sin errores de consola en producción.
 
+**Geocoding y rutas aptos para cobrar (rama `feat/geo-comercial`, 2026-10-17)**
+
+- Con `GEOAPIFY_API_KEY` la geocodificación y las rutas por calles van por **Geoapify** (uso comercial, plan Free de 3000 créditos/día). Sin la clave todo sigue exactamente como antes (Nominatim + OSRM de FOSSGIS).
+- Clave solo en el servidor (cabecera `x-api-key`), limitador de 4 peticiones/s por instancia (`GEOAPIFY_RPS`) con 8 s de espera máxima en cola, un reintento ante 429 por ritmo/5xx (no ante cuota agotada) y caché persistente de 30 días entre instancias que no guarda los fallos transitorios. Con cualquiera de los dos proveedores, un fallo pasajero ya no deja un «sin resultados» cacheado 7 días.
+- Gasto acotado: presupuesto diario global de créditos (`GEOAPIFY_CREDITOS_DIA`, 3000 por defecto, en Upstash), límites de créditos por IP en `/api/ruta` y `/api/geocode`, corte de un minuto tras clave no válida o cuota agotada, rutas cacheadas tramo a tramo (no se vuelven a cobrar al reabrir o editar un viaje) y el mapa del planificador espera a que terminen las coordenadas de fondo antes de pedir rutas.
+- Las actividades descartan siempre los aciertos gruesos (la ciudad entera en vez del lugar), haya ciudad de referencia o no, y la fase de coordenadas del itinerario geocodifica 4 a la vez.
+- Mapa web: «Powered by Geoapify» en los créditos cuando hay clave (el de OpenStreetMap ya lo trae OpenFreeMap) y caché de rutas de la sesión renovada (`wayio:rutas:v2`). App móvil: enlace «Powered by Geoapify» sobre el mapa (se oculta con `EXPO_PUBLIC_GEO_PROVEEDOR=osm`). Privacidad y guía actualizadas.
+
 ## 🔴 Lo que tienes que hacer tú (en este orden)
 
 1. **IA**: pon `ANTHROPIC_API_KEY` en `.env.local`, arranca `npm run dev` y ejecuta `npm run eval:ia -- --base http://localhost:3000 --interpret`. Todos los casos deberían salir sin errores (ver el informe en `scripts/eval-ia/resultados/`).
@@ -70,6 +78,8 @@
 4. **Vercel**:
    - variables de `.env.example`, con `NEXT_PUBLIC_BASE_URL` igual a tu dominio y `NEXT_PUBLIC_CONTACT_EMAIL` con tu email público (sin él, `/contacto` dice que el canal llega pronto);
    - **Fluid Compute activado**, porque las rutas de IA usan hasta 300 s;
+   - **`GEOAPIFY_API_KEY`** (gratis en myprojects.geoapify.com, sin tarjeta; guía en la sección 4 de [API-KEYS-GUIA.md](API-KEYS-GUIA.md)) y vuelve a desplegar para que salgan los créditos de Geoapify en el mapa. Con Upstash configurado el presupuesto diario (`GEOAPIFY_CREDITOS_DIA`) es global; sin él, por instancia. Después, `npm run verificar` en local con la misma clave;
+   - **antes de poner la clave**, publica una build de la app móvil con el enlace «Powered by Geoapify» del mapa (ya está en el código; el plan Free lo exige porque la app muestra coordenadas de Geoapify). Las builds anteriores no lo tienen;
    - borra `AMADEUS_*`, `BOOKING_API_KEY` y `NEXT_PUBLIC_SITE_URL`.
 5. **Afiliados** (es donde ganas dinero sin cobrar al usuario): Viator Partner (`VIATOR_API_KEY`, `PID`, `MCID`), Booking vía Awin/CJ, Travelpayouts o Skyscanner, y Airalo. Después de desplegar, haz un clic de prueba en cada panel de afiliado.
 6. **Cobros** (solo si vas a cobrar):
@@ -95,8 +105,7 @@
 - **Precios reales de vuelos y hoteles**: hoy son enlaces de afiliado con fechas. Para precios en la app: Duffel o Travelpayouts (vuelos) y LiteAPI (hoteles).
 - **Video de TikTok/Instagram**: no funciona en Vercel serverless (necesita ffmpeg y yt-dlp). Muévelo a un worker en contenedor (Railway, Fly.io o Cloud Run) o déjalo desactivado.
 - **Feature flags y modo mantenimiento del admin**: se guardan pero nadie los lee todavía.
-- **Geocoding**: Nominatim es gratis pero con 1 petición/s global; con tráfico real, pasa a Geoapify, LocationIQ u OpenCage.
-- **Rutas del mapa**: los servidores públicos de FOSSGIS son de uso justo. Con tráfico real, monta tu OSRM (Docker) y pon `OSRM_FOOT_URL` y `OSRM_CAR_URL` (detalles en la guía).
+- **Geocoding y rutas**: la migración a Geoapify está hecha en código; falta poner `GEOAPIFY_API_KEY` en Vercel (ver arriba). Vigila los créditos diarios en su panel y pasa al plan API 10 (US$59/mes) si te acercas de forma sostenida a los 3000 del plan Free (y entonces sube `GEOAPIFY_CREDITOS_DIA`, que por defecto corta en 3000).
 - **Gastos del grupo**: hoy siempre paga quien lo registra y se reparte entre todos. «Pagó» y «Entre quiénes» necesitan columnas nuevas y cambios en la API.
 - **Páginas legales** (`/privacidad`, `/terminos`): son un borrador (edad mínima, conservación de datos, nombre del responsable); revísalas con un abogado.
 

@@ -435,16 +435,24 @@ const NOTA_TIER: Record<Tier, string> = {
 // Coordenadas
 // ---------------------------------------------------------------------------
 
-/** Geocodifica una lista de ciudades (máx. 8, en serie por Nominatim). */
+/**
+ * Geocodificaciones simultáneas. Con Nominatim la cola de geocode.ts las sigue
+ * serializando (1 rps); con Geoapify su limitador regula el ritmo.
+ */
+const GEOCODIFICACIONES_A_LA_VEZ = 4
+
+/** Geocodifica una lista de ciudades (máx. 8). */
 async function geocodeCiudades(
   ciudades: string[],
   previas: Map<string, GeoPoint | null> = new Map()
 ): Promise<Map<string, GeoPoint | null>> {
   const mapa = new Map(previas)
   const unicas = [...new Set(ciudades.map((c) => c.trim()).filter(Boolean))]
-  for (const c of unicas.slice(0, 8)) {
-    if (!mapa.has(c)) mapa.set(c, await geocode(c))
-  }
+  const faltan = unicas.slice(0, 8).filter((c) => !mapa.has(c))
+  const puntos = await enParalelo(faltan, GEOCODIFICACIONES_A_LA_VEZ, (c) =>
+    geocode(c)
+  )
+  faltan.forEach((c, k) => mapa.set(c, puntos[k] ?? null))
   return mapa
 }
 
@@ -494,14 +502,27 @@ async function verificarCoordenadas(
   )
   candidatas.sort((x, y) => x.prioridad - y.prioridad)
 
-  for (const c of candidatas.slice(0, max)) {
-    const d = out[c.di]
-    const a = d?.actividades[c.ai]
-    if (!d || !a) continue
-    const ancla = anclas[c.di] ?? null
-    const punto = await geocode(`${a.nombre}, ${d.ciudad}`, {
-      ...(ancla ? { near: ancla, radiusKm: 60 } : {}),
-    })
+  // Las consultas van en paralelo (acotado) y se aplican en el mismo orden.
+  const elegidas = candidatas.slice(0, max)
+  const base = out
+  const puntos = await enParalelo(
+    elegidas,
+    GEOCODIFICACIONES_A_LA_VEZ,
+    async (c): Promise<GeoPoint | null> => {
+      const d = base[c.di]
+      const a = d?.actividades[c.ai]
+      if (!d || !a) return null
+      const ancla = anclas[c.di] ?? null
+      // Siempre nivel 'lugar': sin ancla tampoco vale el centro de la ciudad.
+      return geocode(`${a.nombre}, ${d.ciudad}`, {
+        nivel: 'lugar',
+        ...(ancla ? { near: ancla, radiusKm: 60 } : {}),
+      })
+    }
+  )
+
+  for (const [k, c] of elegidas.entries()) {
+    const punto = puntos[k]
     if (!punto) continue
     out = out.map((dd, di) =>
       di !== c.di

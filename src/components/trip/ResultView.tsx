@@ -61,6 +61,11 @@ export interface ResultViewProps {
   trip: Trip
   /** setState del trip (ediciones, ajustes IA, geocodificación de fondo). */
   setTrip: Dispatch<SetStateAction<Trip | null>>
+  /**
+   * La geocodificación de fondo aún tiene lotes pendientes: el mapa espera a
+   * que acabe para pedir las rutas por calles.
+   */
+  geocodificando?: boolean
   weather: WeatherData | null
   /** Datos del formulario que originó el viaje (presupuesto, moneda, origen…). */
   form: TripForm | null
@@ -97,6 +102,7 @@ export function ResultView(props: ResultViewProps): JSX.Element {
   const {
     trip,
     setTrip,
+    geocodificando = false,
     weather,
     form,
     demo,
@@ -447,6 +453,7 @@ export function ResultView(props: ResultViewProps): JSX.Element {
               dias={trip.dias}
               diaEnfocado={diaVisible}
               moneda={moneda}
+              rutasEnPausa={geocodificando}
               isCrucero={trip.dias.some((d) =>
                 d.actividades.some((a) => a.puertoCrucero)
               )}
@@ -555,6 +562,7 @@ export function ResultView(props: ResultViewProps): JSX.Element {
         <TripMap
           dias={trip.dias}
           moneda={moneda}
+          rutasEnPausa={geocodificando}
           cooperativo={false}
           etiqueta={`Mapa de ${trip.destino}`}
           className="min-h-[60dvh] w-full flex-1 rounded-none"

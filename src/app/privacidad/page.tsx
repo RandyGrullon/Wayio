@@ -26,7 +26,9 @@ const SECCIONES = [
 /**
  * Política de privacidad (BORRADOR): describe lo que hace hoy el código de
  * Wayio (Supabase, Stripe, PostHog y Sentry si están activos, IA de
- * terceros, afiliados). La debe revisar un abogado antes de ser definitiva.
+ * terceros, Geoapify para lugares y rutas u OpenStreetMap si Geoapify no
+ * está configurado, afiliados). La debe revisar un abogado antes de ser
+ * definitiva.
  */
 export default function PrivacidadPage() {
   return (
@@ -38,7 +40,7 @@ export default function PrivacidadPage() {
         </>
       }
       intro="Qué datos guarda Wayio, para qué los usa, con quién los comparte y cómo puedes pedir que los borremos."
-      actualizado="2026-10-08"
+      actualizado="2026-10-17"
       secciones={SECCIONES}
     >
       <h2 id="quienes">Quiénes somos</h2>
@@ -165,10 +167,18 @@ export default function PrivacidadPage() {
           analítica de uso y registro de errores.
         </li>
         <li>
-          <strong>OpenStreetMap (Nominatim)</strong>,{' '}
-          <strong>OpenFreeMap</strong> y <strong>OpenWeather</strong>: ubicar
-          lugares en el mapa, dibujar el mapa y el clima del destino. Solo
-          reciben nombres de lugares o coordenadas, no tus datos de cuenta.
+          <strong>Geoapify</strong>: ubicar los lugares del itinerario en el
+          mapa y calcular las rutas a pie o en carro entre las paradas. Si Wayio
+          no tiene configurado Geoapify, usamos en su lugar los servicios
+          públicos de <strong>OpenStreetMap (Nominatim)</strong> y{' '}
+          <strong>OSRM (FOSSGIS)</strong>. Las consultas salen de nuestros
+          servidores y solo incluyen nombres de lugares o coordenadas, no tus
+          datos de cuenta ni tu dirección IP.
+        </li>
+        <li>
+          <strong>OpenFreeMap</strong> y <strong>OpenWeather</strong>: dibujar
+          el mapa y el clima del destino. Solo reciben nombres de lugares o
+          coordenadas, no tus datos de cuenta.
         </li>
         <li>
           <strong>Socios de reservas</strong> (como Booking.com, Viator,

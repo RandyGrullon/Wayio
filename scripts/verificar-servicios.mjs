@@ -3,7 +3,8 @@
  * Comprueba que cada servicio de Wayio está configurado y responde, sin
  * imprimir nunca un valor secreto. Solo hace peticiones de lectura (listar
  * modelos, leer el esquema, un ping), así que no gasta tokens de IA ni crea
- * datos.
+ * datos. Con GEOAPIFY_API_KEY gasta 2 créditos de su cuota diaria (una
+ * geocodificación y una ruta a pie).
  *
  *   npm run verificar            # lee .env.local (y .env si existe)
  *
@@ -384,6 +385,7 @@ async function mapa() {
       `${motivo(e)} (el mapa dibujará arcos)`
     )
   }
+  await geoapify()
   try {
     const r = await pedir('https://tiles.openfreemap.org/styles/positron')
     anotar(
@@ -419,6 +421,76 @@ async function mapa() {
     )
   } catch (e) {
     anotar('Mapa y clima', 'Clima (OpenWeather)', 'ERROR', motivo(e))
+  }
+}
+
+// Geoapify: geocodificación y rutas comerciales (sin la clave, Nominatim/OSRM)
+async function geoapify() {
+  const clave = env('GEOAPIFY_API_KEY')
+  if (!clave) {
+    return anotar(
+      'Mapa y clima',
+      'Geoapify (geocodificación y rutas)',
+      'AVISO',
+      'sin GEOAPIFY_API_KEY se usan Nominatim y OSRM públicos, no aptos para uso comercial intensivo'
+    )
+  }
+  const base = (
+    env('GEOAPIFY_BASE_URL') || 'https://api.geoapify.com/v1'
+  ).replace(/\/+$/, '')
+  // La clave va en cabecera, nunca en la URL.
+  const init = { headers: { 'x-api-key': clave } }
+  const fallo = (r) =>
+    r.status === 401 || r.status === 403
+      ? `HTTP ${r.status}: la clave no es válida o sus restricciones bloquean el servidor`
+      : r.status === 429
+        ? 'HTTP 429: cuota diaria agotada o demasiadas peticiones por segundo'
+        : `HTTP ${r.status}`
+  try {
+    const params = new URLSearchParams({
+      text: 'Zona Colonial, Santo Domingo',
+      lang: 'es',
+      limit: '1',
+      format: 'json',
+      filter: 'countrycode:do',
+      bias: 'countrycode:none',
+    })
+    const r = await pedir(`${base}/geocode/search?${params}`, init)
+    const hay = Boolean(r.cuerpo?.results?.length)
+    anotar(
+      'Mapa y clima',
+      'Geocodificación (Geoapify)',
+      r.ok && hay ? 'OK' : 'ERROR',
+      r.ok ? (hay ? 'responde' : 'responde, pero sin resultados') : fallo(r)
+    )
+  } catch (e) {
+    anotar('Mapa y clima', 'Geocodificación (Geoapify)', 'ERROR', motivo(e))
+  }
+  try {
+    // Waypoints en lat,lon (al revés que OSRM).
+    const params = new URLSearchParams({
+      waypoints: '18.4735,-69.8836|18.4737,-69.8858',
+      mode: 'walk',
+    })
+    const r = await pedir(`${base}/routing?${params}`, init)
+    const tramo = r.cuerpo?.features?.[0]?.properties?.legs?.[0]
+    anotar(
+      'Mapa y clima',
+      'Rutas por calles (Geoapify)',
+      r.ok && tramo ? 'OK' : 'ERROR',
+      r.ok
+        ? tramo
+          ? `ruta a pie de ${Math.round(tramo.distance)} m en Santo Domingo`
+          : 'responde, pero sin ruta'
+        : `${fallo(r)} (el mapa dibujará arcos)`
+    )
+  } catch (e) {
+    anotar(
+      'Mapa y clima',
+      'Rutas por calles (Geoapify)',
+      'ERROR',
+      `${motivo(e)} (el mapa dibujará arcos)`
+    )
   }
 }
 

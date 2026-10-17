@@ -13,6 +13,10 @@
  * - RESERVAS_ENABLED → 'true' muestra «Reservar con depósito (15 %)». Por
  *               defecto apagado; debe coincidir con NEXT_PUBLIC_RESERVAS_ENABLED
  *               del servidor (si no, el checkout responde 403).
+ * - GEO_PROVEEDOR → quién geocodifica en el backend. Por defecto 'geoapify':
+ *               el mapa muestra «Powered by Geoapify», que su plan Free exige
+ *               donde se ven sus coordenadas. Pon 'osm' solo si el servidor no
+ *               tiene GEOAPIFY_API_KEY.
  */
 export const config = {
   apiUrl: (process.env['EXPO_PUBLIC_API_URL'] ?? '').replace(/\/$/, ''),
@@ -22,6 +26,8 @@ export const config = {
   mapboxToken: process.env['EXPO_PUBLIC_MAPBOX_TOKEN'] ?? '',
   /** Reservas con depósito (Stripe) activas en esta build. */
   reservasActivas: process.env['EXPO_PUBLIC_RESERVAS_ENABLED'] === 'true',
+  /** Créditos de Geoapify en el mapa (salvo que el backend use solo OSM). */
+  creditosGeoapify: process.env['EXPO_PUBLIC_GEO_PROVEEDOR'] !== 'osm',
 } as const
 
 export function assertBackendConfigured(): void {
