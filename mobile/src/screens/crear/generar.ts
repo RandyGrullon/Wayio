@@ -58,6 +58,7 @@ export async function generarViaje(
           status: e.status,
           data: e.data,
           retryAfter: e.retryAfter,
+          code: e.serverCode,
         })
       }
       throw new ErrorGeneracion(MENSAJE_GENERICO, { started: true })

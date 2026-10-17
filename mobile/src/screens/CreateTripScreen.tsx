@@ -12,7 +12,31 @@ import {
   type FormularioViaje,
 } from './crear/formulario'
 import { generarViaje } from './crear/generar'
-import { ErrorGeneracion, type Fase } from '../lib/api/stream'
+import { ErrorGeneracion, MENSAJE_GENERICO, type Fase } from '../lib/api/stream'
+import { mensajeDeLimite } from '../lib/api/limites'
+
+/**
+ * Texto del error de trazado. Tope diario de IA → el del servidor; límite de
+ * la cuenta (429) con espera → cuánto falta («Vuelve a intentarlo en 40
+ * min.» o «… en 3 horas.»), para no gastar reintentos en balde.
+ */
+function mensajeDeFallo(e: unknown): string {
+  if (!(e instanceof Error) || !e.message) return MENSAJE_GENERICO
+  if (e instanceof ErrorGeneracion) {
+    const limite = mensajeDeLimite(
+      {
+        status: e.status,
+        code: e.code,
+        data: e.data,
+        retryAfter: e.retryAfter,
+        mensaje: e.message,
+      },
+      'Has trazado varios viajes seguidos.'
+    )
+    if (limite) return limite
+  }
+  return e.message
+}
 
 interface Trazado {
   form: FormularioViaje
@@ -88,17 +112,7 @@ export function CreateTripScreen({
           setTrazado(null)
           return
         }
-        setTrazado((t) =>
-          t
-            ? {
-                ...t,
-                error:
-                  e instanceof Error && e.message
-                    ? e.message
-                    : 'No pudimos trazar tu viaje. Inténtalo de nuevo.',
-              }
-            : t
-        )
+        setTrazado((t) => (t ? { ...t, error: mensajeDeFallo(e) } : t))
       }
     },
     [navigate]

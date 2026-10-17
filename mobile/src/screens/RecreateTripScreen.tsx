@@ -31,6 +31,7 @@ import {
   BackendError,
   type VideoAnalysisResult,
 } from '../lib/api/backend'
+import { esTopeDiario, mensajeDeLimite } from '../lib/api/limites'
 import { useTheme } from '../theme'
 
 const PLATAFORMAS =
@@ -38,7 +39,10 @@ const PLATAFORMAS =
 
 interface ErrorVideo {
   mensaje: string
-  /** El análisis de video está apagado: ofrecer escribir el destino. */
+  /**
+   * El análisis de video está apagado o Wayio agotó la IA del día: aviso
+   * informativo y la alternativa de escribir el destino.
+   */
   desactivado: boolean
   sesion: boolean
 }
@@ -74,19 +78,37 @@ export function RecreateTripScreen(): React.ReactElement {
     try {
       setResult(await analyzeVideoUrl(limpio))
     } catch (e) {
-      const code = e instanceof BackendError ? e.data?.['code'] : null
-      const desactivado =
-        code === 'video_desactivado' || code === 'herramientas'
+      const backend = e instanceof BackendError ? e : null
+      const code = backend?.data?.['code'] ?? null
+      const apagado = code === 'video_desactivado' || code === 'herramientas'
+      // Tope diario de IA: mismo aviso informativo que con el video apagado,
+      // pero con el texto del servidor («vuelve mañana»).
+      const tope = backend
+        ? esTopeDiario(backend.serverCode, backend.data)
+        : false
+      const limite = backend
+        ? mensajeDeLimite(
+            {
+              status: backend.status,
+              code: backend.serverCode,
+              data: backend.data,
+              retryAfter: backend.retryAfter,
+              mensaje: backend.message,
+            },
+            'Analizaste varios videos seguidos.'
+          )
+        : null
       setError({
         // El mensaje del servidor ofrece «subir una foto», que la app aún no
         // tiene: aquí solo se propone escribir el destino.
-        mensaje: desactivado
+        mensaje: apagado
           ? 'El análisis de videos no está disponible por ahora. Puedes escribir el destino y trazamos el viaje igual.'
-          : e instanceof Error && e.message
-            ? e.message
-            : 'No pudimos analizar el video. Inténtalo de nuevo.',
-        desactivado,
-        sesion: e instanceof BackendError && e.code === 'auth',
+          : (limite ??
+            (e instanceof Error && e.message
+              ? e.message
+              : 'No pudimos analizar el video. Inténtalo de nuevo.')),
+        desactivado: apagado || tope,
+        sesion: backend?.code === 'auth',
       })
     } finally {
       setLoading(false)

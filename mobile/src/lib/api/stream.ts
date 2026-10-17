@@ -7,9 +7,21 @@
  * indica con `started` si el servidor ya había empezado; en ese caso NO se
  * debe repetir la generación con POST /api/generate (ver `generarViaje` en
  * screens/crear/generar.ts).
+ *
+ * Generar exige sesión: sin access_token no se llama. Ante un 401 (que el
+ * servidor responde en JSON antes de abrir el stream) se refresca la sesión
+ * UNA vez y se repite; si vuelve a dar 401 se muestra «Tu sesión expiró…»
+ * (y si el refresco falla por la red, el error de conexión).
  */
 import { config } from '../../config'
-import { authHeaders } from './http'
+import {
+  BackendError,
+  CODIGO_AUTH_REQUIRED,
+  MENSAJE_SESION_EXPIRADA,
+  refrescarToken,
+  segundosDeEspera,
+  tokenObligatorio,
+} from './http'
 import type { GenerateResult, TripFormValues } from '../../types/planning'
 
 export type Fase =
@@ -45,6 +57,12 @@ export class ErrorGeneracion extends Error {
    */
   readonly data: Record<string, unknown> | null
   readonly retryAfter: number | null
+  /**
+   * Código técnico del servidor: `code` del JSON de error o del evento SSE
+   * `{ type: 'error', code }` ('auth_required', 'rate_limit', 'tope_diario'…).
+   * Nunca se muestra al usuario.
+   */
+  readonly code: string | null
 
   constructor(
     message: string,
@@ -54,6 +72,7 @@ export class ErrorGeneracion extends Error {
       cancelado?: boolean
       data?: Record<string, unknown> | null
       retryAfter?: number | null
+      code?: string | null
     }
   ) {
     super(message)
@@ -63,6 +82,7 @@ export class ErrorGeneracion extends Error {
     this.cancelado = opciones.cancelado ?? false
     this.data = opciones.data ?? null
     this.retryAfter = opciones.retryAfter ?? null
+    this.code = opciones.code ?? null
   }
 }
 
@@ -82,6 +102,11 @@ function esFase(v: unknown): v is Fase {
   return typeof v === 'string' && (FASES as readonly string[]).includes(v)
 }
 
+/** Texto no vacío o null. */
+function texto(v: unknown): string | null {
+  return typeof v === 'string' && v.trim() ? v.trim() : null
+}
+
 /** Mensaje apto para el usuario a partir de un cuerpo de error JSON. */
 function mensajeDe(data: unknown, porDefecto: string): string {
   if (data && typeof data === 'object') {
@@ -96,6 +121,54 @@ function mensajeDe(data: unknown, porDefecto: string): string {
 }
 
 /**
+ * Sesión caducada o rechazada. `started: true` para que `generarViaje` no lo
+ * repita en POST /api/generate, que también lo rechazaría.
+ */
+function errorDeSesion(): ErrorGeneracion {
+  return new ErrorGeneracion(MENSAJE_SESION_EXPIRADA, {
+    started: true,
+    status: 401,
+    code: CODIGO_AUTH_REQUIRED,
+  })
+}
+
+/** Respuesta HTTP no 2xx (JSON normal, antes de abrir el stream). */
+function errorHttp(
+  status: number,
+  raw: string,
+  cabeceraRetry: string | null
+): ErrorGeneracion {
+  let parsed: unknown = null
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    parsed = null
+  }
+  const data =
+    parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null
+  const mensaje =
+    status === 401
+      ? MENSAJE_SESION_EXPIRADA
+      : status === 429
+        ? mensajeDe(
+            data,
+            'Has trazado muchos viajes seguidos. Espera un momento y vuelve a intentarlo.'
+          )
+        : mensajeDe(data, MENSAJE_GENERICO)
+  // 4xx: los datos no valen, falta la sesión o hay límite (personal o el tope
+  // diario): repetir en /api/generate no ayuda y volvería a gastar cupo.
+  return new ErrorGeneracion(mensaje, {
+    started: status >= 400 && status < 500,
+    status,
+    data,
+    retryAfter: segundosDeEspera(cabeceraRetry, data?.['retryAfter']),
+    code: texto(data?.['code']),
+  })
+}
+
+/**
  * Consume el SSE de /api/generate/stream. Lanza `ErrorGeneracion`; con
  * `started === false` el llamante puede caer una vez a POST /api/generate.
  */
@@ -106,36 +179,25 @@ export function streamGenerar(
   signal?: AbortSignal
 ): Promise<GenerateResult> {
   return new Promise((resolve, reject) => {
-    ;(async () => {
-      if (!config.apiUrl) {
-        reject(
-          new ErrorGeneracion(
-            'Esta versión de la app todavía no puede trazar viajes. Inténtalo más tarde.',
-            { started: true }
-          )
-        )
-        return
-      }
-      const headers = await authHeaders()
-      if (signal?.aborted) {
-        reject(
-          new ErrorGeneracion('Cancelado', { started: false, cancelado: true })
-        )
-        return
-      }
+    let cerrado = false
+    let started = false
+    let xhrActual: XMLHttpRequest | null = null
 
+    const fallar = (e: ErrorGeneracion): void => {
+      if (cerrado) return
+      cerrado = true
+      reject(e)
+    }
+    const cancelado = (): ErrorGeneracion =>
+      new ErrorGeneracion('Cancelado', { started, cancelado: true })
+
+    /** Abre el stream con `token`; `reintento` = ya se refrescó tras un 401. */
+    const intento = (token: string, reintento: boolean): void => {
       const xhr = new XMLHttpRequest()
+      xhrActual = xhr
       let leido = 0
       let buffer = ''
-      let started = false
       let resultado: GenerateResult | null = null
-      let cerrado = false
-
-      const fallar = (e: ErrorGeneracion): void => {
-        if (cerrado) return
-        cerrado = true
-        reject(e)
-      }
 
       const evento = (raw: string): void => {
         const data = raw
@@ -157,6 +219,7 @@ export function streamGenerar(
           label?: unknown
           progreso?: unknown
           message?: unknown
+          code?: unknown
           result?: GenerateResult
           demo?: unknown
         }
@@ -173,22 +236,24 @@ export function streamGenerar(
             ev.demo === true ? { ...ev.result, demo: true } : ev.result
         } else if (ev.type === 'error') {
           xhr.abort()
+          // El `code` distingue, p. ej., el corte por tope diario de IA
+          // ('tope_diario') a mitad de la generación.
           fallar(
             new ErrorGeneracion(
               typeof ev.message === 'string' && ev.message
                 ? ev.message
                 : MENSAJE_GENERICO,
-              { started: true }
+              { started: true, code: texto(ev.code) }
             )
           )
         }
       }
 
       const procesar = (): void => {
-        const texto = xhr.responseText ?? ''
-        if (texto.length <= leido) return
-        buffer += texto.slice(leido)
-        leido = texto.length
+        const recibido = xhr.responseText ?? ''
+        if (recibido.length <= leido) return
+        buffer += recibido.slice(leido)
+        leido = recibido.length
         let sep = buffer.indexOf('\n\n')
         while (sep !== -1) {
           const chunk = buffer.slice(0, sep)
@@ -201,7 +266,7 @@ export function streamGenerar(
       xhr.open('POST', `${config.apiUrl}/api/generate/stream`)
       xhr.setRequestHeader('Content-Type', 'application/json')
       xhr.setRequestHeader('Accept', 'text/event-stream')
-      for (const [k, v] of Object.entries(headers)) xhr.setRequestHeader(k, v)
+      xhr.setRequestHeader('Authorization', `Bearer ${token}`)
       xhr.responseType = 'text'
 
       xhr.onprogress = () => {
@@ -210,32 +275,35 @@ export function streamGenerar(
       xhr.onload = () => {
         if (cerrado) return
         if (xhr.status < 200 || xhr.status >= 300) {
-          let data: unknown = null
-          try {
-            data = JSON.parse(xhr.responseText)
-          } catch {
-            data = null
-          }
           const status = xhr.status
-          const retry = Number(xhr.getResponseHeader('retry-after'))
-          // 4xx: los datos no valen o hay límite; repetir en /api/generate no ayuda.
+          if (status === 401 && !reintento) {
+            // Token caducado o revocado: el 401 sale antes de abrir el stream
+            // (no se gastó nada), así que se refresca UNA vez y se repite.
+            void refrescarToken()
+              .then((nuevo) => {
+                if (cerrado) return
+                if (signal?.aborted) {
+                  fallar(cancelado())
+                  return
+                }
+                if (nuevo.token && nuevo.token !== token) {
+                  intento(nuevo.token, true)
+                } else if (nuevo.sinRed) {
+                  // El refresco falló por la red: la sesión sigue viva, así
+                  // que no se dice «Tu sesión expiró» (igual que al empezar).
+                  fallar(new ErrorGeneracion(MENSAJE_RED, { started: true }))
+                } else {
+                  fallar(errorDeSesion())
+                }
+              })
+              .catch(() => fallar(errorDeSesion()))
+            return
+          }
           fallar(
-            new ErrorGeneracion(
-              status === 429
-                ? mensajeDe(
-                    data,
-                    'Has trazado muchos viajes seguidos. Espera un momento y vuelve a intentarlo.'
-                  )
-                : mensajeDe(data, MENSAJE_GENERICO),
-              {
-                started: status >= 400 && status < 500,
-                status,
-                data:
-                  data && typeof data === 'object' && !Array.isArray(data)
-                    ? (data as Record<string, unknown>)
-                    : null,
-                retryAfter: Number.isFinite(retry) && retry > 0 ? retry : null,
-              }
+            errorHttp(
+              status,
+              xhr.responseText ?? '',
+              xhr.getResponseHeader('retry-after')
             )
           )
           return
@@ -256,15 +324,46 @@ export function streamGenerar(
       xhr.ontimeout = () => {
         fallar(new ErrorGeneracion(MENSAJE_RED, { started }))
       }
-      signal?.addEventListener('abort', () => {
-        xhr.abort()
-        fallar(new ErrorGeneracion('Cancelado', { started, cancelado: true }))
-      })
 
       xhr.send(JSON.stringify({ ...form, noCache }))
+    }
+
+    signal?.addEventListener('abort', () => {
+      xhrActual?.abort()
+      fallar(cancelado())
+    })
+    ;(async () => {
+      if (!config.apiUrl) {
+        fallar(
+          new ErrorGeneracion(
+            'Esta versión de la app todavía no puede trazar viajes. Inténtalo más tarde.',
+            { started: true }
+          )
+        )
+        return
+      }
+      // Sin access_token no se llama: solo daría 401 (y con `started: true`
+      // tampoco se intenta POST /api/generate).
+      let token: string
+      try {
+        token = await tokenObligatorio()
+      } catch (e) {
+        fallar(
+          e instanceof BackendError && e.code === 'network'
+            ? new ErrorGeneracion(MENSAJE_RED, { started: true })
+            : errorDeSesion()
+        )
+        return
+      }
+      if (cerrado) return
+      if (signal?.aborted) {
+        fallar(cancelado())
+        return
+      }
+      intento(token, false)
     })().catch(() => {
       // Fallo al preparar la petición: nunca dejar la promesa colgada.
-      reject(new ErrorGeneracion(MENSAJE_RED, { started: false }))
+      fallar(new ErrorGeneracion(MENSAJE_RED, { started: false }))
     })
   })
 }

@@ -24,11 +24,22 @@ export type { BackendErrorCode } from './http'
  */
 const TIEMPO_IA_LARGA_MS = 300_000
 
-/** Genera los 3 paquetes de itinerario (basico/confort/premium) + clima. */
+/**
+ * Opciones de las rutas de IA que exigen sesión en el servidor (generate,
+ * adjust, analyze-video): sin access_token no se llaman (ver http.ts).
+ */
+const IA_CON_SESION = {
+  timeoutMs: TIEMPO_IA_LARGA_MS,
+  requiereSesion: true,
+} as const
+
+/**
+ * Genera los 3 paquetes de itinerario (basico/confort/premium) + clima.
+ * Requiere sesión; con el tope diario de IA agotado lanza BackendError
+ * ('rate_limit', serverCode 'tope_diario').
+ */
 export function generateTrip(form: TripFormValues): Promise<GenerateResult> {
-  return postJSON<GenerateResult>('/api/generate', form, {
-    timeoutMs: TIEMPO_IA_LARGA_MS,
-  })
+  return postJSON<GenerateResult>('/api/generate', form, IA_CON_SESION)
 }
 
 export interface VideoPlace {
@@ -54,7 +65,9 @@ export interface VideoAnalysisResult {
 /**
  * Analiza un video de viaje por URL (TikTok / Reels / YouTube…) para sugerir
  * el destino. Requiere sesión. Si el análisis de video está desactivado en el
- * servidor lanza BackendError('unavailable') con un mensaje amable.
+ * servidor lanza BackendError('unavailable') con un mensaje amable; con el
+ * tope diario de IA agotado, BackendError('rate_limit', serverCode
+ * 'tope_diario').
  */
 export function analyzeVideoUrl(
   videoUrl: string
@@ -62,7 +75,7 @@ export function analyzeVideoUrl(
   return postJSON<VideoAnalysisResult>(
     '/api/analyze-video',
     { videoUrl },
-    { timeoutMs: TIEMPO_IA_LARGA_MS }
+    IA_CON_SESION
   )
 }
 
@@ -77,7 +90,7 @@ export function analyzeImage(
       imageBase64,
       ...(mediaType ? { mediaType } : {}),
     },
-    { timeoutMs: TIEMPO_IA_LARGA_MS }
+    IA_CON_SESION
   )
 }
 
@@ -148,7 +161,8 @@ export interface AdjustResult {
 /**
  * Ajusta un itinerario con IA ("hazlo más barato", "añade un día de playa"…).
  * Conserva fechas, personas, moneda y el estado de cada actividad. Lanza
- * BackendError con el mensaje para mostrar.
+ * BackendError con el mensaje para mostrar; con el tope diario de IA agotado,
+ * 503 'ia_no_disponible' (motivo 'tope_diario') para ofrecer editar a mano.
  */
 export async function adjustTripDetailed(
   trip: PlanningTrip,
@@ -157,7 +171,7 @@ export async function adjustTripDetailed(
   const data = await postJSON<Partial<AdjustResult>>(
     '/api/adjust',
     { trip, instruccion },
-    { timeoutMs: TIEMPO_IA_LARGA_MS }
+    IA_CON_SESION
   )
   if (!data.trip) {
     throw new BackendError(

@@ -311,6 +311,26 @@ export function formatDuracion(minutos: number | null | undefined): string {
   return m === 0 ? `${h}${NBSP}h` : `${h}${NBSP}h ${String(m).padStart(2, '0')}`
 }
 
+/**
+ * Espera antes de reintentar (p. ej. el `retryAfter` de un 429): «5 min»,
+ * «1 hora», «3 horas». Redondea hacia arriba para no prometer un reintento que
+ * todavía fallaría. '' si no hay segundos válidos.
+ */
+export function formatEspera(segundos: number | null | undefined): string {
+  if (
+    segundos === null ||
+    segundos === undefined ||
+    !Number.isFinite(segundos) ||
+    segundos <= 0
+  ) {
+    return ''
+  }
+  const min = Math.max(1, Math.ceil(segundos / 60))
+  if (min < 60) return `${min}${NBSP}min`
+  const h = Math.ceil(min / 60)
+  return h === 1 ? '1 hora' : `${h} horas`
+}
+
 /** Cronómetro «00:24» / «1:02:03». */
 export function formatCronometro(segundos: number): string {
   const s = Math.max(0, Math.floor(segundos))

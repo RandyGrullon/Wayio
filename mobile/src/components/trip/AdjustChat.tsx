@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { StyleSheet, View } from 'react-native'
 import { adjustTripDetailed, BackendError } from '../../lib/api/backend'
+import { mensajeDeLimite } from '../../lib/api/limites'
 import { useEstilos, type Tema } from '../../theme'
 import { Callout } from '../ui/Callout'
 import { Chip } from '../ui/Chip'
@@ -38,7 +39,8 @@ interface Mensaje {
 /**
  * «Ajustar con IA» (§6.5): sugerencias, historial (burbujas propias en tinta,
  * respuestas con el resumen del cambio) y «Deshacer último ajuste». Ante 429
- * respeta `retryAfter`; ante 503 ofrece la edición manual.
+ * dice cuánto esperar (minutos u horas); ante 503 (también el tope diario de
+ * IA, 'ia_no_disponible') ofrece la edición manual.
  */
 export function AdjustChat({
   trip,
@@ -78,9 +80,16 @@ export function AdjustChat({
           err.code === 'unavailable' ||
           err.data?.['code'] === 'ia_no_disponible'
         const msg =
-          err.code === 'rate_limit' && err.retryAfter
-            ? `${err.message} Vuelve a intentarlo en ${Math.ceil(err.retryAfter / 60)} min.`
-            : err.message
+          mensajeDeLimite(
+            {
+              status: err.status,
+              code: err.serverCode,
+              data: err.data,
+              retryAfter: err.retryAfter,
+              mensaje: err.message,
+            },
+            'Hiciste muchos ajustes seguidos.'
+          ) ?? err.message
         setError({ msg, manual })
       } else {
         setError({
