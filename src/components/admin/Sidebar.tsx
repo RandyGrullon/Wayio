@@ -8,7 +8,8 @@ import { Logo } from '@/components/brand/Logo'
 import { Badge } from '@/components/ui/Badge'
 import { signOut } from '@/lib/auth/actions'
 import { cn } from '@/lib/utils/cn'
-import { NAV_ADMIN, itemActivo } from './navegacion'
+import { itemActivo, navegacionPara } from './navegacion'
+import { usePanel } from './PanelContext'
 
 const ITEM =
   'relative flex h-10 w-full items-center gap-3 rounded-control px-3 text-left text-[14px] font-medium ' +
@@ -30,6 +31,7 @@ export function Sidebar({
 }) {
   const pathname = usePathname()
   const uid = useId()
+  const { esDueno } = usePanel()
   const [saliendo, startSalida] = useTransition()
   // next/link no admite onClick={undefined} con exactOptionalPropertyTypes.
   const alNavegar = onNavegar ? { onClick: onNavegar } : {}
@@ -71,7 +73,7 @@ export function Sidebar({
         aria-label="Secciones del panel"
         className="min-h-0 flex-1 overflow-y-auto px-3 pt-3 pb-6"
       >
-        {NAV_ADMIN.map((grupo, i) => (
+        {navegacionPara(esDueno).map((grupo, i) => (
           <div key={grupo.id} className={cn(i > 0 && 'mt-6')}>
             <p id={`${uid}-${grupo.id}`} className="kicker px-3 pb-2">
               {grupo.titulo}

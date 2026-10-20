@@ -37,6 +37,20 @@ import type {
 } from '@/types/database'
 import type { Activity } from '@/types/activity'
 import type { Day, Trip } from '@/types/trip'
+import { estimateCost } from '@/lib/ai/pricing'
+import {
+  construirDatos,
+  rangosRD,
+  type FilaContador,
+  type FilaIa,
+  type FilaViaje,
+  type SubRentabilidad,
+} from '@/lib/admin/rentabilidad/agregar'
+import {
+  referencias,
+  supuestosPorDefecto,
+} from '@/lib/admin/rentabilidad/supuestos'
+import type { PropsRentabilidad } from '@/lib/rentabilidad/tipos'
 import { ADMIN_DEMO } from './acceso'
 
 /**
@@ -997,4 +1011,192 @@ export function auditoria(): AdminAuditRow[] {
     metadata,
     created_at: haceDias(i * 0.7, i),
   }))
+}
+
+// ─── Rentabilidad (solo el dueño) ─────────────────────────────────────────
+
+const OPUS = 'claude-opus-5-5'
+const HAIKU = 'claude-haiku-5-5'
+
+/**
+ * Calculadora de rentabilidad de ejemplo: filas de ai_logs, viajes,
+ * suscripciones y contadores sintéticos (60 personas, 10 de ellas Pro) que
+ * pasan por el MISMO agregado que los datos reales (agregar.ts). Tokens
+ * calibrados para que un viaje de 5 días con Opus cueste ≈ US$0.33 y un
+ * ajuste ≈ US$0.17, como el informe.
+ */
+export function rentabilidad(): PropsRentabilidad {
+  const ahora = Date.now()
+  const r = aleatorio(2026)
+  const filas: FilaIa[] = []
+  const viajes: FilaViaje[] = []
+  const contadores = new Map<string, number>()
+  const { inicioMes, periodoActual } = rangosRD(ahora)
+
+  const fila = (
+    usuario: string | null,
+    instante: number,
+    endpoint: string,
+    model: string,
+    entrada: number,
+    salida: number,
+    error: string | null = null
+  ) => {
+    filas.push({
+      user_id: usuario,
+      model,
+      endpoint,
+      prompt_tokens: entrada,
+      completion_tokens: salida,
+      cost_usd: Number(estimateCost(model, entrada, salida).toFixed(6)),
+      error,
+      created_at: new Date(instante).toISOString(),
+    })
+  }
+  const contar = (usuario: string, accion: string, instante: number) => {
+    if (instante < inicioMes) return
+    const clave = `${usuario}|${accion}`
+    contadores.set(clave, (contadores.get(clave) ?? 0) + 1)
+  }
+  /** Un instante de los últimos 40 días, a una hora de RD razonable. */
+  const momento = () =>
+    ahora - Math.floor(r() * 40) * DIA_MS - Math.floor(r() * 12) * 3_600_000
+
+  const generar = (usuario: string | null, t: number, dias: number) => {
+    const u = usuario
+    const vary = (n: number) => Math.round(n * (0.85 + r() * 0.3))
+    fila(u, t - 40_000, 'interpret', HAIKU, vary(1200), vary(300))
+    if (dias <= 3) {
+      fila(u, t, 'generate', OPUS, vary(3500), vary(6000))
+    } else {
+      fila(u, t, 'generate:esqueleto', OPUS, vary(3000), vary(2500))
+      for (let b = 0; b < Math.ceil(dias / 2); b++) {
+        fila(
+          u,
+          t + 2_000 + b * 300,
+          'generate:bloque',
+          OPUS,
+          vary(3500),
+          vary(3800)
+        )
+      }
+    }
+    fila(u, t + 150_000, '/api/validate', HAIKU, vary(2500), vary(600))
+    if (u) {
+      contar(u, 'generar', t)
+      viajes.push({ user_id: u, updated_at: new Date(t).toISOString() })
+    }
+  }
+  const ajustar = (usuario: string, t: number, truncado: boolean) => {
+    const vary = (n: number) => Math.round(n * (0.85 + r() * 0.3))
+    if (truncado) {
+      fila(
+        usuario,
+        t - 20_000,
+        '/api/adjust',
+        OPUS,
+        vary(9000),
+        12_000,
+        'max_tokens'
+      )
+    }
+    fila(usuario, t, '/api/adjust', OPUS, vary(9000), vary(6500))
+    contar(usuario, 'ajustar', t)
+  }
+  const foto = (usuario: string, t: number) => {
+    fila(usuario, t, '/api/analyze-video:imagen', OPUS, 2500, 900)
+    fila(usuario, t + 1_500, '/api/analyze-video:imagen', HAIKU, 1500, 500)
+    contar(usuario, 'analizar', t)
+  }
+
+  const personas = Array.from({ length: 60 }, (_, i) => ({
+    id: uuid(6000 + i),
+    pago: i % 6 === 0,
+    i,
+  }))
+  for (const p of personas) {
+    const viajesN = p.pago ? 2 + (p.i % 5) : p.i % 3
+    const ajustesN = p.pago ? 3 + (p.i % 8) : p.i % 5
+    const fotosN = p.pago ? p.i % 3 : p.i % 4 === 0 ? 1 : 0
+    for (let k = 0; k < viajesN; k++) {
+      generar(p.id, momento(), [3, 5, 5, 7, 14][(p.i + k) % 5] ?? 5)
+    }
+    for (let k = 0; k < ajustesN; k++) {
+      ajustar(p.id, momento(), (p.i + k) % 9 === 0)
+    }
+    for (let k = 0; k < fotosN; k++) foto(p.id, momento())
+  }
+  // Personas que solo editaron o abrieron su viaje (sin IA).
+  for (let i = 0; i < 15; i++) {
+    viajes.push({
+      user_id: uuid(6100 + i),
+      updated_at: new Date(momento()).toISOString(),
+    })
+  }
+  // Llamadas sin cuenta (interpretar) y pruebas del equipo.
+  for (let i = 0; i < 30; i++) {
+    fila(null, momento(), 'interpret', HAIKU, 1200, 300)
+  }
+  for (let i = 0; i < 4; i++) generar(ADMIN_DEMO.userId, momento(), 5)
+
+  filas.sort((a, b) => a.created_at.localeCompare(b.created_at))
+
+  const enUnMes = new Date(ahora + 20 * DIA_MS).toISOString()
+  const sub = (
+    i: number,
+    plan_id: SubRentabilidad['plan_id'],
+    extra: Partial<SubRentabilidad> = {}
+  ): SubRentabilidad => ({
+    user_id: uuid(6000 + i),
+    plan_id,
+    tier: plan_id === 'pro_grupo' ? 'grupo' : 'pro',
+    status: 'active',
+    stripe_subscription_id: `sub_Demo${i}`,
+    current_period_end: enUnMes,
+    source: 'stripe',
+    ...extra,
+  })
+  const suscripciones: SubRentabilidad[] = [
+    sub(0, 'pro_mensual'),
+    sub(6, 'pro_mensual'),
+    sub(12, 'pro_mensual'),
+    sub(18, 'pro_mensual'),
+    sub(24, 'pro_anual'),
+    sub(30, 'pro_anual'),
+    sub(36, 'pro_grupo'),
+    sub(42, 'pro_por_viaje', { stripe_subscription_id: null }),
+    sub(48, 'pro_anual', { stripe_subscription_id: null, source: 'admin' }),
+    sub(54, 'pro_mensual', { status: 'past_due' }),
+  ]
+
+  const filasContador: FilaContador[] = [...contadores.entries()].map(
+    ([clave, usados]) => {
+      const [user_id = '', accion = ''] = clave.split('|')
+      return { user_id, periodo: periodoActual, accion, usados }
+    }
+  )
+
+  const datos = construirDatos({
+    ahora,
+    filasIa: filas,
+    viajes,
+    suscripciones,
+    admins: [ADMIN_DEMO.userId],
+    contadores: filasContador,
+    truncado: false,
+    vigentes: {
+      proveedor: 'anthropic',
+      principal: OPUS,
+      vision: OPUS,
+      rapido: HAIKU,
+    },
+    supuestos: { estado: 'por_defecto', actualizado: null },
+  })
+  const porDefecto = supuestosPorDefecto(datos)
+  return {
+    datos,
+    supuestos: porDefecto,
+    porDefecto,
+    referencias: referencias(),
+  }
 }

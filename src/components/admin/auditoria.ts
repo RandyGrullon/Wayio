@@ -60,6 +60,7 @@ export function enFiltroAuditoria(row: AdminAuditRow, filtro: string): boolean {
 const AJUSTES: Record<string, string> = {
   maintenance_mode: 'Modo mantenimiento',
   ai_provider: 'Proveedor de IA',
+  rentabilidad_supuestos: 'Supuestos de rentabilidad',
 }
 
 function bool(meta: Record<string, unknown>, clave: string): boolean | null {
@@ -133,6 +134,13 @@ function describir(row: AdminAuditRow): string {
       return bool(meta, 'enabled')
         ? 'Activó el modo mantenimiento'
         : 'Desactivó el modo mantenimiento'
+    case 'set_rentabilidad_supuestos': {
+      const campos = meta['campos']
+      const n = Array.isArray(campos) ? campos.length : 0
+      return n > 0
+        ? `Guardó los supuestos de rentabilidad (${n} ${n === 1 ? 'campo' : 'campos'})`
+        : 'Guardó los supuestos de rentabilidad'
+    }
     case 'set_ai_provider': {
       const p = texto(meta, 'provider')
       return p
@@ -195,10 +203,12 @@ function objetivo(row: AdminAuditRow): ObjetivoAuditoria | null {
             mono: true,
           }
     case 'setting':
+      // Los supuestos de rentabilidad son del dueño: sin enlace (otro admin
+      // recibiría un 404).
       return {
         tipo: nombreTipo,
         etiqueta: AJUSTES[id] ?? legible(id),
-        href: '/admin/settings',
+        ...(id === 'rentabilidad_supuestos' ? {} : { href: '/admin/settings' }),
         mono: false,
       }
     default:

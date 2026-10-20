@@ -1,6 +1,7 @@
 import type { LucideIcon } from 'lucide-react'
 import {
   Bot,
+  Calculator,
   CreditCard,
   Flag,
   Gift,
@@ -23,6 +24,11 @@ export interface ItemNav {
   href: string
   label: string
   icono: LucideIcon
+  /**
+   * Solo lo ve el dueño (WAYIO_OWNER_EMAILS). Ocultarlo en el menú es solo
+   * presentación: la página lo vuelve a exigir en el servidor (requireOwner).
+   */
+  soloDueno?: boolean
 }
 
 export interface GrupoNav {
@@ -53,6 +59,12 @@ export const NAV_ADMIN: readonly GrupoNav[] = [
       },
       { href: '/admin/referrals', label: 'Referidos', icono: Gift },
       { href: '/admin/ai', label: 'Uso de IA', icono: Bot },
+      {
+        href: '/admin/rentabilidad',
+        label: 'Rentabilidad',
+        icono: Calculator,
+        soloDueno: true,
+      },
     ],
   },
   {
@@ -68,6 +80,20 @@ export const NAV_ADMIN: readonly GrupoNav[] = [
 ]
 
 export const ITEMS_ADMIN: readonly ItemNav[] = NAV_ADMIN.flatMap((g) => g.items)
+
+/** Menú que ve cada admin: sin las secciones del dueño si no lo es. */
+export function navegacionPara(esDueno: boolean): readonly GrupoNav[] {
+  if (esDueno) return NAV_ADMIN
+  return NAV_ADMIN.map((g) => ({
+    ...g,
+    items: g.items.filter((i) => !i.soloDueno),
+  })).filter((g) => g.items.length > 0)
+}
+
+/** Secciones a las que puede saltar cada admin (búsqueda ⌘K). */
+export function itemsPara(esDueno: boolean): readonly ItemNav[] {
+  return esDueno ? ITEMS_ADMIN : ITEMS_ADMIN.filter((i) => !i.soloDueno)
+}
 
 /** ¿El ítem corresponde a la ruta actual? (/admin solo en su raíz). */
 export function itemActivo(pathname: string, href: string): boolean {

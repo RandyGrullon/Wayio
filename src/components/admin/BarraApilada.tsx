@@ -22,11 +22,14 @@ const COLORES = [
 export function BarraApilada({
   segmentos,
   unidad,
+  formato = formatNumero,
   className,
 }: {
   segmentos: readonly SegmentoBarra[]
   /** «viajes» (para el texto accesible). */
   unidad: string
+  /** Formato de cada valor (por defecto «1,284»; p. ej. usd para dinero). */
+  formato?: (valor: number) => string
   className?: string
 }) {
   const total = segmentos.reduce((s, x) => s + x.valor, 0)
@@ -34,7 +37,7 @@ export function BarraApilada({
   const resumen = segmentos
     .map(
       (s) =>
-        `${s.label}: ${formatNumero(s.valor)} (${formatPorcentaje(pct(s.valor))})`
+        `${s.label}: ${formato(s.valor)} (${formatPorcentaje(pct(s.valor))})`
     )
     .join(', ')
 
@@ -43,7 +46,7 @@ export function BarraApilada({
       {total > 0 ? (
         <div
           role="img"
-          aria-label={`${formatNumero(total)} ${unidad}. ${resumen}.`}
+          aria-label={`${formato(total)} ${unidad}. ${resumen}.`}
           className="flex h-3 w-full gap-0.5 overflow-hidden rounded-full"
         >
           {segmentos.map((s, i) =>
@@ -80,7 +83,7 @@ export function BarraApilada({
                 {s.label}
               </span>
               <span className="block text-caption text-fg-muted tnum">
-                {formatNumero(s.valor)} · {formatPorcentaje(pct(s.valor))}
+                {formato(s.valor)} · {formatPorcentaje(pct(s.valor))}
               </span>
             </span>
           </li>

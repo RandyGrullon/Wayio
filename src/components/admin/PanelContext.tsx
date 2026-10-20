@@ -5,19 +5,24 @@ import type { ReactNode } from 'react'
 
 /**
  * Contexto del panel para los componentes cliente: quién es el admin (para
- * no actuar sobre la propia cuenta) y si es la vista de ejemplo (las
- * acciones no se ejecutan).
+ * no actuar sobre la propia cuenta), si es la vista de ejemplo (las
+ * acciones no se ejecutan) y si es el dueño (ve las secciones con cifras del
+ * negocio). `esDueno` solo decide qué se MUESTRA en el menú: la página, sus
+ * consultas y su server action lo comprueban de nuevo en el servidor
+ * (requireOwner).
  */
 export interface PanelInfo {
   userId: string
   email: string
   demo: boolean
+  esDueno: boolean
 }
 
 const Contexto = createContext<PanelInfo>({
   userId: '',
   email: '',
   demo: false,
+  esDueno: false,
 })
 
 export function PanelProvider({

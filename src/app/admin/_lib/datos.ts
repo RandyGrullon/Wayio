@@ -15,6 +15,7 @@ import {
   listUsers,
 } from '@/lib/admin/queries'
 import type { RangoPanel } from '@/lib/admin/queries'
+import { getRentabilidad } from '@/lib/admin/rentabilidad/queries'
 import { modoPanel } from './acceso'
 import * as demo from './demo'
 
@@ -60,6 +61,10 @@ export const datosAnuncios = () =>
 
 export const datosAjustes = () =>
   enDemo() ? Promise.resolve(demo.ajustes()) : getSettings()
+
+/** Solo el dueño: getRentabilidad llama a requireOwner. */
+export const datosRentabilidad = () =>
+  enDemo() ? Promise.resolve(demo.rentabilidad()) : getRentabilidad()
 
 export const datosAuditoria = () =>
   enDemo() ? Promise.resolve(demo.auditoria()) : listAudit()

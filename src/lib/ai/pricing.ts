@@ -9,7 +9,7 @@ import * as Sentry from '@sentry/nextjs'
  * silencio justo con el modelo más caro): se estima por familia con el precio
  * más alto conocido y se avisa una vez por modelo para añadir el real aquí.
  */
-interface Tarifa {
+export interface Tarifa {
   input: number
   output: number
 }
@@ -108,6 +108,17 @@ function priceFor(model: string): ModelPrice {
     : OTRO_DESCONOCIDO
   avisarSinPrecio(model, estimado)
   return estimado
+}
+
+/**
+ * Tarifa (US$ por millón de tokens, contexto normal) de un modelo de la tabla,
+ * o null si no está. Sin estimaciones ni avisos: la usa la calculadora de
+ * rentabilidad del panel para rotular sus escenarios por modelo (el costo de
+ * cada escenario se recalcula con estimateCost desde los tokens).
+ */
+export function tarifaModelo(model: string): Tarifa | null {
+  const p = PRICES[model] ?? PRICES[model.replace(/-\d{8}$/, '')]
+  return p ? { input: p.input, output: p.output } : null
 }
 
 export function estimateCost(

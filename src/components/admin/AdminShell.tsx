@@ -23,17 +23,20 @@ export function AdminShell({
   email,
   userId,
   demo,
+  dueno,
   children,
 }: {
   email: string
   userId: string
   demo: boolean
+  /** ¿Es el dueño? Muestra las secciones solo para él (Rentabilidad). */
+  dueno: boolean
   children: ReactNode
 }) {
   const [menu, setMenu] = useState(false)
 
   return (
-    <PanelProvider value={{ userId, email, demo }}>
+    <PanelProvider value={{ userId, email, demo, esDueno: dueno }}>
       <div className="flex min-h-dvh flex-1 bg-bg">
         <aside className="sticky top-0 hidden h-dvh w-sidebar shrink-0 border-r border-border bg-surface lg:block">
           <Sidebar email={email} />

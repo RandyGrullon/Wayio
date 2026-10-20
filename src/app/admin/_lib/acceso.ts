@@ -1,5 +1,6 @@
 import 'server-only'
 import { requireAdmin } from '@/lib/admin/auth'
+import { esDueno, requireOwner } from '@/lib/admin/dueno'
 import { isSupabaseConfigured } from '@/lib/supabase/config'
 
 /**
@@ -25,12 +26,16 @@ export interface SesionPanel {
   userId: string
   email: string
   demo: boolean
+  /** ¿Es el dueño? (WAYIO_OWNER_EMAILS; ve la calculadora de rentabilidad). */
+  dueno: boolean
 }
 
+/** En la vista de ejemplo el admin es también el dueño (se ve todo). */
 export const ADMIN_DEMO: SesionPanel = {
   userId: 'demo-admin',
   email: 'admin@ejemplo.com',
   demo: true,
+  dueno: true,
 }
 
 /**
@@ -43,5 +48,22 @@ export async function exigirAdmin(): Promise<SesionPanel | null> {
   if (modo === 'demo') return ADMIN_DEMO
   if (modo === 'no-disponible') return null
   const ctx = await requireAdmin()
-  return { userId: ctx.userId, email: ctx.email, demo: false }
+  return {
+    userId: ctx.userId,
+    email: ctx.email,
+    demo: false,
+    dueno: esDueno(ctx.email),
+  }
+}
+
+/**
+ * Como exigirAdmin, pero solo para el dueño: a otro admin le responde 404
+ * (requireOwner). Lo usan las páginas con cifras del negocio.
+ */
+export async function exigirDueno(): Promise<SesionPanel | null> {
+  const modo = modoPanel()
+  if (modo === 'demo') return ADMIN_DEMO
+  if (modo === 'no-disponible') return null
+  const ctx = await requireOwner()
+  return { userId: ctx.userId, email: ctx.email, demo: false, dueno: true }
 }

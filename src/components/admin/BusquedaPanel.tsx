@@ -9,7 +9,8 @@ import { IconButton } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Modal } from '@/components/ui/Modal'
 import { cn } from '@/lib/utils/cn'
-import { ITEMS_ADMIN, normalizar } from './navegacion'
+import { itemsPara, normalizar } from './navegacion'
+import { usePanel } from './PanelContext'
 
 interface Opcion {
   clave: string
@@ -95,6 +96,7 @@ export function BusquedaPanel() {
 
 function Paleta({ onIr }: { onIr: (href: string) => void }) {
   const id = useId()
+  const { esDueno } = usePanel()
   const [q, setQ] = useState('')
   const [activo, setActivo] = useState(0)
   const texto = q.trim()
@@ -119,15 +121,15 @@ function Paleta({ onIr }: { onIr: (href: string) => void }) {
           },
         ]
       : []),
-    ...ITEMS_ADMIN.filter((i) => !n || normalizar(i.label).includes(n)).map(
-      (i) => ({
+    ...itemsPara(esDueno)
+      .filter((i) => !n || normalizar(i.label).includes(n))
+      .map((i) => ({
         clave: i.href,
         label: i.label,
         detalle: 'sección',
         href: i.href,
         icono: i.icono,
-      })
-    ),
+      })),
   ]
   const indice = Math.min(activo, Math.max(0, opciones.length - 1))
   const opcionId = (i: number) => `${id}-opcion-${i}`

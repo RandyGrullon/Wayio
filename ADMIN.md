@@ -53,6 +53,7 @@ Entra a `/admin`. Si no eres admin te redirige a la home; si no hay sesión, al 
 | Grupos        | `/admin/groups`        | Moderar mensajes y gastos de los viajes en grupo                                                                 |
 | Referidos     | `/admin/referrals`     | Códigos, conversiones, leaderboard                                                                               |
 | Uso de IA     | `/admin/ai`            | Tokens, costo, latencia y éxito por proveedor/modelo; gasto de hoy frente al tope diario                         |
+| Rentabilidad  | `/admin/rentabilidad`  | **Solo el dueño** (`WAYIO_OWNER_EMAILS`): ingresos netos, IA por acción y usuario, fijos y equilibrio            |
 | Feature Flags | `/admin/flags`         | Guardar flags por plataforma (⚠️ la web y la app aún no las leen: ver abajo)                                     |
 | Anuncios      | `/admin/announcements` | Publicar banners para web y mobile                                                                               |
 | Auditoría     | `/admin/audit`         | Registro de todas las acciones de admin                                                                          |
@@ -62,6 +63,43 @@ Entra a `/admin`. Si no eres admin te redirige a la home; si no hay sesión, al 
 > el modo mantenimiento y el selector de proveedor de IA se guardan pero ni la
 > web ni la app los consultan todavía (hace falta un hook `useRemoteConfig` en
 > cada cliente y que `src/lib/ai/config.ts` lea `app_settings`).
+
+## Rentabilidad (solo el dueño)
+
+`/admin/rentabilidad` es una calculadora para saber si Wayio gana o pierde
+dinero y cuánto. El cliente nunca ve nada de esto y los demás admins tampoco:
+
+- **Quién la ve**: los correos de `WAYIO_OWNER_EMAILS` (variable SOLO de
+  servidor, separados por coma, sin distinguir mayúsculas). Si la variable está
+  vacía o no existe, **cualquier admin cuenta como dueño** (para no dejar la
+  sección inaccesible en un despliegue sin configurar): defínela en producción.
+  La página, su consulta y su server action lo comprueban en el servidor
+  (`requireOwner` en `src/lib/admin/dueno.ts`); a otro admin le responde 404 y
+  el ítem «Rentabilidad» no aparece en su menú ni en la búsqueda ⌘K.
+- **Datos reales** (marcados «real»): `ai_logs` del mes en curso de RD y de
+  los últimos 30 días (costo por acción con media y p90, costo por tipo de
+  usuario, recalculado desde los tokens con Opus, Sonnet, Haiku y Groq),
+  usuarios activos aproximados (con IA o con un viaje creado o editado; sin
+  admins), suscripciones cobradas, pases vigentes y planes concedidos, y
+  `usage_counters` (acciones por usuario y mes) si existe.
+- **Supuestos** (marcados «supuesto»): comisiones por canal (Creem, Paddle,
+  Dodo, PayPal RD, Stripe con LLC) y de las tiendas, costos fijos, conversión,
+  usuarios activos proyectados, mezcla de planes, modelo, perfil de uso, cupo
+  gratis, afiliados e impuestos (a confirmar con un contador). Los valores por
+  defecto salen del informe «Wayio IA cobros y servicios gratis» y viven en
+  `src/lib/admin/rentabilidad/supuestos.ts` (`server-only`). Al guardarlos van
+  a la tabla PRIVADA `admin_private_settings` (clave
+  `rentabilidad_supuestos`; solo service role), nunca a `app_settings`, que es
+  de lectura pública. La auditoría guarda solo los nombres de los campos
+  cambiados.
+- **Requiere** la migración `20261017130000_cupos_y_rentabilidad.sql`
+  (`usage_counters` y `admin_private_settings`). Sin ella la página funciona
+  con los supuestos por defecto, avisa y no deja guardar.
+- **Aproximaciones**: `ai_logs` no guarda un id de acción, así que una
+  generación o una foto son sus llamadas de la misma persona a menos de 90 s;
+  el plan de cada persona es el efectivo de hoy; con Groq gratis el costo real
+  es 0 (se usa su tarifa de pago); recalcular tokens con otro modelo es
+  orientativo. Lee hasta 50.000 filas por tabla y avisa si llega al tope.
 
 ## Control de la app mobile
 

@@ -25,7 +25,12 @@ export default async function AdminLayout({
   if (!sesion) return <PanelNoDisponible />
 
   return (
-    <AdminShell email={sesion.email} userId={sesion.userId} demo={sesion.demo}>
+    <AdminShell
+      email={sesion.email}
+      userId={sesion.userId}
+      demo={sesion.demo}
+      dueno={sesion.dueno}
+    >
       {children}
     </AdminShell>
   )
