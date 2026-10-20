@@ -15,6 +15,7 @@ import {
   leerJson,
   limitar,
 } from '@/lib/ai/routeKit'
+import { exigirPro } from '@/lib/planes/cupo'
 import { isSupabaseConfigured } from '@/lib/supabase/config'
 import type { TripRow } from '@/types/database'
 
@@ -28,6 +29,11 @@ import type { TripRow } from '@/types/database'
  * 200:  { activity: Activity, dia: number, diaOriginal: number, nota: string,
  *         huecos: { dia, desde, hasta }[] }
  *       `activity` conserva id/coords; `dia` es el día (1-based) donde queda.
+ *
+ * Reagendar con IA es solo Pro: en el plan Gratis responde 503
+ * { error, code: 'ia_no_disponible', motivo: 'requiere_pro', huecos }, el
+ * mismo camino que sin IA o con el tope diario (el cliente pasa al modo
+ * manual con los huecos libres).
  */
 
 export const maxDuration = 60
@@ -141,6 +147,19 @@ export async function POST(request: Request): Promise<Response> {
       }
     )
   if (await presupuestoAgotado()) return respuestaTope()
+
+  // Reagendar con IA: solo Pro. Si no se pudo leer el plan (null) se permite.
+  if ((await exigirPro(llamante, 'reagendar_ia')) === false) {
+    return jsonError(
+      503,
+      'Reagendar con IA es de Pro. Elige tú el nuevo hueco.',
+      {
+        code: 'ia_no_disponible',
+        motivo: 'requiere_pro',
+        huecos: huecosPublicos,
+      }
+    )
+  }
 
   try {
     const resultado = await rescheduleActivity({

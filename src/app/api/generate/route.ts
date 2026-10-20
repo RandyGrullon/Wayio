@@ -7,6 +7,7 @@ import {
   comprobarTopeGenerar,
   MAX_BODY_GENERAR,
   pideNoCache,
+  reservarCupoGenerar,
 } from './_lib/comun'
 
 // Los viajes largos se generan en bloques paralelos; aun así dejamos margen
@@ -21,7 +22,10 @@ export type { GenerateResult } from '@/lib/ai/generateTrips'
  * POST /api/generate — genera el itinerario (versión sin streaming).
  *
  * Exige sesión (cookie o Bearer), con límites por cuenta por hora y por día
- * (compartidos con /api/generate/stream) y el tope global de gasto diario.
+ * (compartidos con /api/generate/stream), el tope global de gasto diario y el
+ * cupo mensual del plan Gratis (402 code 'cupo_agotado', ver
+ * src/lib/planes/cupo.ts). Lo que sale de la caché o del modo demo, falla o
+ * se cancela no gasta cupo.
  */
 export async function POST(request: Request): Promise<Response> {
   const sesion = await exigirSesion(request)
@@ -50,12 +54,18 @@ export async function POST(request: Request): Promise<Response> {
   const tope = await comprobarTopeGenerar(parsed.data, noCache)
   if (tope) return tope
 
+  // Cupo mensual del plan Gratis: lo último antes de gastar IA.
+  const cupo = await reservarCupoGenerar(sesion.llamante, parsed.data, noCache)
+  if (!cupo.ok) return cupo.response
+
   try {
     const { result, cacheHit, demo } = await generateTrips(parsed.data, {
       noCache,
       signal: request.signal,
       userId: sesion.llamante.user?.id ?? null,
     })
+    // La caché y el modo demo no cuestan nada: no gastan cupo.
+    if (cacheHit || demo) await cupo.devolver()
     return Response.json(result, {
       headers: {
         'X-Cache': cacheHit ? 'HIT' : 'MISS',
@@ -64,6 +74,8 @@ export async function POST(request: Request): Promise<Response> {
       },
     })
   } catch (err) {
+    // Falló o se canceló: la unidad del cupo se devuelve.
+    await cupo.devolver()
     if (err instanceof GenerationError) {
       // Corte duro del tope a mitad de la generación (aiGenerate).
       if (err.code === 'tope_diario') return respuestaTopeDiario()

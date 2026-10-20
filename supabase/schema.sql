@@ -6,15 +6,16 @@
 -- proyecto vacío como en uno que ya tenía una versión anterior del esquema.
 --
 -- Es la fuente completa: equivale a aplicar, en orden, todas las migraciones
--- de supabase/migrations (la última: 20261017120000_ai_gasto_diario.sql).
+-- de supabase/migrations (la última: 20261017130000_cupos_y_rentabilidad.sql).
 --
 -- Incluye:
 --   1. Tablas de la app (perfiles, viajes, grupos, suscripciones, referidos,
---      reservas, estados de actividad, caché)
+--      reservas, estados de actividad, cupos mensuales, caché)
 --   2. Tablas del panel de administración (logs de IA, feature flags,
---      anuncios, tokens de push, auditoría, settings)
+--      anuncios, tokens de push, auditoría, settings públicos y privados)
 --   3. Funciones y RPC (membresía, unirse por link, vista pública, referidos,
---      dispositivos, plan efectivo, gasto diario de IA), triggers e índices
+--      dispositivos, plan efectivo, gasto diario de IA, cupos del plan
+--      Gratis), triggers e índices
 --   4. Privilegios por columna + RLS (row level security) por membresía
 --   5. Publicación de Realtime para las tablas de grupo
 --   6. Seed y backfills
@@ -362,6 +363,19 @@ create table if not exists public.stripe_events (
   processed_at timestamptz not null default now()
 );
 
+-- Uso mensual de las acciones de IA con cupo (plan Gratis), por usuario y mes
+-- natural de RD (periodo = día 1 del mes). Solo la escribe el servidor con
+-- las RPC consumir_cupo / devolver_cupo (src/lib/planes/cupo.ts); se cuentan
+-- todos los planes (Pro con un límite enorme) para el panel admin.
+create table if not exists public.usage_counters (
+  user_id    uuid not null references public.profiles(id) on delete cascade,
+  periodo    date not null,
+  accion     text not null check (accion in ('generar', 'ajustar', 'analizar')),
+  usados     integer not null default 0 check (usados >= 0),
+  updated_at timestamptz not null default now(),
+  primary key (user_id, periodo, accion)
+);
+
 -- ----------------------------------------------------------------------------
 -- 5. PANEL ADMIN: logs de IA, feature flags, anuncios, push, auditoría, settings
 -- ----------------------------------------------------------------------------
@@ -446,6 +460,21 @@ create trigger trg_settings_updated_at
   before update on public.app_settings
   for each row execute function public.set_updated_at();
 
+-- Settings PRIVADOS del panel admin (calculadora de rentabilidad). A
+-- diferencia de app_settings no tienen lectura pública: solo service role.
+create table if not exists public.admin_private_settings (
+  key        text primary key,
+  value      jsonb not null default '{}'::jsonb,
+  updated_at timestamptz not null default now(),
+  updated_by uuid references public.profiles(id) on delete set null
+);
+
+drop trigger if exists trg_admin_private_settings_updated_at
+  on public.admin_private_settings;
+create trigger trg_admin_private_settings_updated_at
+  before update on public.admin_private_settings
+  for each row execute function public.set_updated_at();
+
 -- ----------------------------------------------------------------------------
 -- 6. ÍNDICES
 -- ----------------------------------------------------------------------------
@@ -469,6 +498,7 @@ create index if not exists idx_reservations_user     on public.reservations (use
 create index if not exists idx_reservations_trip     on public.reservations (trip_id);
 create index if not exists idx_ai_logs_created       on public.ai_logs (created_at desc);
 create index if not exists idx_ai_logs_provider      on public.ai_logs (provider);
+create index if not exists idx_ai_logs_user_created  on public.ai_logs (user_id, created_at);
 create index if not exists idx_announcements_active  on public.announcements (active);
 create index if not exists idx_audit_created         on public.admin_audit_log (created_at desc);
 create index if not exists idx_profiles_role         on public.profiles (role);
@@ -760,6 +790,54 @@ as $$
    where created_at >= p_desde;
 $$;
 
+-- RPC consumir_cupo: suma 1 al uso del mes si quedan unidades y devuelve el
+-- nuevo total; agotado (o p_limite <= 0) no toca nada y devuelve null. Una
+-- sola sentencia atómica: dos peticiones a la vez nunca pasan del límite.
+-- La usa src/lib/planes/cupo.ts con la service role (ver sección 9).
+create or replace function public.consumir_cupo(
+  p_user uuid,
+  p_accion text,
+  p_periodo date,
+  p_limite integer
+)
+returns integer
+language sql
+volatile
+security definer
+set search_path = public
+as $$
+  insert into public.usage_counters (user_id, periodo, accion, usados)
+  select p_user, p_periodo, p_accion, 1
+   where p_limite > 0
+  on conflict (user_id, periodo, accion) do update
+     set usados     = usage_counters.usados + 1,
+         updated_at = now()
+   where usage_counters.usados < p_limite
+  returning usados;
+$$;
+
+-- RPC devolver_cupo: reembolsa 1 (generación fallida, cancelada, de la caché
+-- o del modo demo) sin bajar nunca de 0. Solo service_role.
+create or replace function public.devolver_cupo(
+  p_user uuid,
+  p_accion text,
+  p_periodo date
+)
+returns void
+language sql
+volatile
+security definer
+set search_path = public
+as $$
+  update public.usage_counters
+     set usados     = greatest(usados - 1, 0),
+         updated_at = now()
+   where user_id = p_user
+     and periodo = p_periodo
+     and accion  = p_accion
+     and usados  > 0;
+$$;
+
 -- Al registrarse (web o mobile): crea perfil + suscripción free + código de
 -- referido, para que la cuenta quede lista de inmediato. El código de
 -- referido nunca puede impedir el alta.
@@ -834,8 +912,14 @@ revoke all on table public.reservations from anon;
 revoke insert, update, delete on table public.reservations from authenticated;
 grant select on table public.reservations to authenticated;
 
--- stripe_events: solo service role
+-- stripe_events y admin_private_settings: solo service role
 revoke all on table public.stripe_events from anon, authenticated;
+revoke all on table public.admin_private_settings from anon, authenticated;
+
+-- usage_counters: el usuario solo LEE sus filas (las escriben las RPC de
+-- cupos con la service role)
+revoke all on table public.usage_counters from anon, authenticated;
+grant select on table public.usage_counters to authenticated;
 
 -- ----------------------------------------------------------------------------
 -- 9. EJECUCIÓN DE FUNCIONES (RPC)
@@ -883,6 +967,16 @@ revoke execute on function public.ai_gasto_desde(timestamptz)
   from public, anon, authenticated;
 grant execute on function public.ai_gasto_desde(timestamptz) to service_role;
 
+revoke execute on function public.consumir_cupo(uuid, text, date, integer)
+  from public, anon, authenticated;
+grant execute on function public.consumir_cupo(uuid, text, date, integer)
+  to service_role;
+
+revoke execute on function public.devolver_cupo(uuid, text, date)
+  from public, anon, authenticated;
+grant execute on function public.devolver_cupo(uuid, text, date)
+  to service_role;
+
 -- ----------------------------------------------------------------------------
 -- 10. RLS (Row Level Security)
 -- ----------------------------------------------------------------------------
@@ -910,6 +1004,8 @@ alter table public.announcements        enable row level security;
 alter table public.device_tokens        enable row level security;
 alter table public.admin_audit_log      enable row level security;
 alter table public.app_settings         enable row level security;
+alter table public.usage_counters       enable row level security;
+alter table public.admin_private_settings enable row level security;
 
 -- profiles: cada quien ve/edita el suyo (solo nombre y avatar); admin ve todos
 drop policy if exists "profiles_select_own" on public.profiles;
@@ -1092,8 +1188,15 @@ create policy "announcements_read" on public.announcements
 create policy "settings_read" on public.app_settings
   for select using (true);
 
--- ai_logs, admin_audit_log, trip_cache, stripe_events: SIN políticas → solo
--- accesibles vía service role (RLS habilitado + sin policy = denegado)
+-- usage_counters: cada usuario ve su uso del mes (GET /api/cupo); sin
+-- escritura (solo las RPC de cupos con la service role)
+drop policy if exists "usage_counters_select_own" on public.usage_counters;
+create policy "usage_counters_select_own" on public.usage_counters
+  for select using (user_id = (select auth.uid()));
+
+-- ai_logs, admin_audit_log, trip_cache, stripe_events, admin_private_settings:
+-- SIN políticas → solo accesibles vía service role (RLS habilitado + sin
+-- policy = denegado)
 
 -- Cierre de is_admin(uuid) (DA-24): ya ninguna política la usa (todas usan
 -- current_user_is_admin()), así que anon/authenticated dejan de poder

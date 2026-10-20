@@ -6,6 +6,7 @@ import {
   comprobarTopeGenerar,
   MAX_BODY_GENERAR,
   pideNoCache,
+  reservarCupoGenerar,
 } from '../_lib/comun'
 
 export const maxDuration = 300
@@ -22,10 +23,12 @@ export const maxDuration = 300
  *   { type: 'error', message, code }
  * Cada 15 s se envía un comentario ": ping" para que proxies no corten.
  *
- * Sesión, límites por cuenta (los de /api/generate) y tope diario se
- * comprueban ANTES de abrir el stream, para responder con su status real
- * (401/429) en JSON. Si el tope salta a mitad (corte duro de aiGenerate),
- * llega como evento { type: 'error', code: 'tope_diario' }.
+ * Sesión, límites por cuenta (los de /api/generate), tope diario y cupo
+ * mensual del plan Gratis se comprueban ANTES de abrir el stream, para
+ * responder con su status real (401/429/402 'cupo_agotado') en JSON. Si el
+ * tope salta a mitad (corte duro de aiGenerate), llega como evento
+ * { type: 'error', code: 'tope_diario' }. La unidad del cupo se devuelve si
+ * la generación falla, se cancela o sale de la caché o del modo demo.
  */
 export async function POST(request: Request): Promise<Response> {
   const sesion = await exigirSesion(request)
@@ -52,6 +55,11 @@ export async function POST(request: Request): Promise<Response> {
 
   const tope = await comprobarTopeGenerar(parsed.data, noCache)
   if (tope) return tope
+
+  // Cupo mensual del plan Gratis: lo último antes de gastar IA (y antes de
+  // abrir el stream, para que el 402 llegue con su status real).
+  const cupo = await reservarCupoGenerar(sesion.llamante, parsed.data, noCache)
+  if (!cupo.ok) return cupo.response
   const userId = sesion.llamante.user?.id ?? null
 
   const encoder = new TextEncoder()
@@ -74,13 +82,16 @@ export async function POST(request: Request): Promise<Response> {
       const ping = setInterval(() => write(': ping\n\n'), 15_000)
 
       try {
-        const { result, demo } = await generateTrips(parsed.data, {
+        const { result, demo, cacheHit } = await generateTrips(parsed.data, {
           noCache,
           signal: abort.signal,
           userId,
           onProgress: (p) => send({ type: 'progress', ...p }),
         })
         send({ type: 'result', result, demo })
+        // La caché y el modo demo no cuestan nada: no gastan cupo (se
+        // devuelve después de enviar el resultado y antes de cerrar).
+        if (cacheHit || demo) await cupo.devolver()
       } catch (err) {
         if (!abort.signal.aborted) {
           send({
@@ -93,6 +104,8 @@ export async function POST(request: Request): Promise<Response> {
             code: err instanceof GenerationError ? err.code : 'unknown',
           })
         }
+        // Falló o se canceló: la unidad del cupo se devuelve.
+        await cupo.devolver()
       } finally {
         clearInterval(ping)
         cerrado = true

@@ -1,6 +1,17 @@
 # Wayio — estado y pasos para terminar
 
-> Actualizado el 2026-10-17 (freno al gasto de IA, y geocodificación y rutas con Geoapify); antes, el 2026-10-09, tras el análisis completo, la reconstrucción de la IA, los arreglos de seguridad, el rediseño y la integración final. Los detalles de cada servicio están en [API-KEYS-GUIA.md](API-KEYS-GUIA.md).
+> Actualizado el 2026-10-20 (planes Gratis y Pro aplicados en el servidor); el 2026-10-17 (freno al gasto de IA, y geocodificación y rutas con Geoapify); antes, el 2026-10-09, tras el análisis completo, la reconstrucción de la IA, los arreglos de seguridad, el rediseño y la integración final. Los detalles de cada servicio están en [API-KEYS-GUIA.md](API-KEYS-GUIA.md).
+
+## ✅ Planes Gratis y Pro en el servidor (rama `feat/planes-rentabilidad`, 2026-10-20)
+
+- **Gratis exige cuenta y trae un cupo mensual** (`CUPO_GRATIS` en `src/constants/planes.ts`): 2 viajes, 5 ajustes con IA y 3 fotos o videos, por mes natural de RD (se renueva el día 1 a las 00:00 de RD). Lo aplica `src/lib/planes/cupo.ts` en `/api/generate`, `/api/generate/stream`, `/api/adjust` y `/api/analyze-video`, siempre después de la sesión, los límites por cuenta y el tope diario, y antes de gastar IA. Agotado: **402** `{ error, code: 'cupo_agotado', accion, usados, limite, renueva }` con un mensaje como «Usaste tus 2 viajes gratis de este mes. Se renuevan el 1 de noviembre. Con Pro trazas sin límite.» (en el stream, antes de abrirlo).
+- **No gastan cupo**: lo que sale de la caché o del modo demo, ni lo que falla, se trunca o se cancela (la unidad se devuelve). Con el cupo agotado, un viaje que ya está en la caché sale igual. «Otra versión» y «Reintentar» cuentan como un viaje nuevo.
+- **Pro** (`pro_mensual`, `pro_anual` y el **Pase Pro de 30 días**, antes «Pro por viaje») es IA sin límite con uso justo (los topes por hora y día de `aiGuard.ts`). Su uso se cuenta igual, con un límite enorme, para que el admin vea conteos reales. `pro_grupo` incluye todo lo de Pro.
+- **Solo Pro**: alertas con IA (`/api/alert-message` responde en Gratis el mensaje local, `fuente: 'local'`) y reagendar con IA (`/api/reschedule` responde en Gratis 503 `ia_no_disponible` con `motivo: 'requiere_pro'` y los huecos libres, el mismo camino manual que sin IA). Interpretar y validar no cambian.
+- **`GET /api/cupo`** (cookie o Bearer): `{ tier, cupos: { generar, ajustar, analizar: { usados, limite } } | null, renueva, aproximado? }`; `cupos` es null en Pro.
+- **Checkout**: un plan que no está en `PLANES_A_LA_VENTA` responde 400 `plan_no_disponible`. `pro_grupo` queda oculto de la venta; sus suscriptores conservan el acceso, el portal y el webhook.
+- **Falla abierta**: si no se puede leer el plan o contar el uso (sin service role, migración sin aplicar, error de red), deja pasar y avisa en consola y Sentry (`area: planes-cupo`) como mucho una vez por hora por instancia.
+- Migración `20261017130000_cupos_y_rentabilidad.sql`: tabla `usage_counters` (el usuario solo lee sus filas), RPC `consumir_cupo` y `devolver_cupo` (solo service role, atómicas), tabla privada `admin_private_settings` (para la calculadora del admin) e índice `idx_ai_logs_user_created`. Replicada en `supabase/schema.sql` y comprobada por `npm run verificar` («Migración 5»).
 
 ## ✅ Freno al gasto de IA (rama `feat/tope-gasto-ia`, 2026-10-17)
 
@@ -79,13 +90,14 @@
 1. **IA**: pon `ANTHROPIC_API_KEY` en `.env.local`, arranca `npm run dev` y ejecuta `npm run eval:ia -- --base http://localhost:3000 --interpret`. Todos los casos deberían salir sin errores (ver el informe en `scripts/eval-ia/resultados/`). Generar exige sesión: con Supabase configurado, pon `EVAL_IA_BEARER` con el access_token de una cuenta de pruebas.
 2. **Supabase**:
    - restaura el proyecto si está pausado;
-   - en el SQL Editor, pega y ejecuta `supabase/migrations/20261008120000_seguridad_y_flujos.sql` y después `supabase/migrations/20261017120000_ai_gasto_diario.sql` (RPC del tope diario de IA; sin ella el tope queda abierto);
+   - en el SQL Editor, pega y ejecuta `supabase/migrations/20261008120000_seguridad_y_flujos.sql`, después `supabase/migrations/20261017120000_ai_gasto_diario.sql` (RPC del tope diario de IA; sin ella el tope queda abierto) y por último `supabase/migrations/20261017130000_cupos_y_rentabilidad.sql` (cupos del plan Gratis y ajustes privados del admin; sin ella los cupos quedan abiertos y la calculadora del admin no puede guardar);
    - revisa los admins y comprueba realtime;
    - configura Auth (URLs, plantillas de correo, SMTP y Google), guía en `supabase/CONFIGURACION-AUTH.md`.
 3. **Upstash Redis** (gratis): `UPSTASH_REDIS_REST_URL` y `UPSTASH_REDIS_REST_TOKEN`, para que los límites de uso protejan tu factura de IA en producción (sin Upstash cada instancia cuenta por su lado).
 4. **Vercel**:
    - variables de `.env.example`, con `NEXT_PUBLIC_BASE_URL` igual a tu dominio y `NEXT_PUBLIC_CONTACT_EMAIL` con tu email público (sin él, `/contacto` dice que el canal llega pronto);
-   - **`AI_DAILY_BUDGET_USD`** (p. ej. `25`) y las dos variables de **Upstash**; comprueba con `npm run verificar` que salen OK el tope, la migración 4 y Upstash;
+   - **`AI_DAILY_BUDGET_USD`** (p. ej. `25`) y las dos variables de **Upstash**; comprueba con `npm run verificar` que salen OK el tope, las migraciones 4 y 5 y Upstash;
+   - **`WAYIO_OWNER_EMAILS`** con tu correo (el de tu cuenta admin; varios separados por comas). Solo servidor, nunca `NEXT_PUBLIC_`. Es quien ve la calculadora de rentabilidad del admin; sin ella, cualquier admin la ve;
    - como red final, un **límite de gasto mensual** en la consola de Anthropic (Settings → Limits);
    - **Fluid Compute activado**, porque las rutas de IA usan hasta 300 s;
    - **`GEOAPIFY_API_KEY`** (gratis en myprojects.geoapify.com, sin tarjeta; guía en la sección 4 de [API-KEYS-GUIA.md](API-KEYS-GUIA.md)) y vuelve a desplegar para que salgan los créditos de Geoapify en el mapa. Con Upstash configurado el presupuesto diario (`GEOAPIFY_CREDITOS_DIA`) es global; sin él, por instancia. Después, `npm run verificar` en local con la misma clave;
@@ -105,12 +117,13 @@
    - B no ve el grupo de A hasta abrir el enlace, y después el chat llega en vivo;
    - un visitante sin sesión ve `/viaje-compartido/<id>` solo si A lo hizo público;
    - el pago de prueba con la tarjeta 4242 cambia el plan;
+   - con una cuenta Gratis, el tercer viaje del mes da el aviso de cupo agotado (402) y `GET /api/cupo` lo refleja; con Pro, no;
    - la recuperación de contraseña funciona de punta a punta;
    - en el móvil: crear cuenta, generar, guardar y modo en vivo.
 
 ## 🟡 Decisiones de producto pendientes
 
-- **Qué es «Pro»**: el helper `getEffectiveTier()` (`src/lib/stripe/entitlements.ts`) y la RPC `my_effective_tier` ya existen, pero las rutas de IA todavía no exigen plan (todo es gratis con cuenta y límites de uso). Decide qué funciones son de pago y aplícalo en el servidor.
+- **Valores del cupo Gratis**: decididos (2 viajes, 5 ajustes, 3 fotos o videos al mes) y aplicados en el servidor desde la rama `feat/planes-rentabilidad`. Revísalos con los conteos reales de `usage_counters` (se cuentan todos los planes) y cámbialos en `CUPO_GRATIS` (`src/constants/planes.ts`).
 - **Modelo del itinerario**: sigue `claude-opus-5-5` ($4/$20 por millón). `AI_ITINERARY_MODEL=claude-sonnet-5-5` lo abarata a la mitad; es decisión tuya, el tope diario no lo cambia.
 - **Valores de los límites y del tope**: los de ahora son para la beta (`src/lib/security/aiGuard.ts` y `AI_DAILY_BUDGET_USD`). Revísalos con el gasto real de `/admin/ai`.
 - **Reservas con depósito**: desactivadas (`NEXT_PUBLIC_RESERVAS_ENABLED=false`) hasta que haya un proveedor real de reservas y una revisión legal.

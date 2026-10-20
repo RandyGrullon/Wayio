@@ -24,6 +24,7 @@ import {
   parsearJsonIA,
   textoSeguro,
 } from '@/lib/ai/routeKit'
+import { exigirCupo } from '@/lib/planes/cupo'
 import { LIMITES_AJUSTAR } from '@/lib/security/aiGuard'
 import { MAX_DIAS_VIAJE, MONEDAS } from '@/lib/validations/tripForm'
 import type { Activity } from '@/types/activity'
@@ -42,7 +43,10 @@ import type { Day, Trip } from '@/types/trip'
  *
  * Exige sesión, tiene límites por cuenta (hora y día) y respeta el tope
  * global de gasto diario: agotado, responde 503 ia_no_disponible con
- * motivo 'tope_diario' para que el cliente ofrezca editar a mano.
+ * motivo 'tope_diario' para que el cliente ofrezca editar a mano. En el plan
+ * Gratis consume el cupo mensual de ajustes (402 code 'cupo_agotado', ver
+ * src/lib/planes/cupo.ts); un ajuste que falla, se trunca o se cancela no
+ * lo gasta.
  */
 
 export const maxDuration = 300
@@ -466,6 +470,10 @@ export async function POST(request: Request): Promise<Response> {
 
   if (await presupuestoAgotado()) return respuestaTopeAjuste()
 
+  // Cupo mensual del plan Gratis: lo último antes de gastar IA.
+  const cupo = await exigirCupo(llamante, 'ajustar')
+  if (!cupo.ok) return cupo.response
+
   const trip = parsed.data.trip as unknown as Trip
   const instruccion = parsed.data.instruccion
   const system = systemPrompt(trip)
@@ -499,6 +507,7 @@ export async function POST(request: Request): Promise<Response> {
     }
 
     if (!r || r.stopReason === 'max_tokens') {
+      await cupo.devolver()
       return jsonError(
         502,
         'Tu itinerario es demasiado largo para ajustarlo de una sola vez. Prueba con un cambio más concreto, por ejemplo de un solo día.',
@@ -517,6 +526,8 @@ export async function POST(request: Request): Promise<Response> {
 
     return Response.json(fusionar(trip, salida))
   } catch (err) {
+    // Falló o se canceló: la unidad del cupo se devuelve.
+    await cupo.devolver()
     if (request.signal.aborted) {
       return jsonError(499, 'Se canceló el ajuste.', { code: 'cancelled' })
     }

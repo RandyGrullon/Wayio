@@ -187,6 +187,8 @@ const RPC_MIG_3 = [
   'register_device',
 ]
 const RPC_MIG_4 = ['ai_gasto_desde']
+const TABLAS_MIG_5 = ['usage_counters', 'admin_private_settings']
+const RPC_MIG_5 = ['consumir_cupo', 'devolver_cupo']
 
 async function supabase() {
   const url = env('NEXT_PUBLIC_SUPABASE_URL').replace(/\/+$/, '')
@@ -285,6 +287,18 @@ async function supabase() {
     falta4.length
       ? `faltan: ${falta4.map((f) => `rpc ${f}`).join(', ')} → ejecuta 20261017120000_ai_gasto_diario.sql (sin ella el tope AI_DAILY_BUDGET_USD queda abierto)`
       : 'RPC del tope diario de IA'
+  )
+  const falta5 = [
+    ...TABLAS_MIG_5.filter((t) => !hay(t)),
+    ...RPC_MIG_5.filter((f) => !hayRpc(f)).map((f) => `rpc ${f}`),
+  ]
+  anotar(
+    'Base de datos',
+    'Migración 5 · cupos y rentabilidad',
+    falta5.length ? 'FALTA' : 'OK',
+    falta5.length
+      ? `faltan: ${falta5.join(', ')} → ejecuta 20261017130000_cupos_y_rentabilidad.sql (sin ella el cupo del plan Gratis queda abierto)`
+      : 'cupos del plan Gratis y ajustes privados del admin'
   )
 
   if (hay('profiles')) {

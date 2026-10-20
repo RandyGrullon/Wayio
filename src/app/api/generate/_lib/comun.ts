@@ -1,7 +1,9 @@
 import 'server-only'
 import { aiConfigured } from '@/lib/ai/config'
 import { estadoPresupuesto, respuestaTopeDiario } from '@/lib/ai/presupuesto'
+import type { Llamante } from '@/lib/ai/routeKit'
 import { getCachedTrip } from '@/lib/cache/tripCache'
+import { exigirCupo, sinConsumo, type ResultadoCupo } from '@/lib/planes/cupo'
 import type { TripForm } from '@/lib/validations/tripForm'
 
 /**
@@ -38,4 +40,27 @@ export async function comprobarTopeGenerar(
   if (!estado.agotado) return null
   if (!noCache && (await getCachedTrip(form))) return null
   return respuestaTopeDiario(estado)
+}
+
+/**
+ * Consume una unidad del cupo mensual de «generar» (plan Gratis; en Pro solo
+ * cuenta). Va DESPUÉS de la sesión, los límites por cuenta y el tope diario,
+ * y antes de llamar a la IA. Devuelve el 402 'cupo_agotado' o la reserva,
+ * cuya `devolver()` debe llamar la ruta si la generación falla, se cancela o
+ * el resultado sale de la caché o del modo demo.
+ *
+ * - Sin IA configurada (modo demo) no hay gasto: no se cuenta.
+ * - Con el cupo agotado, un viaje que ya está en la caché sale igual (no
+ *   cuesta nada): solo se corta lo que obligaría a llamar a la IA, igual que
+ *   con el tope diario.
+ */
+export async function reservarCupoGenerar(
+  llamante: Llamante,
+  form: TripForm,
+  noCache: boolean
+): Promise<ResultadoCupo> {
+  if (!aiConfigured()) return sinConsumo()
+  const cupo = await exigirCupo(llamante, 'generar')
+  if (cupo.ok || noCache) return cupo
+  return (await getCachedTrip(form)) ? sinConsumo() : cupo
 }

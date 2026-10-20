@@ -13,6 +13,7 @@ import {
   registrarError,
 } from '@/app/api/trips/_lib/http'
 import { limpiarTexto } from '@/app/api/trips/_lib/texto'
+import { PLANES_A_LA_VENTA } from '@/constants/planes'
 import {
   getStripe,
   isStripeConfigured,
@@ -34,10 +35,14 @@ import type { Trip } from '@/types/trip'
  * POST /api/stripe/checkout — abre un Stripe Checkout.
  * Acepta sesión por cookies (web) o `Authorization: Bearer` (mobile).
  *
- * Planes: { planId: 'pro_mensual'|'pro_anual'|'pro_por_viaje'|'pro_grupo',
+ * Planes: { planId: 'pro_mensual'|'pro_anual'|'pro_por_viaje',
  *           tripId?: uuid (solo pro_por_viaje: liga el pase a ese viaje) }
  *   → 200 { url }                       Checkout (success /cuenta?pago=ok,
  *                                       cancel /precios?cancelado=1)
+ *   → 400 { code: 'plan_no_disponible' } plan que existe pero no está en
+ *                                       PLANES_A_LA_VENTA (hoy pro_grupo; sus
+ *                                       suscriptores siguen con el portal y
+ *                                       el webhook)
  *   → 200 { url, portal: true, mensaje } ya tiene suscripción: portal
  *   → 409 { error, code: 'already_pro' } plan concedido vigente
  *
@@ -147,6 +152,13 @@ async function checkoutPlan(ctx: Ctx, body: unknown): Promise<Response> {
   const planId = parsed.success ? parsed.data.planId : null
   if (!parsed.success || !esPlanKey(planId)) {
     return errorJson(400, 'Elige un plan válido.', 'invalid_plan')
+  }
+  if (!PLANES_A_LA_VENTA.includes(planId)) {
+    return errorJson(
+      400,
+      'Ese plan no está disponible por ahora.',
+      'plan_no_disponible'
+    )
   }
 
   const priceId = precioDePlan(planId)

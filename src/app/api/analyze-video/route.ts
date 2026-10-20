@@ -19,6 +19,7 @@ import {
   leerJson,
   limitarIa,
 } from '@/lib/ai/routeKit'
+import { exigirCupo } from '@/lib/planes/cupo'
 import {
   LIMITES_ANALIZAR_IMAGEN,
   LIMITES_ANALIZAR_VIDEO,
@@ -34,9 +35,12 @@ import {
  *
  * Exige sesión (antes de leer el body de hasta 5 MB), tiene límites por
  * cuenta por hora y por día y respeta el tope global de gasto diario (429
- * code 'tope_diario'; el resultado de ejemplo sin IA nunca se bloquea). El
- * modo video depende del flag VIDEO_ANALYSIS_ENABLED (desactivado por
- * defecto en producción).
+ * code 'tope_diario'; el resultado de ejemplo sin IA nunca se bloquea). En
+ * el plan Gratis, fotos y videos comparten el cupo mensual 'analizar' (402
+ * code 'cupo_agotado', ver src/lib/planes/cupo.ts); un análisis que falla no
+ * lo gasta. El modo video depende del flag VIDEO_ANALYSIS_ENABLED
+ * (desactivado por defecto en producción): desactivado, su 503 llega antes
+ * de tocar el cupo.
  */
 
 export const maxDuration = 300
@@ -129,6 +133,9 @@ export async function POST(request: Request): Promise<Response> {
     const tope = await bloqueoPorTopeDiario()
     if (tope) return tope
 
+    const cupo = await exigirCupo(sesion.llamante, 'analizar')
+    if (!cupo.ok) return cupo.response
+
     try {
       const resultado = await analyzeVideoFromUrl(url, {
         userId: sesion.llamante.user?.id ?? null,
@@ -137,6 +144,7 @@ export async function POST(request: Request): Promise<Response> {
       })
       return Response.json(resultado)
     } catch (err) {
+      await cupo.devolver()
       return respuestaDeError(err)
     }
   }
@@ -167,6 +175,9 @@ export async function POST(request: Request): Promise<Response> {
   const tope = await bloqueoPorTopeDiario()
   if (tope) return tope
 
+  const cupo = await exigirCupo(sesion.llamante, 'analizar')
+  if (!cupo.ok) return cupo.response
+
   try {
     const resultado = await analyzeImage(imagen, {
       userId: sesion.llamante.user?.id ?? null,
@@ -175,6 +186,7 @@ export async function POST(request: Request): Promise<Response> {
     })
     return Response.json(resultado)
   } catch (err) {
+    await cupo.devolver()
     return respuestaDeError(err)
   }
 }

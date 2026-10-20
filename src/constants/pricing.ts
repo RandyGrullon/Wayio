@@ -19,7 +19,7 @@ export const PLANS = {
   },
   pro_por_viaje: {
     id: 'pro_por_viaje',
-    nombre: 'Pro por Viaje',
+    nombre: 'Pase Pro de 30 días',
     precio: 4.99,
     periodo: 'único',
     stripePriceEnv: 'STRIPE_PRICE_PER_TRIP',

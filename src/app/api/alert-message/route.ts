@@ -11,6 +11,7 @@ import {
   parsearJsonIA,
   textoSeguro,
 } from '@/lib/ai/routeKit'
+import { exigirPro } from '@/lib/planes/cupo'
 import type { AlertMessage } from '@/types/alerts'
 
 /**
@@ -19,7 +20,9 @@ import type { AlertMessage } from '@/types/alerts'
  *
  * Ya NO acepta un prompt libre: recibe datos estructurados y el prompt se
  * construye aquí. Exige sesión (cookie o `Authorization: Bearer`). Si la IA no
- * está disponible o falla, responde un mensaje determinista útil (200).
+ * está disponible o falla, responde un mensaje determinista útil (200). El
+ * análisis con IA es solo Pro: en el plan Gratis siempre llega el mensaje
+ * local (`fuente: 'local'`), sin llamar a la IA.
  *
  * Body: {
  *   actividad: { id?, nombre, horaInicio?, horaFin?, tipo? },
@@ -289,6 +292,11 @@ export async function POST(request: Request): Promise<Response> {
 
   // Sin IA o con el tope global de gasto diario agotado: aviso determinista.
   if (!aiConfigured() || (await presupuestoAgotado())) {
+    return Response.json(mensajeLocal(datos, ids))
+  }
+
+  // Alertas con IA: solo Pro. Si no se pudo leer el plan (null) se permite.
+  if ((await exigirPro(sesion.llamante, 'alertas_ia')) === false) {
     return Response.json(mensajeLocal(datos, ids))
   }
 
