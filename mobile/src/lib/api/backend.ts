@@ -10,9 +10,11 @@ import type {
   PlanningActivity,
   PlanningDay,
   PlanningTrip,
+  PlanTier,
   Conflict,
 } from '../../types/planning'
-import { BackendError, postJSON } from './http'
+import { ACCIONES_CON_CUPO, type AccionConCupo } from '../../constants/pricing'
+import { BackendError, getJSON, postJSON } from './http'
 
 export { BackendError } from './http'
 export type { BackendErrorCode } from './http'
@@ -95,9 +97,39 @@ export function analyzeImage(
 }
 
 export interface RescheduleSlot {
+  /** Día 1-based del viaje guardado. */
   dia: number
+  /** 'HH:MM' */
   desde: string
+  /** 'HH:MM' */
   hasta: string
+}
+
+const HORA_RE = /^\d{1,2}:\d{2}$/
+
+/**
+ * Huecos libres que el servidor manda en el cuerpo de un error de reschedule
+ * (503 'ia_no_disponible', p. ej. motivo 'requiere_pro' o 'tope_diario'),
+ * validados. [] si no hay o no tienen la forma esperada.
+ */
+export function huecosDelError(
+  data: Record<string, unknown> | null | undefined
+): RescheduleSlot[] {
+  const lista = data?.['huecos']
+  if (!Array.isArray(lista)) return []
+  return lista.filter((h): h is RescheduleSlot => {
+    if (!h || typeof h !== 'object') return false
+    const o = h as Record<string, unknown>
+    return (
+      typeof o['dia'] === 'number' &&
+      Number.isInteger(o['dia']) &&
+      o['dia'] >= 1 &&
+      typeof o['desde'] === 'string' &&
+      HORA_RE.test(o['desde']) &&
+      typeof o['hasta'] === 'string' &&
+      HORA_RE.test(o['hasta'])
+    )
+  })
 }
 
 export interface RescheduleResult {
@@ -231,5 +263,91 @@ export async function validateSchedule(
     return (await validateScheduleDetailed(dias, opciones)).conflicts
   } catch {
     return []
+  }
+}
+
+// ── GET /api/cupo ──────────────────────────────────────────────────────────
+
+export interface UsoCupo {
+  usados: number
+  limite: number
+}
+
+export interface CupoDelMes {
+  /** Plan según el servidor (null si no lo pudo saber). */
+  tier: PlanTier | null
+  /** Uso del mes por acción; null = plan sin cupo (Pro). */
+  cupos: Record<AccionConCupo, UsoCupo> | null
+  /** 'YYYY-MM-DD' en que se renueva el cupo ('' si no vino). */
+  renueva: string
+  /** El conteo puede no estar al día (el servidor lo marca así). */
+  aproximado: boolean
+}
+
+function esTierServidor(v: unknown): v is PlanTier {
+  return v === 'free' || v === 'pro' || v === 'grupo'
+}
+
+function leerUso(v: unknown): UsoCupo | null {
+  if (!v || typeof v !== 'object') return null
+  const o = v as Record<string, unknown>
+  const usados = o['usados']
+  const limite = o['limite']
+  if (
+    typeof usados !== 'number' ||
+    typeof limite !== 'number' ||
+    !Number.isFinite(usados) ||
+    !Number.isFinite(limite)
+  ) {
+    return null
+  }
+  return {
+    usados: Math.max(0, Math.round(usados)),
+    limite: Math.max(0, Math.round(limite)),
+  }
+}
+
+/**
+ * Uso del mes de las acciones de IA con cupo (plan Gratis). Exige sesión
+ * (401 sin ella). Lanza BackendError; un cuerpo con forma inesperada cuenta
+ * como error del servidor.
+ */
+export async function getCupo(): Promise<CupoDelMes> {
+  const data = await getJSON<Record<string, unknown>>('/api/cupo', {
+    requiereSesion: true,
+  })
+  const tier = esTierServidor(data['tier']) ? data['tier'] : null
+  let cupos: Record<AccionConCupo, UsoCupo> | null = null
+  const crudo = data['cupos']
+  if (crudo !== null && crudo !== undefined) {
+    if (typeof crudo !== 'object') {
+      throw new BackendError(
+        'server',
+        'No pudimos leer tu uso del mes. Inténtalo de nuevo.'
+      )
+    }
+    const o = crudo as Record<string, unknown>
+    const leidos: Partial<Record<AccionConCupo, UsoCupo>> = {}
+    for (const accion of ACCIONES_CON_CUPO) {
+      const uso = leerUso(o[accion])
+      if (!uso) {
+        throw new BackendError(
+          'server',
+          'No pudimos leer tu uso del mes. Inténtalo de nuevo.'
+        )
+      }
+      leidos[accion] = uso
+    }
+    cupos = leidos as Record<AccionConCupo, UsoCupo>
+  }
+  const renueva = data['renueva']
+  return {
+    tier,
+    cupos,
+    renueva:
+      typeof renueva === 'string' && /^\d{4}-\d{2}-\d{2}/.test(renueva)
+        ? renueva.slice(0, 10)
+        : '',
+    aproximado: data['aproximado'] === true,
   }
 }

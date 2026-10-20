@@ -1,7 +1,11 @@
 import { useState } from 'react'
 import { StyleSheet, View } from 'react-native'
 import { adjustTripDetailed, BackendError } from '../../lib/api/backend'
-import { mensajeDeLimite } from '../../lib/api/limites'
+import {
+  cupoAgotadoDe,
+  datosDeLimite,
+  mensajeDeLimite,
+} from '../../lib/api/limites'
 import { useEstilos, type Tema } from '../../theme'
 import { Callout } from '../ui/Callout'
 import { Chip } from '../ui/Chip'
@@ -20,6 +24,8 @@ interface Props {
   onUndo?: () => void
   /** Sugerir la edición manual cuando la IA no está disponible. */
   onEditarAMano?: () => void
+  /** Abrir los planes cuando se agotó el cupo de ajustes del mes (402). */
+  onVerPlanes?: () => void
 }
 
 const SUGERENCIAS = [
@@ -40,20 +46,25 @@ interface Mensaje {
  * «Ajustar con IA» (§6.5): sugerencias, historial (burbujas propias en tinta,
  * respuestas con el resumen del cambio) y «Deshacer último ajuste». Ante 429
  * dice cuánto esperar (minutos u horas); ante 503 (también el tope diario de
- * IA, 'ia_no_disponible') ofrece la edición manual.
+ * IA, 'ia_no_disponible') ofrece la edición manual; ante 402 (cupo de ajustes
+ * del mes agotado) muestra el texto del servidor con «Ver planes».
  */
 export function AdjustChat({
   trip,
   onAdjusted,
   onUndo,
   onEditarAMano,
+  onVerPlanes,
 }: Props): React.ReactElement {
   const styles = useEstilos(crearEstilos)
   const [texto, setTexto] = useState('')
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<{ msg: string; manual: boolean } | null>(
-    null
-  )
+  const [error, setError] = useState<{
+    msg: string
+    manual: boolean
+    /** Cupo del mes agotado: «Ver planes» en vez de reintentar. */
+    planes: boolean
+  } | null>(null)
   const [historial, setHistorial] = useState<Mensaje[]>([])
 
   const enviar = async (instruccion: string): Promise<void> => {
@@ -75,7 +86,10 @@ export function AdjustChat({
       ])
       setTexto('')
     } catch (err) {
-      if (err instanceof BackendError) {
+      const cupo = cupoAgotadoDe(datosDeLimite(err))
+      if (cupo) {
+        setError({ msg: cupo.mensaje, manual: false, planes: true })
+      } else if (err instanceof BackendError) {
         const manual =
           err.code === 'unavailable' ||
           err.data?.['code'] === 'ia_no_disponible'
@@ -90,11 +104,12 @@ export function AdjustChat({
             },
             'Hiciste muchos ajustes seguidos.'
           ) ?? err.message
-        setError({ msg, manual })
+        setError({ msg, manual, planes: false })
       } else {
         setError({
           msg: 'No pudimos ajustar el itinerario. Inténtalo de nuevo.',
           manual: false,
+          planes: false,
         })
       }
     } finally {
@@ -152,11 +167,13 @@ export function AdjustChat({
 
       {error ? (
         <Callout
-          tone="danger"
+          tone={error.planes ? 'info' : 'danger'}
           style={styles.nota}
-          {...(error.manual && onEditarAMano
-            ? { action: { label: 'Editar a mano', onPress: onEditarAMano } }
-            : {})}
+          {...(error.planes && onVerPlanes
+            ? { action: { label: 'Ver planes', onPress: onVerPlanes } }
+            : error.manual && onEditarAMano
+              ? { action: { label: 'Editar a mano', onPress: onEditarAMano } }
+              : {})}
         >
           {error.msg}
         </Callout>

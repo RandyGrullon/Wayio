@@ -11,7 +11,13 @@ import {
   Txt,
 } from '../components/ui'
 import { RutaDeFases, type EstadoSello } from '../components/trip/RutaDeFases'
-import { Compass, PenLine, RefreshCw, X } from '../components/ui/iconos'
+import {
+  Compass,
+  CreditCard,
+  PenLine,
+  RefreshCw,
+  X,
+} from '../components/ui/iconos'
 import { formatCronometro } from '../components/ui/formato'
 import { useEstilos, type Tema } from '../theme'
 import type { Fase } from '../lib/api/stream'
@@ -65,6 +71,11 @@ interface Props {
   /** Instante (ms) en que empezó la generación. */
   inicio: number
   error: string | null
+  /**
+   * El error es el cupo del mes agotado (402): en vez de «Reintentar» (que
+   * volvería a fallar) se ofrece «Ver planes», con el texto del servidor.
+   */
+  onVerPlanes?: (() => void) | undefined
   onCancel: () => void
   onRetry: () => void
   onEdit: () => void
@@ -81,6 +92,7 @@ export function LoadingScreen({
   label,
   inicio,
   error,
+  onVerPlanes,
   onCancel,
   onRetry,
   onEdit,
@@ -150,23 +162,37 @@ export function LoadingScreen({
         <View accessibilityLiveRegion="polite" style={styles.fase}>
           <Txt variant="h2">
             {error
-              ? 'No pudimos trazar tu viaje'
+              ? onVerPlanes
+                ? 'Llegaste al límite de este mes'
+                : 'No pudimos trazar tu viaje'
               : label || 'Trazando tu viaje…'}
           </Txt>
         </View>
 
         {error ? (
           <>
-            <Callout tone="danger" style={styles.bloque}>
+            <Callout
+              tone={onVerPlanes ? 'info' : 'danger'}
+              style={styles.bloque}
+            >
               {error}
             </Callout>
             <View style={styles.acciones}>
-              <Button
-                title="Reintentar"
-                icon={RefreshCw}
-                size="lg"
-                onPress={onRetry}
-              />
+              {onVerPlanes ? (
+                <Button
+                  title="Ver planes"
+                  icon={CreditCard}
+                  size="lg"
+                  onPress={onVerPlanes}
+                />
+              ) : (
+                <Button
+                  title="Reintentar"
+                  icon={RefreshCw}
+                  size="lg"
+                  onPress={onRetry}
+                />
+              )}
               <Button
                 title="Editar datos"
                 variant="outline"

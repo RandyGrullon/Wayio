@@ -69,11 +69,13 @@ import {
 } from '../lib/trips/repository'
 import {
   BackendError,
+  huecosDelError,
   rescheduleActivityDetailed,
   validateScheduleDetailed,
   type RescheduleResult,
   type RescheduleSlot,
 } from '../lib/api/backend'
+import { esRequierePro, TEXTO_REAGENDAR_PRO } from '../lib/api/limites'
 import { config } from '../config'
 import { colorDia, useEstilos, useTheme, type Tema } from '../theme'
 import type {
@@ -103,6 +105,8 @@ type EstadoReagendar =
       actividad: PlanningActivity
       mensaje: string
       huecos: RescheduleSlot[]
+      /** 503 motivo 'requiere_pro': en Gratis se elige el hueco a mano. */
+      requierePro: boolean
     }
 
 function diaDe(trip: PlanningTrip, actId: string): number | null {
@@ -368,10 +372,7 @@ export function TripDetailScreen({
       setReagendar({ paso: 'sugerencia', actividad: act, resultado: r })
     } catch (e) {
       if (peticion !== reagendarVigente.current) return
-      const huecos =
-        e instanceof BackendError && Array.isArray(e.data?.['huecos'])
-          ? (e.data['huecos'] as RescheduleSlot[])
-          : []
+      const huecos = e instanceof BackendError ? huecosDelError(e.data) : []
       setReagendar({
         paso: 'error',
         actividad: act,
@@ -380,6 +381,7 @@ export function TripDetailScreen({
             ? e.message
             : 'No pudimos buscar una nueva hora ahora mismo.',
         huecos,
+        requierePro: e instanceof BackendError && esRequierePro(e.data),
       })
     }
   }
@@ -958,6 +960,10 @@ export function TripDetailScreen({
             setSheet(null)
             startEditing()
           }}
+          onVerPlanes={() => {
+            setSheet(null)
+            navigate({ name: 'paywall' })
+          }}
         />
       </Sheet>
 
@@ -1045,7 +1051,9 @@ export function TripDetailScreen({
             : reagendar?.paso === 'buscando'
               ? 'Buscando nueva hora…'
               : reagendar?.paso === 'error'
-                ? 'No encontramos hueco'
+                ? reagendar.requierePro && reagendar.huecos.length > 0
+                  ? 'Elige el nuevo horario'
+                  : 'No encontramos hueco'
                 : '¿Te la perdiste?'
         }
         {...(reagendar ? { description: reagendar.actividad.nombre } : {})}
@@ -1116,7 +1124,14 @@ export function TripDetailScreen({
         ) : null}
         {reagendar?.paso === 'error' ? (
           <View style={styles.pasos}>
-            <Callout tone="warning">{reagendar.mensaje}</Callout>
+            <Callout tone={reagendar.requierePro ? 'info' : 'warning'}>
+              {reagendar.mensaje}
+            </Callout>
+            {reagendar.requierePro ? (
+              <Txt variant="caption" color="fgMuted">
+                {TEXTO_REAGENDAR_PRO}
+              </Txt>
+            ) : null}
             {reagendar.huecos.length > 0 ? (
               <>
                 <Txt variant="label">Huecos libres: elige uno</Txt>

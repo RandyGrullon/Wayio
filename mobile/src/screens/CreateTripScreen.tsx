@@ -13,7 +13,11 @@ import {
 } from './crear/formulario'
 import { generarViaje } from './crear/generar'
 import { ErrorGeneracion, MENSAJE_GENERICO, type Fase } from '../lib/api/stream'
-import { mensajeDeLimite } from '../lib/api/limites'
+import {
+  cupoAgotadoDe,
+  datosDeLimite,
+  mensajeDeLimite,
+} from '../lib/api/limites'
 
 /**
  * Texto del error de trazado. Tope diario de IA → el del servidor; límite de
@@ -44,6 +48,8 @@ interface Trazado {
   label: string
   inicio: number
   error: string | null
+  /** El error es el cupo del mes agotado: «Ver planes», sin reintento. */
+  cupoAgotado: boolean
 }
 
 /**
@@ -88,6 +94,7 @@ export function CreateTripScreen({
         label: 'Preparando tu viaje…',
         inicio: Date.now(),
         error: null,
+        cupoAgotado: false,
       })
       try {
         const result = await generarViaje(payload, {
@@ -112,7 +119,18 @@ export function CreateTripScreen({
           setTrazado(null)
           return
         }
-        setTrazado((t) => (t ? { ...t, error: mensajeDeFallo(e) } : t))
+        // Cupo del mes agotado (402): el texto del servidor y «Ver planes».
+        // generarViaje ya no lo repite ni cae a POST /api/generate.
+        const cupo = cupoAgotadoDe(datosDeLimite(e))
+        setTrazado((t) =>
+          t
+            ? {
+                ...t,
+                error: cupo ? cupo.mensaje : mensajeDeFallo(e),
+                cupoAgotado: cupo !== null,
+              }
+            : t
+        )
       }
     },
     [navigate]
@@ -135,6 +153,9 @@ export function CreateTripScreen({
         label={trazado.label}
         inicio={trazado.inicio}
         error={trazado.error}
+        onVerPlanes={
+          trazado.cupoAgotado ? () => navigate({ name: 'paywall' }) : undefined
+        }
         onCancel={cancelar}
         onRetry={() => void trazar(trazado.form)}
         onEdit={() => {

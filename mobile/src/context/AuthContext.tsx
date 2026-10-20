@@ -163,6 +163,66 @@ function esCallbackDeAuth(url: string): boolean {
   return /^wayio:\/\/\/?auth\/callback(?:[/?#]|$)/i.test(url)
 }
 
+function esTier(v: unknown): v is PlanTier {
+  return v === 'free' || v === 'pro' || v === 'grupo'
+}
+
+interface FilaSuscripcion {
+  tier: unknown
+  status: unknown
+  stripe_subscription_id: unknown
+  current_period_end: unknown
+}
+
+/**
+ * Misma regla que la RPC my_effective_tier (y `tierEfectivo` de la web):
+ * - suscripción recurrente (con stripe_subscription_id): manda Stripe;
+ *   active, trialing y past_due (gracia mientras reintenta el cobro) dan
+ *   acceso;
+ * - pago único («Pase Pro de 30 días») o concedido a mano: además caduca al
+ *   llegar current_period_end.
+ */
+function tierDeFila(fila: FilaSuscripcion | null): PlanTier {
+  if (!fila || !esTier(fila.tier)) return 'free'
+  const conAcceso =
+    fila.status === 'active' ||
+    fila.status === 'trialing' ||
+    fila.status === 'past_due'
+  if (!conAcceso) return 'free'
+  if (fila.stripe_subscription_id) return fila.tier
+  if (typeof fila.current_period_end !== 'string') return fila.tier
+  const fin = Date.parse(fila.current_period_end)
+  return Number.isFinite(fin) && fin > Date.now() ? fila.tier : 'free'
+}
+
+/**
+ * Plan efectivo del usuario con la sesión actual: la RPC my_effective_tier
+ * de la BD (como usePro de la web). Si la RPC falla, se aplica la misma regla
+ * sobre su fila de subscriptions (la RLS deja leerla al propio usuario).
+ * null = no se pudo saber (sin red, Supabase caído…). Solo sirve para la UI:
+ * el servidor decide siempre con su propio cálculo.
+ */
+async function leerTier(uid: string): Promise<PlanTier | null> {
+  const supabase = getSupabase()
+  try {
+    const { data, error } = await supabase.rpc('my_effective_tier')
+    if (!error && esTier(data)) return data
+  } catch {
+    // Se intenta con la fila.
+  }
+  try {
+    const { data, error } = await supabase
+      .from('subscriptions')
+      .select('tier, status, stripe_subscription_id, current_period_end')
+      .eq('user_id', uid)
+      .maybeSingle()
+    if (error) return null
+    return tierDeFila((data as FilaSuscripcion | null) ?? null)
+  } catch {
+    return null
+  }
+}
+
 export function AuthProvider({
   children,
 }: {
@@ -176,26 +236,31 @@ export function AuthProvider({
   const [loading, setLoading] = useState(configured)
   const [authLinkError, setAuthLinkError] = useState<string | null>(null)
   const enlacesProcesados = useRef(new Set<string>())
+  /** Último plan leído y de qué usuario (respaldo si la lectura falla). */
+  const tierConocido = useRef<{ uid: string; tier: PlanTier } | null>(null)
+  /** Lectura vigente: una respuesta vieja no pisa a una más nueva. */
+  const lecturaTier = useRef(0)
 
   const loadTier = useCallback(
     async (uid: string | null) => {
+      const lectura = ++lecturaTier.current
       if (!uid || !configured) {
+        tierConocido.current = null
         setTier('free')
         return
       }
-      try {
-        // Las suscripciones en periodo de prueba cuentan como activas.
-        const { data } = await getSupabase()
-          .from('subscriptions')
-          .select('tier, status')
-          .eq('user_id', uid)
-          .in('status', ['active', 'trialing'])
-          .maybeSingle()
-        const t: unknown = data?.tier
-        setTier(t === 'grupo' ? 'grupo' : t === 'pro' ? 'pro' : 'free')
-      } catch {
-        setTier('free')
+      const leido = await leerTier(uid)
+      if (lectura !== lecturaTier.current) return
+      if (leido !== null) {
+        tierConocido.current = { uid, tier: leido }
+        setTier(leido)
+        return
       }
+      // No se pudo leer (sin red…): se conserva el último plan conocido de
+      // ESTE usuario para no quitarle Pro a quien paga por un fallo pasajero;
+      // si no hay ninguno, Gratis. El servidor decide igual en cada llamada.
+      const previo = tierConocido.current
+      setTier(previo && previo.uid === uid ? previo.tier : 'free')
     },
     [configured]
   )

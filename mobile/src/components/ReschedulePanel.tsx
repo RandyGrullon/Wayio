@@ -11,9 +11,22 @@ import {
   findRescheduleOptions,
   type OpcionReagendar,
 } from '../lib/scheduling/reschedule'
-import { rescheduleActivityDetailed } from '../lib/api/backend'
+import {
+  BackendError,
+  huecosDelError,
+  rescheduleActivityDetailed,
+  type RescheduleSlot,
+} from '../lib/api/backend'
+import { esRequierePro, TEXTO_REAGENDAR_PRO } from '../lib/api/limites'
 import { conTiempoLimite } from '../lib/scheduling/tiempoLimite'
-import { fechaDeDia, fechaYHora } from '../lib/geofencing/fechas'
+import {
+  aISO,
+  fechaDeDia,
+  fechaYHora,
+  horaDeMinutos,
+  minutosDeHora,
+  minutosDelDia,
+} from '../lib/geofencing/fechas'
 import type { Activity } from '../types/activity'
 import type { Day } from '../types/trip'
 
@@ -23,6 +36,11 @@ import type { Day } from '../types/trip'
  * 2. «Buscando nueva hora…»,
  * 3. sugerencia con «Aceptar» y «Descartar».
  * Tocar la tarjeta de la actividad nunca marca nada: solo este flujo.
+ *
+ * Proponer la hora con IA es de Pro: en Gratis el servidor responde 503
+ * `{ code: 'ia_no_disponible', motivo: 'requiere_pro', huecos }` y el
+ * viajero elige a mano entre los huecos libres (los locales y los del
+ * servidor), con una línea que dice que con Pro la IA propone la hora.
  */
 
 export interface PropuestaReagendar {
@@ -39,6 +57,9 @@ interface Opcion extends OpcionReagendar {
   clave: string
   /** Nota de la IA (solo si la propuso la IA). */
   nota?: string
+  /** Hueco del servidor en minutos (para no repetir el mismo hueco). */
+  desde?: number
+  hasta?: number
 }
 
 interface Props {
@@ -63,11 +84,63 @@ interface Props {
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
+/** Opciones que se muestran (una más si el viajero elige a mano en Gratis). */
+const MAX_OPCIONES = 3
+const MAX_OPCIONES_A_MANO = 4
+/** Margen antes de empezar algo hoy (igual que los huecos locales). */
+const MARGEN_HOY_MIN = 15
+
 /** La propuesta de la IA no sirve si su día y hora ya pasaron. */
 function yaPaso(fecha: string | null, hora: string): boolean {
   if (!fecha) return false
   const cuando = fechaYHora(fecha, hora)
   return cuando !== null && cuando.getTime() <= Date.now()
+}
+
+/**
+ * Huecos libres del servidor (día 1-based, 'HH:MM'–'HH:MM') → opciones con
+ * hora concreta para la duración de la actividad. Descarta los días que ya
+ * pasaron y, hoy, empieza como pronto dentro de 15 min.
+ */
+function opcionesDeHuecos(
+  huecos: RescheduleSlot[],
+  act: Activity,
+  dias: Day[],
+  ahora: Date = new Date()
+): Opcion[] {
+  const duracion = Math.max(15, act.duracionMinutos || 60)
+  const hoy = aISO(ahora)
+  const out: Opcion[] = []
+  for (const h of huecos) {
+    const diaIdx = h.dia - 1
+    const dia = dias.find((d) => d.index === diaIdx)
+    if (!dia) continue
+    const fecha = fechaDeDia(dia)
+    if (fecha !== null && fecha < hoy) continue
+    const desde = minutosDeHora(h.desde)
+    const hasta = minutosDeHora(h.hasta)
+    if (desde === null || hasta === null) continue
+    const inicio =
+      fecha === hoy
+        ? Math.max(desde, minutosDelDia(ahora) + MARGEN_HOY_MIN)
+        : desde
+    if (inicio + duracion > hasta) continue
+    const horaInicio = horaDeMinutos(inicio)
+    out.push({
+      clave: `hueco-${diaIdx}-${horaInicio}`,
+      dia: diaIdx,
+      posicion: 0,
+      impactoMinutos: 0,
+      descripcion: '',
+      esOptima: false,
+      horaInicio,
+      horaFin: horaDeMinutos(inicio + duracion),
+      fecha,
+      desde,
+      hasta,
+    })
+  }
+  return out
 }
 
 export function ReschedulePanel({
@@ -91,6 +164,8 @@ export function ReschedulePanel({
   const [opciones, setOpciones] = useState<Opcion[]>([])
   const [elegida, setElegida] = useState<string | null>(null)
   const [aviso, setAviso] = useState<string | null>(null)
+  /** Gratis: la IA no propone; el viajero elige a mano (503 requiere_pro). */
+  const [aMano, setAMano] = useState(false)
   const diasRef = useRef(dias)
   const busqueda = useRef(0)
   const iniciada = useRef(false)
@@ -104,6 +179,8 @@ export function ReschedulePanel({
     async (act: Activity) => {
       const id = ++busqueda.current
       const encontradas: Opcion[] = []
+      let huecosServidor: RescheduleSlot[] = []
+      let requierePro = false
 
       if (filaId && UUID_RE.test(filaId)) {
         try {
@@ -137,8 +214,14 @@ export function ReschedulePanel({
               ...(r.nota ? { nota: r.nota } : {}),
             })
           }
-        } catch {
-          // Sin IA, sin sesión o sin red: se usan los huecos locales.
+        } catch (e) {
+          // Gratis (503 motivo 'requiere_pro'): sin propuesta de la IA, pero
+          // con los huecos libres del servidor para elegir a mano. Sin IA,
+          // sin sesión o sin red: se usan los huecos locales.
+          if (e instanceof BackendError && esRequierePro(e.data)) {
+            requierePro = true
+            huecosServidor = huecosDelError(e.data)
+          }
         }
       }
 
@@ -158,10 +241,30 @@ export function ReschedulePanel({
         // Sin almacenamiento local: quedan las opciones de la IA (si hay).
       }
 
+      // Huecos del servidor que no cubre ya una opción del mismo hueco.
+      for (const o of opcionesDeHuecos(huecosServidor, act, diasRef.current)) {
+        const cubierto = encontradas.some((e) => {
+          if (e.dia !== o.dia) return false
+          const ini = minutosDeHora(e.horaInicio)
+          return (
+            ini !== null &&
+            o.desde !== undefined &&
+            o.hasta !== undefined &&
+            ini >= o.desde &&
+            ini < o.hasta
+          )
+        })
+        if (!cubierto) encontradas.push(o)
+      }
+
       if (id !== busqueda.current) return
-      const lista = encontradas.slice(0, 3)
+      const lista = encontradas.slice(
+        0,
+        requierePro ? MAX_OPCIONES_A_MANO : MAX_OPCIONES
+      )
       setOpciones(lista)
       setElegida(lista[0]?.clave ?? null)
+      setAMano(requierePro)
       setPaso('sugerencia')
       setAviso(
         lista.length === 0
@@ -189,6 +292,7 @@ export function ReschedulePanel({
     onConfirmarPerdida(actividad)
     setPaso('buscando')
     setAviso(null)
+    setAMano(false)
     setOpciones([])
     void buscar(actividad)
   }
@@ -224,7 +328,9 @@ export function ReschedulePanel({
       : paso === 'buscando'
         ? 'Buscando nueva hora…'
         : opciones.length > 0
-          ? 'Te proponemos'
+          ? aMano
+            ? 'Elige el nuevo horario'
+            : 'Te proponemos'
           : 'Sin hueco por ahora'
 
   const etiquetaDia = (o: Opcion): string => {
@@ -326,6 +432,12 @@ export function ReschedulePanel({
         <Aviso tono="info" icon={CalendarDays} vivo>
           {aviso}
         </Aviso>
+      ) : null}
+
+      {paso === 'sugerencia' && aMano && opciones.length > 0 ? (
+        <Txt variant="caption" color="fgMuted">
+          Elige tú el hueco que mejor te venga. {TEXTO_REAGENDAR_PRO}
+        </Txt>
       ) : null}
 
       {paso === 'sugerencia' && opciones.length > 0 ? (

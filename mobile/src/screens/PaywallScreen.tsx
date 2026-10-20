@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ScrollView, StyleSheet, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import * as WebBrowser from 'expo-web-browser'
@@ -10,15 +10,33 @@ import {
   CardKicker,
   Pantalla,
   ScreenHeader,
+  Skeleton,
+  SkeletonRegion,
   Txt,
   useToast,
 } from '../components/ui'
-import { Check, CreditCard, ExternalLink } from '../components/ui/iconos'
-import { formatCurrency } from '../components/ui/formato'
+import {
+  CalendarDays,
+  Check,
+  CreditCard,
+  ExternalLink,
+} from '../components/ui/iconos'
+import { formatCurrency, formatFecha } from '../components/ui/formato'
 import { useAuth } from '../context/AuthContext'
 import { BackendError, postJSON } from '../lib/api/http'
+import { getCupo, type CupoDelMes, type UsoCupo } from '../lib/api/backend'
 import { conTope } from '../components/ui/conTope'
-import { PLANS, PRO_FEATURES, GROUP_FEATURES } from '../constants/pricing'
+import {
+  ACCIONES_CON_CUPO,
+  ETIQUETA_USO,
+  FREE_FEATURES,
+  NOMBRE_PLAN,
+  NOTA_USO_JUSTO,
+  PLANS,
+  PRO_FEATURES,
+  RENOVACION_CUPO,
+  type PlanId,
+} from '../constants/pricing'
 import { useEstilos, useTheme, type Tema } from '../theme'
 
 interface RespuestaCheckout {
@@ -26,6 +44,13 @@ interface RespuestaCheckout {
   portal?: boolean
   mensaje?: string
 }
+
+/** Uso del mes (GET /api/cupo). */
+type EstadoUso =
+  | { estado: 'sin_sesion' }
+  | { estado: 'cargando' }
+  | { estado: 'error' }
+  | { estado: 'ok'; cupo: CupoDelMes }
 
 /** Vuelta a la app tras el pago (el navegador seguro se cierra al volver). */
 const RETORNO = 'wayio://pago'
@@ -47,25 +72,96 @@ function mensajePago(e: unknown): string {
   return 'No pudimos abrir el pago ahora mismo. Inténtalo más tarde.'
 }
 
+/** Una acción con cupo: rótulo, «1 de 2» y la barra de uso. */
+function FilaUso({
+  etiqueta,
+  uso,
+}: {
+  etiqueta: string
+  uso: UsoCupo
+}): React.ReactElement {
+  const styles = useEstilos(crearEstilos)
+  const { colors } = useTheme()
+  const agotado = uso.usados >= uso.limite
+  const proporcion =
+    uso.limite > 0 ? Math.min(1, uso.usados / uso.limite) : agotado ? 1 : 0
+  return (
+    <View
+      style={styles.uso}
+      accessible
+      accessibilityRole="progressbar"
+      accessibilityLabel={`${etiqueta}: usaste ${uso.usados} de ${uso.limite}${agotado ? ', agotado' : ''}`}
+      accessibilityValue={{ min: 0, max: uso.limite, now: uso.usados }}
+    >
+      <View style={styles.usoFila}>
+        <Txt variant="label" style={styles.flex}>
+          {etiqueta}
+        </Txt>
+        {agotado ? <Badge label="Agotado" variant="warning" /> : null}
+        <Txt variant="bodyS" color="fgMuted" tnum>
+          {uso.usados} de {uso.limite}
+        </Txt>
+      </View>
+      <View style={[styles.pista, { backgroundColor: colors.surface2 }]}>
+        <View
+          style={[
+            styles.relleno,
+            {
+              width: `${Math.round(proporcion * 100)}%`,
+              backgroundColor: agotado ? colors.warning : colors.accent,
+            },
+          ]}
+        />
+      </View>
+    </View>
+  )
+}
+
 /**
- * Planes (M05): POST /api/stripe/checkout con el Bearer de la sesión y
- * Stripe en el navegador seguro de la app; al volver se relee el plan
- * (`refreshTier`). Con plan activo, «Gestionar suscripción» abre el portal.
+ * Planes (M05): Gratis con sus cupos del mes y lo que Pro añade de verdad,
+ * con el uso del mes de la cuenta (GET /api/cupo). El cobro va por POST
+ * /api/stripe/checkout con el Bearer de la sesión y Stripe en el navegador
+ * seguro de la app; al volver se relee el plan (`refreshTier`) y el uso. Con
+ * plan activo, «Gestionar suscripción» abre el portal. Pro Grupo no se vende
+ * (quien ya lo tiene lo sigue viendo como su plan).
  */
 export function PaywallScreen(): React.ReactElement {
-  const { tier, refreshTier } = useAuth()
+  const { tier, user, refreshTier } = useAuth()
   const toast = useToast()
   const { colors } = useTheme()
   const styles = useEstilos(crearEstilos)
   const insets = useSafeAreaInsets()
   const destacado = PLANS.find((p) => p.destacado) ?? PLANS[0]
-  const [plan, setPlan] = useState<string>(destacado?.id ?? 'pro_mensual')
+  const [plan, setPlan] = useState<PlanId>(destacado?.id ?? 'pro_mensual')
   const [abriendo, setAbriendo] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const uid = user?.id ?? null
+  const [uso, setUso] = useState<EstadoUso>(() =>
+    uid ? { estado: 'cargando' } : { estado: 'sin_sesion' }
+  )
+  /** Sube para volver a pedir el uso (reintentar o al volver del pago). */
+  const [recargaUso, setRecargaUso] = useState(0)
+
+  useEffect(() => {
+    if (!uid) return
+    let vivo = true
+    getCupo().then(
+      (cupo) => {
+        if (vivo) setUso({ estado: 'ok', cupo })
+      },
+      () => {
+        if (vivo) setUso({ estado: 'error' })
+      }
+    )
+    return () => {
+      vivo = false
+    }
+  }, [uid, recargaUso])
 
   const abrir = async (url: string): Promise<void> => {
     await WebBrowser.openAuthSessionAsync(url, RETORNO)
     await refreshTier()
+    setRecargaUso((n) => n + 1)
   }
 
   const pagar = async (): Promise<void> => {
@@ -106,8 +202,38 @@ export function PaywallScreen(): React.ReactElement {
     }
   }
 
+  const reintentarUso = (): void => {
+    setUso({ estado: 'cargando' })
+    setRecargaUso((n) => n + 1)
+  }
+
   const nombrePlan =
-    tier === 'grupo' ? 'Pro Grupo' : tier === 'pro' ? 'Pro' : 'Gratis'
+    tier === 'grupo'
+      ? NOMBRE_PLAN.pro_grupo
+      : tier === 'pro'
+        ? 'Pro'
+        : NOMBRE_PLAN.free
+
+  // El uso del mes solo tiene sentido con cupo: en Pro (cupos null) no se
+  // muestra. Mientras carga o si falla, solo se enseña en Gratis.
+  const mostrarUso =
+    uso.estado === 'ok'
+      ? uso.cupo.cupos !== null
+      : uso.estado !== 'sin_sesion' && tier === 'free'
+  const fechaRenueva =
+    uso.estado === 'ok' && uso.cupo.renueva
+      ? formatFecha(uso.cupo.renueva, { diaSemana: false })
+      : ''
+
+  const lista = (items: readonly string[]): React.ReactElement[] =>
+    items.map((f) => (
+      <View key={f} style={styles.feature}>
+        <Check size={16} color={colors.success} strokeWidth={2.25} />
+        <Txt variant="bodyS" style={styles.flex}>
+          {f}
+        </Txt>
+      </View>
+    ))
 
   return (
     <Pantalla>
@@ -134,8 +260,8 @@ export function PaywallScreen(): React.ReactElement {
           </Txt>
         </Txt>
         <Txt variant="body" color="fgMuted" style={styles.lead}>
-          Alertas con IA, reagendar lo que te pierdas, modo sin conexión y la
-          sala del grupo sin límites.
+          Con Gratis planificas tus viajes con un cupo de IA cada mes. Pro quita
+          esos límites y suma las alertas de demora y el reagendar con IA.
         </Txt>
 
         {error ? (
@@ -155,27 +281,73 @@ export function PaywallScreen(): React.ReactElement {
           </Callout>
         ) : null}
 
-        <Card variant="nota" style={styles.bloque}>
-          <CardKicker color="brassText">Pro Viajero</CardKicker>
-          {PRO_FEATURES.map((f) => (
-            <View key={f} style={styles.feature}>
-              <Check size={16} color={colors.success} strokeWidth={2.25} />
-              <Txt variant="bodyS" style={styles.flex}>
-                {f}
-              </Txt>
-            </View>
-          ))}
-        </Card>
+        {mostrarUso ? (
+          <Card style={styles.bloque}>
+            <CardKicker icon={CalendarDays}>Tu uso este mes</CardKicker>
+            {uso.estado === 'ok' && uso.cupo.cupos ? (
+              <>
+                {ACCIONES_CON_CUPO.map((accion) => {
+                  const fila = uso.cupo.cupos?.[accion]
+                  return fila ? (
+                    <FilaUso
+                      key={accion}
+                      etiqueta={ETIQUETA_USO[accion]}
+                      uso={fila}
+                    />
+                  ) : null
+                })}
+                <Txt variant="caption" color="fgMuted" style={styles.nota}>
+                  {fechaRenueva
+                    ? `Se renuevan el ${fechaRenueva} a las 00:00 (hora de RD).`
+                    : RENOVACION_CUPO}
+                </Txt>
+                {uso.cupo.aproximado ? (
+                  <Txt variant="caption" color="fgSubtle" style={styles.nota}>
+                    No pudimos leer tu uso exacto de este mes: las cifras pueden
+                    no estar al día.
+                  </Txt>
+                ) : null}
+              </>
+            ) : uso.estado === 'error' ? (
+              <View style={styles.nota}>
+                <Txt variant="bodyS" color="fgMuted">
+                  No pudimos cargar tu uso del mes.
+                </Txt>
+                <Button
+                  variant="link"
+                  title="Reintentar"
+                  onPress={reintentarUso}
+                />
+              </View>
+            ) : (
+              <SkeletonRegion label="Cargando tu uso del mes">
+                {ACCIONES_CON_CUPO.map((accion) => (
+                  <View key={accion} style={styles.uso}>
+                    <Skeleton width="45%" height={14} />
+                    <Skeleton width="100%" height={6} style={styles.nota} />
+                  </View>
+                ))}
+              </SkeletonRegion>
+            )}
+          </Card>
+        ) : null}
+
         <Card style={styles.bloque}>
-          <CardKicker>Pro Grupo, además</CardKicker>
-          {GROUP_FEATURES.map((f) => (
-            <View key={f} style={styles.feature}>
-              <Check size={16} color={colors.success} strokeWidth={2.25} />
-              <Txt variant="bodyS" style={styles.flex}>
-                {f}
-              </Txt>
-            </View>
-          ))}
+          <CardKicker>{NOMBRE_PLAN.free} · con tu cuenta</CardKicker>
+          {lista(FREE_FEATURES)}
+          <Txt variant="caption" color="fgMuted" style={styles.nota}>
+            {RENOVACION_CUPO}
+          </Txt>
+        </Card>
+
+        <Card variant="nota" style={styles.bloque}>
+          <CardKicker color="brassText">
+            Pro: todo lo de Gratis y además
+          </CardKicker>
+          {lista(PRO_FEATURES)}
+          <Txt variant="caption" color="fgMuted" style={styles.nota}>
+            {NOTA_USO_JUSTO}
+          </Txt>
         </Card>
 
         {tier === 'free' ? (
@@ -186,6 +358,9 @@ export function PaywallScreen(): React.ReactElement {
             <View accessibilityRole="radiogroup" accessibilityLabel="Planes">
               {PLANS.map((p) => {
                 const sel = p.id === plan
+                const precio = formatCurrency(p.precio, 'USD', {
+                  decimales: true,
+                })
                 return (
                   <Card
                     key={p.id}
@@ -193,7 +368,7 @@ export function PaywallScreen(): React.ReactElement {
                     onPress={() => setPlan(p.id)}
                     accessibilityRole="radio"
                     accessibilityState={{ checked: sel }}
-                    accessibilityLabel={`${p.nombre}, ${formatCurrency(p.precio, 'USD', { decimales: true })}, ${p.periodo}`}
+                    accessibilityLabel={`${p.nombre}, ${precio} ${p.periodo}. ${p.detalle}`}
                     style={styles.plan}
                   >
                     <View style={styles.planFila}>
@@ -219,17 +394,21 @@ export function PaywallScreen(): React.ReactElement {
                       <View style={styles.flex}>
                         <Txt variant="label">{p.nombre}</Txt>
                         <Txt variant="caption" color="fgMuted">
-                          {/* El ahorro ya va en su sello: no se repite aquí. */}
-                          {p.periodo.replace(/\s*·\s*ahorra.*$/i, '')}
+                          {p.detalle}
                         </Txt>
                       </View>
-                      <Txt variant="title" tnum>
-                        {formatCurrency(p.precio, 'USD', { decimales: true })}
-                      </Txt>
+                      <View style={styles.precio}>
+                        <Txt variant="title" tnum>
+                          {precio}
+                        </Txt>
+                        <Txt variant="caption" color="fgMuted">
+                          {p.periodo}
+                        </Txt>
+                      </View>
                     </View>
-                    {p.id === 'pro_anual' ? (
+                    {p.ahorro ? (
                       <Badge
-                        label="Ahorra 40 % frente al mensual"
+                        label={`Ahorra ${p.ahorro} frente al mensual`}
                         variant="laton"
                         style={styles.ahorro}
                       />
@@ -270,7 +449,7 @@ export function PaywallScreen(): React.ReactElement {
   )
 }
 
-const crearEstilos = (_t: Tema) =>
+const crearEstilos = (t: Tema) =>
   StyleSheet.create({
     flex: { flex: 1 },
     scroll: { paddingHorizontal: 16, paddingTop: 16 },
@@ -285,8 +464,18 @@ const crearEstilos = (_t: Tema) =>
       gap: 10,
       marginTop: 10,
     },
+    uso: { marginTop: 14 },
+    usoFila: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    pista: {
+      height: 6,
+      borderRadius: t.radius.pill,
+      overflow: 'hidden',
+      marginTop: 8,
+    },
+    relleno: { height: '100%', borderRadius: t.radius.pill },
     plan: { marginTop: 10 },
     planFila: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+    precio: { alignItems: 'flex-end' },
     radio: {
       width: 22,
       height: 22,

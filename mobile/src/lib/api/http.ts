@@ -14,7 +14,10 @@
  * - Corta las peticiones colgadas: tiempo límite de 60 s por defecto
  *   (configurable por llamada con `timeoutMs`).
  * - Convierte las respuestas de error en `BackendError` tipados con un mensaje
- *   en español listo para mostrar al usuario.
+ *   en español listo para mostrar al usuario. El cuerpo JSON del error se
+ *   conserva en `data` y su `code` en `serverCode` (p. ej. 402
+ *   `{ code: 'cupo_agotado', accion, usados, limite, renueva }`, ver
+ *   lib/api/limites.ts).
  */
 import { isAuthRetryableFetchError } from '@supabase/supabase-js'
 import { config } from '../../config'
@@ -24,6 +27,8 @@ export type BackendErrorCode =
   | 'no_config'
   | 'auth'
   | 'rate_limit'
+  /** 402: el plan Gratis agotó el cupo del mes de esa acción de IA. */
+  | 'cupo_agotado'
   | 'unavailable'
   | 'bad_request'
   | 'not_found'
@@ -67,6 +72,8 @@ const MENSAJES: Record<BackendErrorCode, string> = {
   auth: 'Tu sesión expiró. Vuelve a iniciar sesión para usar esta función.',
   rate_limit:
     'Has hecho muchas solicitudes seguidas. Espera un momento y vuelve a intentarlo.',
+  cupo_agotado:
+    'Llegaste al límite de tu plan este mes. Mira los planes para seguir usando la IA.',
   unavailable:
     'Esta función no está disponible ahora mismo. Inténtalo más tarde.',
   bad_request: 'No pudimos procesar la solicitud. Revisa los datos.',
@@ -79,6 +86,9 @@ const MENSAJES: Record<BackendErrorCode, string> = {
 
 /** Texto de sesión caducada o rechazada (también lo usa lib/api/stream.ts). */
 export const MENSAJE_SESION_EXPIRADA = MENSAJES.auth
+
+/** Respaldo del 402 de cupo agotado si el servidor no mandó texto. */
+export const MENSAJE_CUPO_AGOTADO = MENSAJES.cupo_agotado
 
 /**
  * `code` del backend cuando falta la sesión (401 de `exigirSesion`,
@@ -183,6 +193,7 @@ export function segundosDeEspera(
 
 function codigoPorStatus(status: number): BackendErrorCode {
   if (status === 401 || status === 403) return 'auth'
+  if (status === 402) return 'cupo_agotado'
   if (status === 429) return 'rate_limit'
   if (status === 503) return 'unavailable'
   if (status === 404) return 'not_found'

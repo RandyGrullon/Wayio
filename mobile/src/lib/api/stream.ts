@@ -8,6 +8,11 @@
  * debe repetir la generación con POST /api/generate (ver `generarViaje` en
  * screens/crear/generar.ts).
  *
+ * Cupo del plan Gratis agotado: 402 `{ error, code: 'cupo_agotado', accion,
+ * usados, limite, renueva }` ANTES de abrir el stream. Se conservan `code` y
+ * `data` (ver `cupoAgotadoDe` en lib/api/limites.ts) y, como todo 4xx, sale
+ * con `started: true`: no se repite ni se cae a POST /api/generate.
+ *
  * Generar exige sesión: sin access_token no se llama. Ante un 401 (que el
  * servidor responde en JSON antes de abrir el stream) se refresca la sesión
  * UNA vez y se repite; si vuelve a dar 401 se muestra «Tu sesión expiró…»
@@ -17,6 +22,7 @@ import { config } from '../../config'
 import {
   BackendError,
   CODIGO_AUTH_REQUIRED,
+  MENSAJE_CUPO_AGOTADO,
   MENSAJE_SESION_EXPIRADA,
   refrescarToken,
   segundosDeEspera,
@@ -151,14 +157,17 @@ function errorHttp(
   const mensaje =
     status === 401
       ? MENSAJE_SESION_EXPIRADA
-      : status === 429
-        ? mensajeDe(
-            data,
-            'Has trazado muchos viajes seguidos. Espera un momento y vuelve a intentarlo.'
-          )
-        : mensajeDe(data, MENSAJE_GENERICO)
-  // 4xx: los datos no valen, falta la sesión o hay límite (personal o el tope
-  // diario): repetir en /api/generate no ayuda y volvería a gastar cupo.
+      : status === 402
+        ? mensajeDe(data, MENSAJE_CUPO_AGOTADO)
+        : status === 429
+          ? mensajeDe(
+              data,
+              'Has trazado muchos viajes seguidos. Espera un momento y vuelve a intentarlo.'
+            )
+          : mensajeDe(data, MENSAJE_GENERICO)
+  // 4xx: los datos no valen, falta la sesión, hay límite (personal o el tope
+  // diario) o el cupo del mes se agotó (402): repetir en /api/generate no
+  // ayuda y volvería a gastar cupo.
   return new ErrorGeneracion(mensaje, {
     started: status >= 400 && status < 500,
     status,

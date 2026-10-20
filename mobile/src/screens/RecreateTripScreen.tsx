@@ -21,6 +21,7 @@ import {
 import {
   ArrowRight,
   Clapperboard,
+  CreditCard,
   Link2,
   MapPin,
   PenLine,
@@ -31,7 +32,12 @@ import {
   BackendError,
   type VideoAnalysisResult,
 } from '../lib/api/backend'
-import { esTopeDiario, mensajeDeLimite } from '../lib/api/limites'
+import {
+  cupoAgotadoDe,
+  datosDeLimite,
+  esTopeDiario,
+  mensajeDeLimite,
+} from '../lib/api/limites'
 import { useTheme } from '../theme'
 
 const PLATAFORMAS =
@@ -45,6 +51,8 @@ interface ErrorVideo {
    */
   desactivado: boolean
   sesion: boolean
+  /** Cupo de fotos o videos del mes agotado (402): «Ver planes». */
+  planes: boolean
 }
 
 /**
@@ -78,6 +86,18 @@ export function RecreateTripScreen(): React.ReactElement {
     try {
       setResult(await analyzeVideoUrl(limpio))
     } catch (e) {
+      // Cupo del mes agotado (402): el texto del servidor y «Ver planes», sin
+      // reintentar.
+      const cupo = cupoAgotadoDe(datosDeLimite(e))
+      if (cupo) {
+        setError({
+          mensaje: cupo.mensaje,
+          desactivado: false,
+          sesion: false,
+          planes: true,
+        })
+        return
+      }
       const backend = e instanceof BackendError ? e : null
       const code = backend?.data?.['code'] ?? null
       const apagado = code === 'video_desactivado' || code === 'herramientas'
@@ -109,6 +129,7 @@ export function RecreateTripScreen(): React.ReactElement {
               : 'No pudimos analizar el video. Inténtalo de nuevo.')),
         desactivado: apagado || tope,
         sesion: backend?.code === 'auth',
+        planes: false,
       })
     } finally {
       setLoading(false)
@@ -177,10 +198,20 @@ export function RecreateTripScreen(): React.ReactElement {
 
           {error ? (
             <View style={styles.bloque}>
-              <Callout tone={error.desactivado ? 'info' : 'danger'}>
+              <Callout
+                tone={error.desactivado || error.planes ? 'info' : 'danger'}
+              >
                 {error.mensaje}
               </Callout>
-              {error.desactivado ? (
+              {error.planes ? (
+                <Button
+                  title="Ver planes"
+                  icon={CreditCard}
+                  onPress={() => navigate({ name: 'paywall' })}
+                  style={styles.bloque}
+                />
+              ) : null}
+              {error.desactivado || error.planes ? (
                 <Button
                   title="Escribir el destino"
                   variant="outline"
