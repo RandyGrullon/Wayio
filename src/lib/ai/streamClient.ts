@@ -15,12 +15,15 @@ export interface DetalleStreamError {
   retryAfter?: number | null
   /**
    * Código del servidor: 'auth_required' (401, trazar exige sesión),
-   * 'rate_limit' (429 del límite personal o evento `error` del proveedor) o
-   * 'tope_diario' (429 o evento `error`: Wayio llegó a su límite de IA de hoy).
+   * 'rate_limit' (429 del límite personal o evento `error` del proveedor),
+   * 'tope_diario' (429 o evento `error`: Wayio llegó a su límite de IA de hoy)
+   * o 'cupo_agotado' (402: el plan Gratis gastó sus viajes del mes).
    */
   code?: string | null
   /** Mensaje del servidor, ya en español (`mensaje` o `error` del cuerpo). */
   mensaje?: string | null
+  /** 402 cupo_agotado: 'YYYY-MM-DD' en que se renueva el cupo. */
+  renueva?: string | null
 }
 
 /**
@@ -30,9 +33,10 @@ export interface DetalleStreamError {
  * clásico cuando el stream ni siquiera arrancó (started === false).
  *
  * En un 4xx también vale `started`: el formulario no es válido (400), falta
- * la sesión (401) o se superó un límite (429: personal o tope diario) y
- * repetir en /api/generate no ayuda. El cuerpo JSON queda en `campos` (400),
- * `retryAfter` (429), `code` y `mensaje`.
+ * la sesión (401), se agotó el cupo del mes (402 cupo_agotado) o se superó
+ * un límite (429: personal o tope diario) y repetir en /api/generate no
+ * ayuda. El cuerpo JSON queda en `campos` (400), `retryAfter` (429),
+ * `renueva` (402), `code` y `mensaje`.
  */
 export class StreamGenerateError extends Error {
   readonly started: boolean
@@ -41,6 +45,7 @@ export class StreamGenerateError extends Error {
   readonly retryAfter: number | null
   readonly code: string | null
   readonly mensaje: string | null
+  readonly renueva: string | null
 
   constructor(
     message: string,
@@ -56,6 +61,7 @@ export class StreamGenerateError extends Error {
     this.retryAfter = detalle.retryAfter ?? null
     this.code = detalle.code ?? null
     this.mensaje = detalle.mensaje ?? null
+    this.renueva = detalle.renueva ?? null
   }
 }
 
@@ -100,6 +106,7 @@ async function detalleDeRespuesta(res: Response): Promise<DetalleStreamError> {
       segundos(res.headers.get('Retry-After')),
     code: texto(cuerpo['code']),
     mensaje: texto(cuerpo['mensaje']) ?? texto(cuerpo['error']),
+    renueva: texto(cuerpo['renueva']),
   }
 }
 
@@ -128,8 +135,9 @@ export async function streamGenerate(
   }
 
   if (!res.ok || !res.body) {
-    // 4xx: el formulario no es válido o hay límite; repetir en /api/generate
-    // no ayuda. Su cuerpo JSON trae los errores por campo o la espera.
+    // 4xx: el formulario no es válido, se agotó el cupo (402) o hay límite;
+    // repetir en /api/generate no ayuda. Su cuerpo JSON trae los errores por
+    // campo, la espera o la fecha de renovación del cupo.
     const es4xx = res.status >= 400 && res.status < 500
     const detalle = es4xx ? await detalleDeRespuesta(res) : {}
     throw new StreamGenerateError(

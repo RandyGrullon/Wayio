@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useId, useRef, useState } from 'react'
-import { Clapperboard, ImageUp, Link2, MapPin } from 'lucide-react'
+import { ArrowRight, Clapperboard, ImageUp, Link2, MapPin } from 'lucide-react'
 import {
   Button,
   ButtonLink,
@@ -25,8 +25,11 @@ import {
 import { cn } from '@/lib/utils/cn'
 import {
   MENSAJE_TOPE_DIARIO,
+  RUTA_PLANES,
+  esCupoAgotado,
   esTopeDiario,
   segundosDeEspera,
+  textoCupoAgotado,
   textoEspera,
 } from './limitesIA'
 
@@ -38,9 +41,11 @@ import {
  * El destino detectado va al formulario y los lugares a lugaresDeseados. Si el
  * análisis de videos está desactivado (503 video_desactivado) ofrece subir una
  * foto o escribir el destino; si Wayio llegó a su tope de IA del día (429
- * tope_diario), escribir el destino (la foto también usa la IA). Las fotos se
- * reducen en el cliente (< ~2,8 MB en base64) por el límite de cuerpo de
- * Vercel. Exige sesión: se comprueba antes de comprimir y subir nada.
+ * tope_diario), escribir el destino (la foto también usa la IA). Si el plan
+ * Gratis gastó sus fotos o videos del mes (402 cupo_agotado), «Ver planes» o
+ * escribir el destino. Las fotos se reducen en el cliente (< ~2,8 MB en
+ * base64) por el límite de cuerpo de Vercel. Exige sesión: se comprueba antes
+ * de comprimir y subir nada.
  */
 
 interface RecreateTripProps {
@@ -58,8 +63,11 @@ interface RecreateTripProps {
 
 type Modo = 'video' | 'foto'
 
-/** alternativas: subir una foto (si sirve) o escribir el destino. */
-type Accion = 'login' | 'alternativas' | 'solo-destino' | null
+/**
+ * alternativas: subir una foto (si sirve) o escribir el destino; planes:
+ * cupo del mes agotado («Ver planes» o escribir el destino).
+ */
+type Accion = 'login' | 'alternativas' | 'solo-destino' | 'planes' | null
 
 type Estado =
   | { tipo: 'inicial' }
@@ -193,6 +201,7 @@ export function RecreateTrip({
 
   const analizar = async () => {
     if (estado.tipo === 'analizando') return
+    if (estado.tipo === 'error' && estado.accion === 'planes') return
     if (modo === 'video' ? videoUrl.trim().length < 4 : !foto) return
     setEstado({ tipo: 'analizando' })
     if (!(await comprobarSesion())) return
@@ -251,6 +260,16 @@ export function RecreateTrip({
         })
         return
       }
+      // Cupo del mes agotado (fotos y videos comparten cupo): planes o
+      // escribir el destino; reintentar no sirve hasta que se renueve.
+      if (res.status === 402 || esCupoAgotado(data)) {
+        setEstado({
+          tipo: 'error',
+          mensaje: textoCupoAgotado(data, 'analizar'),
+          accion: 'planes',
+        })
+        return
+      }
       // Tope diario: la foto también usa la IA, así que solo queda escribir
       // el destino.
       if (esTopeDiario(data)) {
@@ -298,6 +317,8 @@ export function RecreateTrip({
   }
 
   const listo = modo === 'video' ? videoUrl.trim().length >= 4 : foto !== null
+  // Con el cupo agotado, analizar otra vez daría el mismo 402.
+  const sinCupo = estado.tipo === 'error' && estado.accion === 'planes'
 
   const footer =
     estado.tipo === 'resultado' ? (
@@ -331,7 +352,7 @@ export function RecreateTrip({
         </Button>
         <Button
           onClick={() => void analizar()}
-          disabled={!listo}
+          disabled={!listo || sinCupo}
           icon={modo === 'video' ? <Clapperboard /> : <ImageUp />}
         >
           {modo === 'video' ? 'Analizar video' : 'Analizar foto'}
@@ -488,19 +509,39 @@ export function RecreateTrip({
           {estado.tipo === 'error' ? (
             <Callout
               tone={
-                estado.accion === 'login' || estado.accion === 'solo-destino'
+                estado.accion === 'login' ||
+                estado.accion === 'solo-destino' ||
+                estado.accion === 'planes'
                   ? 'info'
                   : 'danger'
               }
               title={
                 estado.accion === 'login'
                   ? 'Necesitas una cuenta gratis'
-                  : estado.accion === 'solo-destino'
-                    ? 'Por ahora no podemos analizarlo'
-                    : 'No pudimos analizarlo'
+                  : estado.accion === 'planes'
+                    ? 'Llegaste al límite del plan Gratis'
+                    : estado.accion === 'solo-destino'
+                      ? 'Por ahora no podemos analizarlo'
+                      : 'No pudimos analizarlo'
               }
               action={
-                estado.accion === 'login' ? (
+                estado.accion === 'planes' ? (
+                  <>
+                    <ButtonLink
+                      variant="link"
+                      href={RUTA_PLANES}
+                      iconEnd={<ArrowRight />}
+                    >
+                      Ver planes
+                    </ButtonLink>
+                    <Button
+                      variant="link"
+                      onClick={onEscribirDestino ?? onClose}
+                    >
+                      Escribir el destino
+                    </Button>
+                  </>
+                ) : estado.accion === 'login' ? (
                   <ButtonLink
                     variant="link"
                     href={urlLogin(loginRedirect)}

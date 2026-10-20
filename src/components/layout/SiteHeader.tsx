@@ -37,8 +37,9 @@ import {
 
 /**
  * Header único (docs/DISENO.md §5.11), variantes:
- * - marketing (por defecto): navegación central (≥lg), sesión y CTA
- *   «Planificar viaje» (desde md, oculto mientras se ve [data-wy-hero]).
+ * - marketing (por defecto): navegación central (≥lg; en el menú móvil por
+ *   debajo) con «Planes», sesión y CTA «Planificar viaje» (desde md, oculto
+ *   mientras se ve [data-wy-hero]).
  * - flujo: Stepper de ruta en el centro (compacto + barra de 2 px en móvil).
  * - app: «← Mis viajes», pill EN VIVO, sello SOLO LECTURA, extra (avatares).
  * - minimo: wordmark, sello opcional, tema y CTA opcional («Crear el mío»).
@@ -80,6 +81,7 @@ const NAV_MARKETING = [
   { label: 'Destinos', href: '/#destinos' },
   { label: 'Cómo funciona', href: '/#como-funciona' },
   { label: 'Viajes en grupo', href: '/#grupo' },
+  { label: 'Planes', href: '/precios' },
 ] as const
 
 const CTA_MARKETING: SiteHeaderCta = {
@@ -342,7 +344,8 @@ export function SiteHeader({
                 <Link
                   key={l.href}
                   href={l.href}
-                  className="rounded-sm text-[15px] font-medium text-fg-muted transition-colors duration-(--dur-fast) hover:text-fg"
+                  aria-current={pathname === l.href ? 'page' : undefined}
+                  className="rounded-sm text-[15px] font-medium text-fg-muted transition-colors duration-(--dur-fast) hover:text-fg aria-[current=page]:text-fg"
                 >
                   {l.label}
                 </Link>
@@ -433,6 +436,7 @@ export function SiteHeader({
               <Link
                 key={l.href}
                 href={l.href}
+                aria-current={pathname === l.href ? 'page' : undefined}
                 onClick={() => setMenuMovil(false)}
                 className="flex h-12 items-center justify-between border-b border-border text-[17px] font-medium text-fg"
               >

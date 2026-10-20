@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { Compass, LogIn, Pencil, Send, Undo2 } from 'lucide-react'
+import { ArrowRight, Compass, LogIn, Pencil, Send, Undo2 } from 'lucide-react'
 import type { Trip } from '@/types/trip'
 import { Button, ButtonLink, Spinner } from '@/components/ui/Button'
 import { Chip } from '@/components/ui/Chip'
@@ -10,8 +10,11 @@ import { esAuthRequired, hayLogin, urlLogin } from '@/lib/auth/irALogin'
 import { cn } from '@/lib/utils/cn'
 import {
   MENSAJE_TOPE_DIARIO,
+  RUTA_PLANES,
+  esCupoAgotado,
   esTopeDiario,
   segundosDeEspera,
+  textoCupoAgotado,
   textoEspera,
 } from './limitesIA'
 
@@ -25,6 +28,8 @@ export interface MensajeAjuste {
   manual?: boolean
   /** La sesión se cerró (401): se ofrece iniciar sesión. */
   login?: boolean
+  /** Se agotó el cupo del mes (402 cupo_agotado): se ofrece «Ver planes». */
+  planes?: boolean
 }
 
 interface AdjustChatProps {
@@ -72,6 +77,8 @@ const idMensaje = () => `ajuste-${Date.now().toString(36)}-${(contador += 1)}`
  * Conversación «Ajustar con IA» (docs/DISENO.md §6.5): sugerencias, historial
  * (burbujas propias en tinta, respuestas en superficie con el resumen del
  * cambio) y «Deshacer último ajuste». POST /api/adjust { trip, instruccion }.
+ * Con el cupo del mes agotado (402 cupo_agotado) muestra el mensaje del
+ * servidor con «Ver planes» y deja la edición a mano.
  */
 export function AdjustChat({
   trip,
@@ -131,6 +138,19 @@ export function AdjustChat({
           texto: conLogin
             ? 'Inicia sesión para ajustar tu viaje con IA. Tu itinerario te espera aquí.'
             : 'Ajustar con IA no está disponible ahora mismo. Puedes editar tu itinerario a mano.',
+        })
+        return
+      }
+      // Cupo del plan Gratis agotado: reintentar no sirve hasta que se
+      // renueve; se ofrecen los planes y la edición a mano.
+      if (res.status === 402 || esCupoAgotado(data)) {
+        agregar({
+          id: idMensaje(),
+          rol: 'wayio',
+          error: true,
+          manual: true,
+          planes: true,
+          texto: textoCupoAgotado(data, 'ajustar'),
         })
         return
       }
@@ -219,9 +239,12 @@ export function AdjustChat({
                 key={m.id}
                 className={cn(
                   'mr-8 self-start rounded-[16px_16px_16px_4px] border px-4 py-2.5 text-body-s',
-                  m.error
-                    ? 'border-danger/30 bg-danger-bg text-danger-fg'
-                    : 'border-border bg-surface text-fg'
+                  // El cupo agotado no es un fallo: aviso informativo.
+                  m.planes
+                    ? 'border-info/30 bg-info-bg text-info-fg'
+                    : m.error
+                      ? 'border-danger/30 bg-danger-bg text-danger-fg'
+                      : 'border-border bg-surface text-fg'
                 )}
               >
                 <p className="flex gap-2">
@@ -235,16 +258,29 @@ export function AdjustChat({
                     {m.texto}
                   </span>
                 </p>
-                {m.manual && onEditarManual ? (
-                  <Button
-                    variant="link"
-                    size="sm"
-                    icon={<Pencil />}
-                    className="mt-1.5"
-                    onClick={onEditarManual}
-                  >
-                    Editar a mano
-                  </Button>
+                {m.planes || (m.manual && onEditarManual) ? (
+                  <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1">
+                    {m.planes ? (
+                      <ButtonLink
+                        href={RUTA_PLANES}
+                        variant="link"
+                        size="sm"
+                        iconEnd={<ArrowRight />}
+                      >
+                        Ver planes
+                      </ButtonLink>
+                    ) : null}
+                    {m.manual && onEditarManual ? (
+                      <Button
+                        variant="link"
+                        size="sm"
+                        icon={<Pencil />}
+                        onClick={onEditarManual}
+                      >
+                        Editar a mano
+                      </Button>
+                    ) : null}
+                  </div>
                 ) : null}
                 {m.login ? (
                   <ButtonLink

@@ -1,6 +1,8 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import { PaginaLegal } from '@/app/privacidad/PaginaLegal'
+import { TEXTO_CUPO_GRATIS } from '@/components/trip/limitesIA'
+import { DIAS_PASE, NOMBRE_PLAN } from '@/constants/planes'
 import { getBaseUrl } from '@/lib/utils/baseUrl'
 
 export const metadata: Metadata = {
@@ -36,7 +38,7 @@ export default function TerminosPage() {
         </>
       }
       intro="Las reglas del juego para usar Wayio, escritas para que se entiendan."
-      actualizado="2026-10-08"
+      actualizado="2026-10-17"
       secciones={SECCIONES}
     >
       <h2 id="servicio">Qué es Wayio</h2>
@@ -102,18 +104,38 @@ export default function TerminosPage() {
       </p>
 
       <h2 id="planes">Planes y pagos</h2>
+      <p>
+        Los planes y sus precios se describen en{' '}
+        <Link href="/precios">Planes y precios</Link>.
+      </p>
       <ul>
         <li>
-          Planificar es gratis con tu cuenta. Los planes de pago (Pro mensual,
-          Pro anual, Pro por viaje y Pro grupo) se describen en{' '}
-          <Link href="/precios">Planes y precios</Link>.
+          <strong>{NOMBRE_PLAN.free}.</strong> Wayio es gratis con tu cuenta. El
+          plan {NOMBRE_PLAN.free} incluye un cupo mensual de IA de{' '}
+          {TEXTO_CUPO_GRATIS}, que se renueva el día 1 de cada mes a la
+          medianoche (hora de República Dominicana). Lo que no uses en un mes no
+          pasa al siguiente. Con el cupo agotado sigues teniendo tus viajes y
+          puedes editarlos a mano.
         </li>
         <li>
-          Los pagos los procesa Stripe. Las suscripciones se renuevan solas al
-          final de cada periodo hasta que las canceles desde Tu cuenta, en el
-          portal de pagos.
+          <strong>Pro.</strong> {NOMBRE_PLAN.pro_mensual} y{' '}
+          {NOMBRE_PLAN.pro_anual} quitan el cupo mensual de la IA y suman
+          funciones como las alertas de demora y el reagendar con IA. «Sin
+          límite» es con uso justo: para proteger el servicio hay topes por hora
+          y por día que alguien planificando y viajando no alcanza.
         </li>
-        <li>«Pro por viaje» es un pago único que no se renueva.</li>
+        <li>
+          <strong>{NOMBRE_PLAN.pro_por_viaje}.</strong> Es un pago único que
+          activa Pro en toda tu cuenta durante {DIAS_PASE} días desde el pago.
+          No se renueva: al terminar vuelves al plan {NOMBRE_PLAN.free}.
+        </li>
+        <li>
+          Los pagos los procesa un proveedor de pagos externo y seguro; Wayio no
+          ve ni guarda los datos de tu tarjeta. Las suscripciones se renuevan
+          solas al final de cada periodo hasta que las canceles desde Tu cuenta,
+          en el portal de pagos; si cancelas, conservas Pro hasta el final del
+          periodo pagado.
+        </li>
         <li>
           Si tienes un problema con un cobro, escríbenos antes de reclamar al
           banco y lo revisamos contigo.

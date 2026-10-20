@@ -44,9 +44,10 @@ export interface PropuestaReagenda {
 }
 
 /**
- * Respuesta de /api/reschedule. Si falla, `error` y `code` son los del
- * servidor (p. ej. `sin_huecos`, `ia_no_disponible`) o `code: 'network'` si
- * no hubo respuesta; `huecos` permite mover la actividad a mano.
+ * Respuesta de /api/reschedule. Si falla, `error`, `code` y `motivo` son los
+ * del servidor (p. ej. `sin_huecos`, o `ia_no_disponible` con motivo
+ * `tope_diario` o `requiere_pro` en el plan Gratis) o `code: 'network'` si no
+ * hubo respuesta; `huecos` permite mover la actividad a mano.
  */
 export type ResultadoReagenda =
   | ({ ok: true; huecos: HuecoLibre[] } & PropuestaReagenda)
@@ -55,6 +56,8 @@ export type ResultadoReagenda =
       /** Mensaje del servidor; null si no llegó uno legible. */
       error: string | null
       code: string | null
+      /** Detalle de `ia_no_disponible` ('tope_diario', 'requiere_pro'…). */
+      motivo: string | null
       huecos: HuecoLibre[]
     }
 
@@ -117,6 +120,7 @@ interface RespuestaReagenda {
   huecos?: HuecoLibre[]
   error?: unknown
   code?: unknown
+  motivo?: unknown
 }
 
 async function leerError(res: Response, porDefecto: string): Promise<string> {
@@ -338,6 +342,7 @@ export function useTrip(id: string): UseTripReturn {
           ok: false,
           error: 'Este viaje todavía no está guardado en tu cuenta.',
           code: 'no_guardado',
+          motivo: null,
           huecos: [],
         }
       }
@@ -366,10 +371,17 @@ export function useTrip(id: string): UseTripReturn {
           ok: false,
           error: typeof data.error === 'string' ? data.error : null,
           code: typeof data.code === 'string' ? data.code : null,
+          motivo: typeof data.motivo === 'string' ? data.motivo : null,
           huecos,
         }
       } catch {
-        return { ok: false, error: null, code: 'network', huecos: [] }
+        return {
+          ok: false,
+          error: null,
+          code: 'network',
+          motivo: null,
+          huecos: [],
+        }
       }
     },
     []

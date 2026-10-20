@@ -9,7 +9,8 @@ import { ButtonLink } from '@/components/ui/Button'
 import { Callout } from '@/components/ui/Callout'
 import { Card } from '@/components/ui/Card'
 import { EmptyState } from '@/components/ui/EmptyState'
-import { PLANS } from '@/constants/pricing'
+import { TEXTO_CUPO_GRATIS } from '@/components/trip/limitesIA'
+import { NOMBRE_PLAN } from '@/constants/planes'
 import { RECUPERAR_PATH } from '@/lib/auth/constants'
 import { modoLocalSinCuentas } from '@/lib/auth/irALogin'
 import { tierEfectivo } from '@/lib/stripe/entitlements'
@@ -22,6 +23,7 @@ import { AvisoPago } from './AvisoPago'
 import { CerrarSesion } from './CerrarSesion'
 import { GestionarSuscripcion } from './GestionarSuscripcion'
 import { Referidos } from './Referidos'
+import { UsoDelMes } from './UsoDelMes'
 
 export const metadata: Metadata = {
   title: 'Tu cuenta',
@@ -77,16 +79,20 @@ function nombreDe(user: User): string {
     : (user.email?.split('@')[0] ?? 'Viajero')
 }
 
+/** Nombre si no se sabe el plan exacto (p. ej. concedido sin plan_id). */
 const NOMBRE_TIER: Record<PlanTier, string> = {
-  free: 'Plan gratis',
-  pro: 'Wayio Pro',
-  grupo: 'Wayio Pro grupo',
+  free: NOMBRE_PLAN.free,
+  pro: 'Pro',
+  grupo: NOMBRE_PLAN.pro_grupo,
 }
 
+/** Nombre comercial del catálogo («Pro anual», «Pase Pro de 30 días»…). */
 function nombrePlan(tier: PlanTier, sub: SubscriptionRow | null): string {
   if (tier === 'free' || !sub) return NOMBRE_TIER[tier]
   const id = sub.plan_id
-  return id !== 'free' && id in PLANS ? PLANS[id].nombre : NOMBRE_TIER[tier]
+  return id !== 'free' && id in NOMBRE_PLAN
+    ? NOMBRE_PLAN[id]
+    : NOMBRE_TIER[tier]
 }
 
 /** Frase de vigencia del plan («Se renueva el 12 nov 2026»…). */
@@ -230,8 +236,9 @@ export default async function CuentaPage({
                 </div>
               ) : (
                 <p className="mt-3 max-w-[60ch] text-body-s text-fg-muted">
-                  Planifica, guarda y comparte tus viajes. Con Pro suma el modo
-                  sin conexión, las alertas con IA y más.
+                  Cada mes tienes {TEXTO_CUPO_GRATIS}, con modo sin conexión,
+                  PDF e historial. Con Pro la IA no tiene límite y suma las
+                  alertas y el reagendar con IA.
                 </p>
               )}
 
@@ -254,7 +261,7 @@ export default async function CuentaPage({
                     size="lg"
                     iconEnd={<ArrowRight />}
                   >
-                    Ver planes Pro
+                    Ver planes
                   </ButtonLink>
                 )}
                 {tieneCliente ? (
@@ -265,6 +272,9 @@ export default async function CuentaPage({
                 ) : null}
               </div>
             </Card>
+
+            {/* Uso de la IA este mes (GET /api/cupo) */}
+            <UsoDelMes />
 
             {/* Invitaciones */}
             <Card as="section" aria-labelledby="cuenta-invitaciones">

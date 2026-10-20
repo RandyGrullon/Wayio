@@ -1,8 +1,9 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { LogIn, Pencil, RotateCcw } from 'lucide-react'
-import { Button } from '@/components/ui/Button'
+import { ArrowRight, LogIn, Pencil, RotateCcw } from 'lucide-react'
+import { RUTA_PLANES } from '@/components/trip/limitesIA'
+import { Button, ButtonLink } from '@/components/ui/Button'
 import { Callout } from '@/components/ui/Callout'
 import { Card, CardKicker } from '@/components/ui/Card'
 import { SkeletonVersion } from '@/components/ui/Skeleton'
@@ -31,10 +32,11 @@ export interface EstadoGeneracion {
   error?: string
   /**
    * Por qué falló, cuando no es un error cualquiera: «sesion» (la sesión se
-   * cerró: se ofrece iniciar sesión) o «tope_diario» (Wayio llegó a su límite
-   * de IA de hoy: reintentar no sirve).
+   * cerró: se ofrece iniciar sesión), «tope_diario» (Wayio llegó a su límite
+   * de IA de hoy: reintentar no sirve) o «cupo_agotado» (el plan Gratis gastó
+   * sus viajes del mes: se ofrece «Ver planes», nunca reintentar).
    */
-  motivo?: 'sesion' | 'tope_diario'
+  motivo?: 'sesion' | 'tope_diario' | 'cupo_agotado'
 }
 
 const CONSEJOS: readonly (readonly string[])[] = [
@@ -84,6 +86,7 @@ export function PasoTrazado({
   const error = gen.estado === 'error'
   const sinSesion = error && gen.motivo === 'sesion'
   const topeDiario = error && gen.motivo === 'tope_diario'
+  const cupoAgotado = error && gen.motivo === 'cupo_agotado'
 
   return (
     <div className="reticula min-h-dvh">
@@ -106,11 +109,13 @@ export function PasoTrazado({
           <p className="font-display text-h2 text-fg">
             {sinSesion
               ? 'Inicia sesión para trazar tu viaje'
-              : topeDiario
-                ? 'Por hoy no podemos trazar más viajes'
-                : error
-                  ? 'No pudimos trazar tu viaje'
-                  : gen.label}
+              : cupoAgotado
+                ? 'Ya usaste tus viajes gratis de este mes'
+                : topeDiario
+                  ? 'Por hoy no podemos trazar más viajes'
+                  : error
+                    ? 'No pudimos trazar tu viaje'
+                    : gen.label}
           </p>
         </div>
 
@@ -139,6 +144,34 @@ export function PasoTrazado({
           >
             {gen.error ??
               'Inicia sesión y seguimos trazando tu viaje con los mismos datos.'}
+          </Callout>
+        ) : cupoAgotado ? (
+          <Callout
+            tone="info"
+            title="Llegaste al límite del plan Gratis"
+            className="mt-6"
+            action={
+              <>
+                <ButtonLink
+                  href={RUTA_PLANES}
+                  size="sm"
+                  iconEnd={<ArrowRight />}
+                >
+                  Ver planes
+                </ButtonLink>
+                <Button
+                  variant="outline"
+                  icon={<Pencil />}
+                  onClick={onEditar}
+                  size="sm"
+                >
+                  Editar datos
+                </Button>
+              </>
+            }
+          >
+            {gen.error ??
+              'Ya usaste tus viajes gratis de este mes. Con Pro la IA no tiene límite.'}
           </Callout>
         ) : topeDiario ? (
           <Callout

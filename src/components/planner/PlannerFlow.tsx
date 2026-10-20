@@ -21,8 +21,11 @@ import { DUR, EASE } from '@/components/ui/motion'
 import {
   MENSAJE_TOPE_DIARIO,
   codigoDe,
+  esCupoAgotado,
   esTopeDiario,
+  mensajeCupoAgotado,
   segundosDeEspera,
+  textoCupoAgotado,
   textoEspera,
 } from '@/components/trip/limitesIA'
 import { enfocarCampo } from '@/components/trip/TripForm'
@@ -87,6 +90,9 @@ import { indiceDeFase } from './RutaDeFases'
  *   datos del formulario); cualquier otra visita no traza nada sola. Un 401
  *   a mitad (sesión caducada) hace lo mismo. En local sin Supabase se traza
  *   sin cuenta (modoLocalSinCuentas).
+ * - Cupo del plan Gratis agotado (402 cupo_agotado, también con «Otra
+ *   versión»): se muestra el mensaje del servidor con «Ver planes», sin
+ *   «Reintentar» y sin caer al /api/generate de respaldo.
  */
 
 const PASOS: readonly PasoRuta[] = [
@@ -190,9 +196,19 @@ function esErrorDeSesion(err: unknown): boolean {
   return codigoDeError(err) === 'auth_required'
 }
 
+/** ¿Se agotó el cupo del mes? (402 o code cupo_agotado). */
+function esErrorDeCupo(err: unknown): boolean {
+  if (err instanceof StreamGenerateError && err.status === 402) return true
+  return esCupoAgotado(codigoDeError(err))
+}
+
 function mensajeDeError(err: unknown): string {
   if (err instanceof ErrorVisible) return err.message
   if (err instanceof StreamGenerateError) {
+    // Cupo del mes agotado (402 antes de abrir el stream).
+    if (esErrorDeCupo(err)) {
+      return err.mensaje ?? mensajeCupoAgotado('generar', err.renueva)
+    }
     // Tope diario de Wayio (429 antes del stream o evento SSE a mitad).
     if (esTopeDiario(err.code)) return err.mensaje ?? MENSAJE_TOPE_DIARIO
     if (err.status === 429) return mensajeLimite(err.retryAfter)
@@ -625,9 +641,10 @@ function Flujo() {
             volverConErrores(err.campos, err.mensaje)
             return
           }
-          // El stream arrancó (o respondió 4xx, p. ej. 429): la generación ya
-          // corrió, falló o no procede. NO se repite (§6.3: no regenerar dos
-          // veces); mensajeDeError usa retryAfter/mensaje del servidor.
+          // El stream arrancó (o respondió 4xx, p. ej. 402 cupo_agotado o
+          // 429): la generación ya corrió, falló o no procede. NO se repite
+          // (§6.3: no regenerar dos veces); mensajeDeError usa
+          // retryAfter/mensaje del servidor.
           if (err instanceof StreamGenerateError && err.started) throw err
           // El stream no llegó a arrancar: se usa el endpoint clásico.
           const res = await fetch('/api/generate', {
@@ -649,6 +666,12 @@ function Flujo() {
             }
             if (esAuthRequired(res.status, data)) {
               throw new ErrorVisible(MENSAJE_SESION, 'auth_required')
+            }
+            if (res.status === 402 || esCupoAgotado(data)) {
+              throw new ErrorVisible(
+                textoCupoAgotado(data, 'generar'),
+                'cupo_agotado'
+              )
             }
             if (esTopeDiario(data)) {
               throw new ErrorVisible(
@@ -732,14 +755,18 @@ function Flujo() {
           if (!trasLogin) irALoginTrazarRef.current(form, noCache)
           return
         }
-        const tope = esTopeDiario(codigoDeError(err))
+        const motivo = esErrorDeCupo(err)
+          ? ('cupo_agotado' as const)
+          : esTopeDiario(codigoDeError(err))
+            ? ('tope_diario' as const)
+            : null
         setGen((g) =>
           g
             ? {
                 ...g,
                 estado: 'error',
                 error: mensajeDeError(err),
-                ...(tope ? { motivo: 'tope_diario' as const } : {}),
+                ...(motivo ? { motivo } : {}),
               }
             : g
         )

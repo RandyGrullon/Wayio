@@ -33,6 +33,13 @@ const nextConfig: NextConfig = {
         destination: '/planificar?paso=itinerario',
         permanent: false,
       },
+      {
+        // Alias corto de la página de planes; la URL indexada es /precios.
+        // Temporal (307): un 308 se queda en la caché del navegador.
+        source: '/planes',
+        destination: '/precios',
+        permanent: false,
+      },
     ]
   },
   async headers() {

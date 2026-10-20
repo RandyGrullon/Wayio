@@ -1,9 +1,10 @@
 'use client'
 
 import { useState } from 'react'
-import { CalendarClock, Search } from 'lucide-react'
+import { ArrowRight, CalendarClock, Search } from 'lucide-react'
 import type { Activity } from '@/types/activity'
-import { Button, Spinner } from '@/components/ui/Button'
+import { RUTA_PLANES, esRequierePro } from '@/components/trip/limitesIA'
+import { Button, ButtonLink, Spinner } from '@/components/ui/Button'
 import { Callout } from '@/components/ui/Callout'
 import { ChipGroup } from '@/components/ui/Chip'
 import { Sheet } from '@/components/ui/Modal'
@@ -19,7 +20,13 @@ type Paso =
   | { tipo: 'confirmar' }
   | { tipo: 'buscando' }
   | { tipo: 'propuesta'; propuesta: PropuestaReagenda }
-  | { tipo: 'manual'; mensaje: string; huecos: HuecoLibre[] }
+  | {
+      tipo: 'manual'
+      mensaje: string
+      huecos: HuecoLibre[]
+      /** Plan Gratis: reagendar con IA es de Pro (se dice y se enlaza). */
+      requierePro: boolean
+    }
   | { tipo: 'error'; mensaje: string }
 
 interface ReagendarSheetProps {
@@ -61,7 +68,8 @@ function rango(h: HuecoLibre): string {
  * «Buscando nueva hora…» → sugerencia con «Aceptar» y «Descartar». Usa el
  * contrato nuevo de /api/reschedule (día destino, nota y huecos) a través de
  * useTrip. Si la IA no está disponible, ofrece mover la actividad a uno de
- * los huecos libres.
+ * los huecos libres; en el plan Gratis (503 ia_no_disponible, motivo
+ * requiere_pro) añade que con Pro la IA propone la hora.
  */
 export function ReagendarSheet(props: ReagendarSheetProps) {
   return (
@@ -128,6 +136,7 @@ function Pasos({
           r.error ??
           'La sugerencia automática no está disponible. Elige un hueco libre.',
         huecos,
+        requierePro: esRequierePro(r.motivo),
       })
       return
     }
@@ -269,6 +278,19 @@ function Pasos({
           <p className="kicker">Paso 3 de 3</p>
           <p className="mt-2 font-display text-h3 text-fg">Elige un hueco</p>
           <p className="mt-2 text-body-s text-fg-muted">{paso.mensaje}</p>
+          {paso.requierePro ? (
+            <p className="mt-2 flex flex-wrap items-baseline gap-x-2 text-body-s text-fg-muted">
+              Con Pro, la IA te propone la nueva hora.
+              <ButtonLink
+                href={RUTA_PLANES}
+                variant="link"
+                size="sm"
+                iconEnd={<ArrowRight />}
+              >
+                Ver planes
+              </ButtonLink>
+            </p>
+          ) : null}
         </div>
         <ChipGroup
           label="Huecos libres"

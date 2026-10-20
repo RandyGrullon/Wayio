@@ -1,67 +1,67 @@
 'use client'
 
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { ArrowRight, Check } from 'lucide-react'
+import {
+  ACCIONES_CON_CUPO,
+  cantidadAccion,
+  listaConY,
+  textoRenovacion,
+} from '@/components/trip/limitesIA'
 import { Button, ButtonLink } from '@/components/ui/Button'
 import { SelloInfo } from '@/components/ui/Badge'
 import { Callout } from '@/components/ui/Callout'
 import { Card } from '@/components/ui/Card'
 import { Segmented } from '@/components/ui/Segmented'
+import {
+  COMPARATIVA,
+  CUPO_GRATIS,
+  DIAS_PASE,
+  NOMBRE_PLAN,
+  NOTA_USO_JUSTO,
+  PLANES_A_LA_VENTA,
+  type FilaComparativa,
+} from '@/constants/planes'
 import { PLANS } from '@/constants/pricing'
 import type { PlanKey } from '@/constants/pricing'
-import { FEATURES } from '@/constants/features'
-import type { FeatureKey } from '@/constants/features'
+import { useCupo, type Cupo } from '@/hooks/useCupo'
 import { usePro } from '@/hooks/usePro'
 import { track } from '@/lib/analytics/events'
-import { cn } from '@/lib/utils/cn'
 import { formatCurrency, formatPorcentaje } from '@/lib/utils/formatters'
 
 /**
- * Planes de Wayio (docs/DISENO.md §6, MON-05). Contrato de POST
- * /api/stripe/checkout { planId, tripId? }:
- *   200 { url } → Stripe · 200 { url, portal: true, mensaje } → portal (ya
+ * Planes de Wayio (docs/DISENO.md §6, MON-05) a partir del catálogo público
+ * (src/constants/planes.ts): Gratis con cuenta y cupos mensuales, Pro
+ * (mensual o anual) y el Pase Pro de 30 días. Contrato de POST
+ * /api/stripe/checkout { planId }:
+ *   200 { url } → pago · 200 { url, portal: true, mensaje } → portal (ya
  *   suscrito) · 401 → /login?redirect=… · 409 already_pro · 503
- *   checkout_unavailable { mensaje } · 429/400 { error }.
+ *   checkout_unavailable { mensaje } · 400 plan_no_disponible · 429/400
+ *   { error }.
  *
- * Honestidad (§1.3.6): sin «Más elegido» ni estrellas; solo se listan
- * funciones con nombre claro y se avisa de las que son de la app móvil.
+ * Con sesión muestra el uso del mes (GET /api/cupo). Honestidad (§1.3.6): sin
+ * «Más elegido» ni estrellas, solo funciones que el producto entrega.
  */
 
-/** Etiquetas visibles; las funciones sin etiqueta no se anuncian. */
-const ETIQUETAS: Partial<Record<FeatureKey, string>> = {
-  planificacion: 'Itinerarios con IA en tres versiones',
-  mapa_basico: 'Mapa, horarios y presupuesto día a día',
-  reservas_con_afiliado: 'Enlaces de reserva con nuestros socios',
-  sala_grupal: 'Sala de grupo con votos',
-  tiktok_3_por_mes: 'Viajes desde un video (3 al mes)',
-  gps_en_vivo: 'Ubicación en vivo durante el viaje',
-  alerta_nivel_1: 'Alertas básicas de demora',
-  geofencing_basico: 'Avisos al llegar a cada lugar (app móvil)',
-  alertas_ia_completas: 'Alertas de demora con análisis de IA',
-  reoptimizacion_en_vivo: 'Reorganizar el día sobre la marcha',
-  recuperacion_actividades: 'Recuperar actividades perdidas',
-  modo_offline: 'Modo sin conexión',
-  tiktok_ilimitado: 'Viajes desde videos, sin límite',
-  pdf_export: 'Exportar el itinerario en PDF',
-  historial_viajes: 'Historial de viajes',
-  chat_integrado: 'Chat del grupo',
-  split_gastos: 'Dividir gastos entre todos',
-  ubicacion_grupo_vivo: 'Ubicación del grupo en tiempo real',
-  alertas_sincronizadas: 'Alertas para todo el grupo',
-  hasta_15_personas: 'Hasta 15 personas por viaje',
-}
+/** «2 viajes al mes», «5 ajustes con IA al mes», «3 fotos o videos al mes». */
+const CUPOS_GRATIS = ACCIONES_CON_CUPO.map(
+  (a) => `${cantidadAccion(a, CUPO_GRATIS[a])} al mes`
+)
 
-function funciones(nivel: true | 'pro' | 'grupo'): string[] {
-  return (Object.keys(FEATURES) as FeatureKey[])
-    .filter((k) => FEATURES[k] === nivel)
-    .map((k) => ETIQUETAS[k])
-    .filter((e): e is string => Boolean(e))
-}
+const minuscula = (t: string) => t.charAt(0).toLowerCase() + t.slice(1)
 
-const GRATIS = funciones(true)
-const PRO = funciones('pro')
-const GRUPO = funciones('grupo')
+/** Lo que Pro suma a Gratis, sacado de la comparativa del catálogo. */
+function extraDePro(f: FilaComparativa): string {
+  return typeof f.pro === 'string'
+    ? `${f.funcion}, ${minuscula(f.pro)}`
+    : f.funcion
+}
+const EXTRAS_PRO = COMPARATIVA.filter(
+  (f) => f.pro !== false && f.pro !== f.gratis
+).map(extraDePro)
+
+const A_LA_VENTA = new Set<PlanKey>(PLANES_A_LA_VENTA)
 
 /** Precio de un pago: con centavos («US$6.99»), salvo el gratis («US$0»). */
 const precio = (n: number) => formatCurrency(n, 'USD', { decimales: n !== 0 })
@@ -72,6 +72,25 @@ const AHORRO_ANUAL = Math.round(
 
 type Facturacion = 'mensual' | 'anual'
 
+// Etiqueta corta (cabe en la tarjeta a 320 px); el ahorro completo va en el
+// nombre accesible y en el sello de la tarjeta.
+const FACTURACIONES = (
+  [
+    {
+      value: 'mensual',
+      plan: 'pro_mensual',
+      label: 'Mensual',
+      ariaLabel: 'Mensual',
+    },
+    {
+      value: 'anual',
+      plan: 'pro_anual',
+      label: `Anual · −${formatPorcentaje(AHORRO_ANUAL)}`,
+      ariaLabel: `Anual, ahorra ${formatPorcentaje(AHORRO_ANUAL)}`,
+    },
+  ] as const
+).filter((f) => A_LA_VENTA.has(f.plan))
+
 type Aviso = {
   tono: 'danger' | 'warning' | 'info'
   texto: string
@@ -79,11 +98,7 @@ type Aviso = {
 } | null
 
 export interface PricingCardsProps {
-  /** Versión compacta para el paywall (2 columnas como máximo). */
-  compacto?: boolean
-  /** Liga el «Pro por viaje» a un viaje guardado (trips.id). */
-  tripId?: string
-  /** Volvió de Stripe sin pagar (?cancelado=1). */
+  /** Volvió del pago sin pagar (?cancelado=1). */
   cancelado?: boolean
   /** A dónde volver tras iniciar sesión (401). */
   redirectLogin?: string
@@ -103,15 +118,27 @@ async function leerCuerpo(res: Response): Promise<Record<string, unknown>> {
 const textoDe = (v: unknown): string | null =>
   typeof v === 'string' && v.trim() ? v : null
 
+/** «1 de 2 viajes, 3 de 5 ajustes con IA y 0 de 3 fotos o videos». */
+function resumenUso(cupos: NonNullable<Cupo['cupos']>): string {
+  return listaConY(
+    ACCIONES_CON_CUPO.map((a) => {
+      const { usados, limite } = cupos[a]
+      return `${usados} de ${cantidadAccion(a, limite)}`
+    })
+  )
+}
+
 export function PricingCards({
-  compacto = false,
-  tripId,
   cancelado = false,
   redirectLogin = '/precios',
 }: PricingCardsProps) {
   const router = useRouter()
+  const uid = useId().replace(/[^a-zA-Z0-9_-]/g, '')
   const { tier, loading: cargandoPlan } = usePro()
-  const [facturacion, setFacturacion] = useState<Facturacion>('anual')
+  const { cupo } = useCupo()
+  const [facturacion, setFacturacion] = useState<Facturacion>(
+    FACTURACIONES.some((f) => f.value === 'anual') ? 'anual' : 'mensual'
+  )
   const [cargando, setCargando] = useState<PlanKey | null>(null)
   const [aviso, setAviso] = useState<Aviso>(null)
 
@@ -122,10 +149,7 @@ export function PricingCards({
       const res = await fetch('/api/stripe/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          planId,
-          ...(tripId && planId === 'pro_por_viaje' ? { tripId } : {}),
-        }),
+        body: JSON.stringify({ planId }),
       })
       const body = await leerCuerpo(res)
 
@@ -154,6 +178,16 @@ export function PricingCards({
         setCargando(null)
         return
       }
+      if (body['code'] === 'plan_no_disponible') {
+        setAviso({
+          tono: 'warning',
+          texto:
+            textoDe(body['error']) ??
+            'Ese plan ya no está a la venta. Elige uno de los planes de esta página.',
+        })
+        setCargando(null)
+        return
+      }
       const url = textoDe(body['url'])
       if (!res.ok || !url) {
         setAviso({
@@ -166,12 +200,7 @@ export function PricingCards({
         return
       }
 
-      track('checkout_iniciado', {
-        tipo: 'plan',
-        planId,
-        moneda: 'USD',
-        tripId: planId === 'pro_por_viaje' ? tripId : undefined,
-      })
+      track('checkout_iniciado', { tipo: 'plan', planId, moneda: 'USD' })
       track('pro_paywall_shown', { plan: planId })
       // { url, portal: true }: ya suscrito → portal de pagos (misma salida).
       window.location.href = url
@@ -184,8 +213,24 @@ export function PricingCards({
     }
   }
 
-  const planPro: PlanKey = facturacion === 'anual' ? 'pro_anual' : 'pro_mensual'
+  const planPro: PlanKey =
+    facturacion === 'anual' && A_LA_VENTA.has('pro_anual')
+      ? 'pro_anual'
+      : 'pro_mensual'
+  const vendePro = FACTURACIONES.length > 0
+  const vendePase = A_LA_VENTA.has('pro_por_viaje')
   const ocupado = cargando !== null
+  // cupos null = Pro sin límite (contrato de GET /api/cupo).
+  const tienePro =
+    (!cargandoPlan && tier !== 'free') || (cupo !== null && cupo.cupos === null)
+  const conCuenta = cupo !== null
+  const cuposGratis = cupo?.cupos ?? null
+  const enGratis = cuposGratis !== null && !tienePro
+  const renueva = textoRenovacion(cupo?.renueva)
+
+  const idGratis = `${uid}-gratis`
+  const idPro = `${uid}-pro`
+  const idPase = `${uid}-pase`
 
   return (
     <div className="flex flex-col gap-6">
@@ -195,13 +240,13 @@ export function PricingCards({
         </Callout>
       ) : null}
 
-      {!cargandoPlan && tier !== 'free' && !aviso ? (
+      {tienePro && !aviso ? (
         <Callout
           tone="success"
           title={
             tier === 'grupo'
-              ? 'Ya tienes Wayio Pro grupo'
-              : 'Ya tienes Wayio Pro'
+              ? `Tienes ${NOMBRE_PLAN.pro_grupo}: sin límite`
+              : 'Tienes Pro: sin límite'
           }
           action={
             <ButtonLink href="/cuenta" variant="link" iconEnd={<ArrowRight />}>
@@ -209,8 +254,17 @@ export function PricingCards({
             </ButtonLink>
           }
         >
-          Gracias por apoyar a Wayio. Puedes cambiar o cancelar tu plan desde tu
-          cuenta.
+          La IA no tiene límite, con uso justo. Gracias por apoyar a Wayio.
+        </Callout>
+      ) : null}
+
+      {enGratis && cuposGratis && !aviso ? (
+        <Callout tone="info" title="Tu uso este mes">
+          Este mes llevas {resumenUso(cuposGratis)}.
+          {renueva ? ` Tu cupo se renueva ${renueva}.` : ''}
+          {cupo?.aproximado
+            ? ' Ahora mismo no pudimos leer tu uso exacto: las cifras pueden no estar al día.'
+            : ''}
         </Callout>
       ) : null}
 
@@ -235,42 +289,40 @@ export function PricingCards({
         </Callout>
       ) : null}
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <Segmented<Facturacion>
-          label="Facturación de Pro"
-          value={facturacion}
-          onValueChange={setFacturacion}
-          options={[
-            { value: 'mensual', label: 'Mensual' },
-            {
-              value: 'anual',
-              label: `Anual · ahorra ${formatPorcentaje(AHORRO_ANUAL)}`,
-            },
-          ]}
-        />
-        <p className="text-caption text-fg-subtle">
-          Precios en dólares estadounidenses (USD).
-        </p>
-      </div>
-
-      <ul
-        className={cn(
-          'grid gap-5',
-          compacto ? 'md:grid-cols-2' : 'md:grid-cols-2 xl:grid-cols-4'
-        )}
-      >
+      <ul className="grid gap-5 lg:grid-cols-3">
         {/* Gratis */}
         <li className="flex">
-          <Card as="article" className="flex w-full flex-col">
-            <p className="kicker">Gratis</p>
+          <Card
+            as="article"
+            aria-labelledby={idGratis}
+            className="flex w-full flex-col"
+          >
+            <div className="flex min-h-6 items-center justify-between gap-2">
+              <h3 id={idGratis} className="kicker">
+                {NOMBRE_PLAN.free}
+              </h3>
+              {enGratis ? <SelloInfo tone="tinta">Tu plan</SelloInfo> : null}
+            </div>
+            <p className="mt-1 text-title text-fg">Gratis con tu cuenta</p>
             <p className="mt-3 flex items-baseline gap-2">
               <span className="text-num-xl text-fg tnum">{precio(0)}</span>
               <span className="text-caption text-fg-muted">para siempre</span>
             </p>
             <p className="mt-2 text-body-s text-fg-muted">
-              Para planificar tus viajes y compartirlos.
+              Crea tu cuenta y planifica con IA cada mes. El cupo se renueva el
+              día 1.
             </p>
-            <ListaFunciones items={GRATIS} />
+            <ListaFunciones items={CUPOS_GRATIS} intro="Cada mes:" />
+            <p className="-mt-2 mb-6 text-body-s text-fg-muted">
+              Y sin pagar: mapa, modo sin conexión, PDF, historial y sala de
+              grupo.{' '}
+              <a
+                href="#comparativa"
+                className="rounded-sm text-accent underline decoration-1 underline-offset-[3px] hover:text-accent-hover"
+              >
+                Ver la comparativa
+              </a>
+            </p>
             <ButtonLink
               href="/planificar"
               variant="outline"
@@ -278,126 +330,139 @@ export function PricingCards({
               fullWidth
               className="mt-auto"
             >
-              Empezar gratis
+              {conCuenta ? 'Trazar un viaje' : 'Empezar gratis'}
             </ButtonLink>
           </Card>
         </li>
 
         {/* Pro (mensual / anual) */}
-        <li className="flex">
-          <Card
-            as="article"
-            variant="elevated"
-            className="relative flex w-full flex-col border-border-strong"
-          >
-            <div className="flex items-center justify-between gap-2">
-              <p className="kicker text-fg">Pro viajero</p>
-              {facturacion === 'anual' ? (
-                <SelloInfo tone="laton">
-                  Ahorra {formatPorcentaje(AHORRO_ANUAL)}
-                </SelloInfo>
+        {vendePro ? (
+          <li className="flex">
+            <Card
+              as="article"
+              variant="elevated"
+              aria-labelledby={idPro}
+              className="relative flex w-full flex-col border-border-strong"
+            >
+              <div className="flex min-h-6 items-center justify-between gap-2">
+                <h3 id={idPro} className="kicker text-fg">
+                  Pro
+                </h3>
+                {planPro === 'pro_anual' ? (
+                  <SelloInfo tone="laton">
+                    Ahorra {formatPorcentaje(AHORRO_ANUAL)}
+                  </SelloInfo>
+                ) : null}
+              </div>
+              <p className="mt-1 text-title text-fg">IA sin límites</p>
+              {FACTURACIONES.length > 1 ? (
+                <Segmented<Facturacion>
+                  label="Facturación de Pro"
+                  value={facturacion}
+                  onValueChange={setFacturacion}
+                  options={FACTURACIONES.map((f) => ({
+                    value: f.value,
+                    label: f.label,
+                    ariaLabel: f.ariaLabel,
+                  }))}
+                  fullWidth
+                  className="mt-4"
+                />
               ) : null}
-            </div>
-            <p className="mt-3 flex items-baseline gap-2">
-              <span className="text-num-xl text-fg tnum">
-                {precio(PLANS[planPro].precio)}
-              </span>
-              <span className="text-caption text-fg-muted">
-                {facturacion === 'anual' ? 'al año' : 'al mes'}
-              </span>
-            </p>
-            <p className="mt-2 text-body-s text-fg-muted">
-              {facturacion === 'anual'
-                ? `Equivale a ${precio(PLANS.pro_anual.precio / 12)} al mes. Cancela cuando quieras.`
-                : 'Se renueva cada mes. Cancela cuando quieras.'}
-            </p>
-            <ListaFunciones items={PRO} intro="Todo lo gratis, más:" />
-            <Button
-              variant="primary"
-              size="lg"
-              fullWidth
-              className="mt-auto"
-              iconEnd={<ArrowRight />}
-              onClick={() => void handleCheckout(planPro)}
-              disabled={ocupado}
-              loading={cargando === planPro}
-              loadingText="Abriendo el pago…"
-            >
-              {facturacion === 'anual'
-                ? 'Elegir Pro anual'
-                : 'Elegir Pro mensual'}
-            </Button>
-          </Card>
-        </li>
+              <p className="mt-4 flex items-baseline gap-2">
+                <span className="text-num-xl text-fg tnum">
+                  {precio(PLANS[planPro].precio)}
+                </span>
+                <span className="text-caption text-fg-muted">
+                  {planPro === 'pro_anual' ? 'al año' : 'al mes'}
+                </span>
+              </p>
+              <p className="mt-2 text-body-s text-fg-muted">
+                {planPro === 'pro_anual'
+                  ? `Equivale a ${precio(PLANS.pro_anual.precio / 12)} al mes. Se renueva cada año; cancela cuando quieras.`
+                  : 'Se renueva cada mes. Cancela cuando quieras.'}
+              </p>
+              <ListaFunciones
+                items={EXTRAS_PRO}
+                intro="Todo lo de Gratis, más:"
+              />
+              <Button
+                variant="primary"
+                size="lg"
+                fullWidth
+                className="mt-auto"
+                iconEnd={<ArrowRight />}
+                onClick={() => void handleCheckout(planPro)}
+                disabled={ocupado}
+                loading={cargando === planPro}
+                loadingText="Abriendo el pago…"
+              >
+                {planPro === 'pro_anual'
+                  ? `Elegir ${NOMBRE_PLAN.pro_anual}`
+                  : `Elegir ${NOMBRE_PLAN.pro_mensual}`}
+              </Button>
+            </Card>
+          </li>
+        ) : null}
 
-        {/* Pro por viaje */}
-        <li className="flex">
-          <Card as="article" className="flex w-full flex-col">
-            <p className="kicker">Pro por viaje</p>
-            <p className="mt-3 flex items-baseline gap-2">
-              <span className="text-num-xl text-fg tnum">
-                {precio(PLANS.pro_por_viaje.precio)}
-              </span>
-              <span className="text-caption text-fg-muted">pago único</span>
-            </p>
-            <p className="mt-2 text-body-s text-fg-muted">
-              Todo Pro para un solo viaje, sin suscripción.
-            </p>
-            <ListaFunciones
-              items={PRO}
-              intro="Lo mismo que Pro, para un viaje:"
-            />
-            <Button
-              variant="outline"
-              size="lg"
-              fullWidth
-              className="mt-auto"
-              onClick={() => void handleCheckout('pro_por_viaje')}
-              disabled={ocupado}
-              loading={cargando === 'pro_por_viaje'}
-              loadingText="Abriendo el pago…"
+        {/* Pase Pro de 30 días */}
+        {vendePase ? (
+          <li className="flex">
+            <Card
+              as="article"
+              aria-labelledby={idPase}
+              className="flex w-full flex-col"
             >
-              {/* Sin viaje concreto (p. ej. en /precios) no hay «este». */}
-              {tripId ? 'Pagar este viaje' : 'Elegir Pro por viaje'}
-            </Button>
-          </Card>
-        </li>
-
-        {/* Grupo */}
-        <li className="flex">
-          <Card as="article" className="flex w-full flex-col">
-            <p className="kicker">Pro grupo</p>
-            <p className="mt-3 flex items-baseline gap-2">
-              <span className="text-num-xl text-fg tnum">
-                {precio(PLANS.pro_grupo.precio)}
-              </span>
-              <span className="text-caption text-fg-muted">al mes</span>
-            </p>
-            <p className="mt-2 text-body-s text-fg-muted">
-              Para viajar con familia o amigos y decidir juntos.
-            </p>
-            <ListaFunciones items={GRUPO} intro="Todo Pro, más:" />
-            <Button
-              variant="tinta"
-              size="lg"
-              fullWidth
-              className="mt-auto"
-              onClick={() => void handleCheckout('pro_grupo')}
-              disabled={ocupado}
-              loading={cargando === 'pro_grupo'}
-              loadingText="Abriendo el pago…"
-            >
-              Elegir Pro grupo
-            </Button>
-          </Card>
-        </li>
+              <div className="flex min-h-6 items-center">
+                <h3 id={idPase} className="kicker">
+                  {NOMBRE_PLAN.pro_por_viaje}
+                </h3>
+              </div>
+              <p className="mt-1 text-title text-fg">Pro sin suscripción</p>
+              <p className="mt-3 flex items-baseline gap-2">
+                <span className="text-num-xl text-fg tnum">
+                  {precio(PLANS.pro_por_viaje.precio)}
+                </span>
+                <span className="text-caption text-fg-muted">pago único</span>
+              </p>
+              <p className="mt-2 text-body-s text-fg-muted">
+                Activa Pro en toda tu cuenta durante {DIAS_PASE} días. No se
+                renueva solo.
+              </p>
+              <ListaFunciones
+                items={[
+                  `Todo Pro durante ${DIAS_PASE} días desde el pago`,
+                  'Para todos tus viajes, no solo uno',
+                  'Al terminar vuelves a Gratis sin cobros nuevos',
+                ]}
+                intro="Ideal para tu próximo viaje:"
+              />
+              <Button
+                variant="outline"
+                size="lg"
+                fullWidth
+                className="mt-auto"
+                onClick={() => void handleCheckout('pro_por_viaje')}
+                disabled={ocupado}
+                loading={cargando === 'pro_por_viaje'}
+                loadingText="Abriendo el pago…"
+              >
+                Elegir el pase de {DIAS_PASE} días
+              </Button>
+            </Card>
+          </li>
+        ) : null}
       </ul>
 
-      <p className="text-caption text-fg-subtle">
-        Los pagos los procesa Stripe; Wayio no guarda los datos de tu tarjeta.
-        Algunas funciones, como los avisos por cercanía y las alertas durante el
-        viaje, están en la app móvil.
-      </p>
+      <div className="flex flex-col gap-1.5 text-caption text-fg-subtle">
+        <p>{NOTA_USO_JUSTO}</p>
+        <p>
+          Precios en dólares estadounidenses (USD). Los pagos se hacen con un
+          procesador de pagos seguro: Wayio no ve ni guarda los datos de tu
+          tarjeta. La ubicación en vivo y los avisos al llegar están en la app
+          móvil.
+        </p>
+      </div>
     </div>
   )
 }
