@@ -9,6 +9,8 @@ import {
   ExternalLink,
   Hotel,
   Plane,
+  ShieldCheck,
+  Smartphone,
   TriangleAlert,
 } from 'lucide-react'
 import type { Trip } from '@/types/trip'
@@ -16,15 +18,19 @@ import { Card, CardFranja } from '@/components/ui/Card'
 import { Switch } from '@/components/ui/Switch'
 import {
   AFFILIATE_REL,
-  buildBookingLink,
-  buildCarRentalLink,
+  describeCarRentalLink,
+  describeEsimLink,
   describeFlightsLink,
+  describeHotelsLink,
+  describeInsuranceLink,
 } from '@/constants/affiliateLinks'
 import type {
   ProveedorAfiliado,
   CategoriaAfiliado,
 } from '@/lib/analytics/events'
 import { track } from '@/lib/analytics/events'
+import { proveedorAnalitica } from './afiliados'
+import { AvisoPatrocinado } from './Patrocinado'
 import {
   formatCurrency,
   formatDias,
@@ -108,11 +114,15 @@ export function TripEssentials({
     vuelta: fechaFin,
     personas: desglose.personas,
   })
-  const hoteles = buildBookingLink(itinerary.destino, fechaInicio, {
+  const hoteles = describeHotelsLink(itinerary.destino, fechaInicio, {
     checkOut: fechaFin,
     adultos: desglose.personas,
     habitaciones: Math.max(1, Math.ceil(desglose.personas / 2)),
   })
+  const carros = describeCarRentalLink()
+  // eSIM y seguro solo aparecen con su ID configurado.
+  const esim = describeEsimLink()
+  const seguro = describeInsuranceLink()
   const clic = (proveedor: ProveedorAfiliado, categoria: CategoriaAfiliado) =>
     track('click_afiliado', {
       proveedor,
@@ -193,9 +203,9 @@ export function TripEssentials({
             ) : null
           }
           enlace={{
-            href: hoteles,
+            href: hoteles.url,
             texto: 'Ver hoteles',
-            onClick: () => clic('booking', 'hotel'),
+            onClick: () => clic(proveedorAnalitica(hoteles.proveedor), 'hotel'),
           }}
         />
 
@@ -213,11 +223,39 @@ export function TripEssentials({
             />
           }
           enlace={{
-            href: buildCarRentalLink(),
+            href: carros.url,
             texto: 'Ver carros',
-            onClick: () => clic('booking_cars', 'carro'),
+            onClick: () => clic(proveedorAnalitica(carros.proveedor), 'carro'),
           }}
         />
+      </div>
+
+      <div className="mt-4 flex flex-col gap-x-6 gap-y-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+        {esim || seguro ? (
+          <ul className="flex flex-wrap items-center gap-x-5 gap-y-2">
+            {esim ? (
+              <li>
+                <EnlaceExtra
+                  href={esim.url}
+                  icono={<Smartphone />}
+                  texto="eSIM con datos"
+                  onClick={() => clic(esim.proveedor, 'esim')}
+                />
+              </li>
+            ) : null}
+            {seguro ? (
+              <li>
+                <EnlaceExtra
+                  href={seguro.url}
+                  icono={<ShieldCheck />}
+                  texto="Seguro de viaje"
+                  onClick={() => clic(seguro.proveedor, 'seguro')}
+                />
+              </li>
+            ) : null}
+          </ul>
+        ) : null}
+        <AvisoPatrocinado />
       </div>
 
       <TotalEstimado desglose={desglose} reserva={reserva} className="mt-6" />
@@ -280,6 +318,41 @@ function Boleto({
         </a>
       </div>
     </Card>
+  )
+}
+
+/** Enlace patrocinado secundario (eSIM, seguro) bajo los boletos. */
+function EnlaceExtra({
+  href,
+  icono,
+  texto,
+  onClick,
+}: {
+  href: string
+  icono: ReactNode
+  texto: string
+  onClick?: () => void
+}) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel={AFFILIATE_REL}
+      onClick={onClick}
+      className="inline-flex items-center gap-1.5 rounded-sm text-[14px] font-semibold text-accent underline decoration-1 underline-offset-[3px] hover:text-accent-hover"
+    >
+      <span
+        aria-hidden="true"
+        className="inline-flex text-fg-subtle [&_svg]:size-4 [&_svg]:stroke-[1.75]"
+      >
+        {icono}
+      </span>
+      {texto}
+      <ExternalLink aria-hidden="true" strokeWidth={1.75} className="size-4" />
+      <span className="sr-only">
+        (enlace patrocinado, se abre en otra pestaña)
+      </span>
+    </a>
   )
 }
 

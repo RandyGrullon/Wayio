@@ -7,6 +7,42 @@
  *
  * Los enlaces se construyen AL RENDERIZAR (no se guardan en el viaje), así los
  * viajes antiguos se benefician en cuanto se configuren los IDs.
+ *
+ * Formato de cada socio (revisado el 2026-11-05):
+ * - Booking.com: parámetro `aid`. OJO: Booking exige su aprobación por
+ *   escrito para usar sus enlaces en un producto con IA; no pongas
+ *   NEXT_PUBLIC_BOOKING_AID hasta tenerla (sin aid el enlace sirve igual, sin
+ *   comisión).
+ * - Travelpayouts → Trip.com (hoteles 5,5 %, cookie de 30 días):
+ *   https://tp.media/r?marker=…&trs=…&p=8626&campaign_id=121&u=<url de
+ *   trip.com>. El marker es el ID de socio y trs el ID del proyecto (no son lo
+ *   mismo). Fuentes: support.travelpayouts.com/hc/en-us/articles/360027634052
+ *   y /25289759198226, travelpayouts.com/en/offers/trip-com-affiliate-program.
+ *   p y campaign_id son los del programa Trip.com: comprobado siguiendo la
+ *   redirección (lleva a trip.com con allianceid/SID y el marker en
+ *   trip_sub1; con una URL que no es de trip.com responde 403). Son los mismos
+ *   que muestra el «enlace largo» del panel; si cambian, actualiza TP_TRIPCOM.
+ * - Civitatis: `?aid=<número de afiliado>` sobre cualquier URL del sitio
+ *   (civitatis.com/es/afiliados). La búsqueda es /es/buscar?q= (el formulario
+ *   de la portada).
+ * - GetYourGuide: `partner_id=<Partner ID>` en cualquier URL; búsqueda en
+ *   /s/?q=. Los deep links manuales deben llevar el Partner ID
+ *   (partner.getyourguide.support/hc/en-us/articles/13981115983133); el
+ *   nombre del parámetro y la búsqueda, de la guía de integración de Hostaway
+ *   (support.hostaway.com/hc/en-us/articles/49692599711899). `cmp` es la
+ *   etiqueta de campaña opcional.
+ * - DiscoverCars: `?a_aid=<ID>` (Post Affiliate Pro: el servidor guarda la
+ *   cookie clickAf, comprobado). Los enlaces a una ciudad concreta salen del
+ *   generador de páginas del panel (discovercars.com/affiliate), así que se
+ *   enlaza a la portada en español.
+ * - IATI Seguros: `?r=<código>` (formato de los enlaces de colaborador; el
+ *   enlace personalizado sale del panel myiati.com, iatiseguros.com/alta-
+ *   colaboradores).
+ * - Omitidos: Expedia (Creator Program) solo da enlaces desde su Link Builder
+ *   o su Toolbox con la sesión iniciada, ligados a la cuenta
+ *   (help.creator.expediagroup.com/hc/en-us/articles/13164069784727); Heymondo
+ *   entrega una URL única desde su panel sin un parámetro de ID documentado
+ *   (heymondo.com/affiliate-program).
  */
 
 // ---------------------------------------------------------------------------
@@ -33,6 +69,22 @@ const travelpayoutsMarker = (): string | undefined =>
   idAfiliado(process.env.NEXT_PUBLIC_TP_MARKER)
 const airaloRef = (): string | undefined =>
   idAfiliado(process.env.NEXT_PUBLIC_AIRALO_REF)
+const travelpayoutsTrs = (): string | undefined =>
+  idAfiliado(process.env.NEXT_PUBLIC_TP_TRS)
+/** Trip.com va por Travelpayouts: el programa se conecta aparte en el panel. */
+const tripcomConectado = (): boolean =>
+  /^(?:1|true|s[ií])$/i.test(process.env.NEXT_PUBLIC_TP_TRIPCOM?.trim() ?? '')
+const civitatisAid = (): string | undefined =>
+  idAfiliado(process.env.NEXT_PUBLIC_CIVITATIS_AID)
+const gygPartnerId = (): string | undefined =>
+  idAfiliado(process.env.NEXT_PUBLIC_GYG_PARTNER_ID)
+const discoverCarsAid = (): string | undefined =>
+  idAfiliado(process.env.NEXT_PUBLIC_DISCOVERCARS_AID)
+const iatiRef = (): string | undefined =>
+  idAfiliado(process.env.NEXT_PUBLIC_IATI_REF)
+
+const tripcomActivo = (): boolean =>
+  Boolean(travelpayoutsMarker()) && tripcomConectado()
 
 /** Qué programas de afiliado tienen su ID configurado. */
 export function afiliadosConfigurados(): {
@@ -40,19 +92,50 @@ export function afiliadosConfigurados(): {
   viator: boolean
   skyscanner: boolean
   travelpayouts: boolean
+  tripcom: boolean
+  civitatis: boolean
+  getyourguide: boolean
+  discovercars: boolean
   airalo: boolean
+  iati: boolean
 } {
   return {
     booking: Boolean(bookingAid()),
     viator: Boolean(viatorPid() && viatorMcid()),
     skyscanner: Boolean(skyscannerAssociateId()),
     travelpayouts: Boolean(travelpayoutsMarker()),
+    tripcom: tripcomActivo(),
+    civitatis: Boolean(civitatisAid()),
+    getyourguide: Boolean(gygPartnerId()),
+    discovercars: Boolean(discoverCarsAid()),
     airalo: Boolean(airaloRef()),
+    iati: Boolean(iatiRef()),
   }
 }
 
 /** `rel` recomendado para los enlaces de afiliado. */
 export const AFFILIATE_REL = 'noopener noreferrer sponsored'
+
+/** Aviso de enlaces patrocinados (FTC y LSSI): junto a los botones de reserva. */
+export const AVISO_PATROCINADO =
+  'Enlaces patrocinados: Wayio puede recibir una comisión, sin costo para ti.'
+
+/** Socio al que apunta un enlace (para la analítica de clics). */
+export type SocioAfiliado =
+  | 'booking'
+  | 'booking_cars'
+  | 'tripcom'
+  | 'viator'
+  | 'civitatis'
+  | 'getyourguide'
+  | 'discovercars'
+  | 'airalo'
+  | 'iati'
+
+export interface EnlaceAfiliado<P extends SocioAfiliado = SocioAfiliado> {
+  url: string
+  proveedor: P
+}
 
 // ---------------------------------------------------------------------------
 // Utilidades
@@ -481,7 +564,11 @@ export interface BookingLinkOptions {
   habitaciones?: number | undefined
 }
 
-/** Búsqueda de alojamiento en Booking.com para un destino y fechas. */
+/**
+ * Búsqueda de alojamiento en Booking.com para un destino y fechas.
+ * Booking exige aprobación por escrito para usarlo en un producto con IA: no
+ * configures el aid sin ella (ver la cabecera del archivo).
+ */
 export function buildBookingLink(
   destino: string,
   checkIn?: string,
@@ -503,12 +590,90 @@ export function buildBookingLink(
   return `https://www.booking.com/searchresults.html?${params}`
 }
 
+/** Programa Trip.com dentro de Travelpayouts (ver la cabecera del archivo). */
+const TP_TRIPCOM = { p: '8626', campaignId: '121' } as const
+
+/**
+ * Búsqueda de hoteles en Trip.com. Con el marker de Travelpayouts y el
+ * programa conectado (NEXT_PUBLIC_TP_TRIPCOM) pasa por tp.media para que el
+ * clic cuente; si no, es el enlace directo, sin comisión.
+ */
+export function buildTripcomHotelsLink(
+  destino: string,
+  checkIn?: string,
+  opts: BookingLinkOptions = {}
+): string {
+  const params = new URLSearchParams({
+    keyword: destino.trim(),
+    locale: 'es-ES',
+  })
+  const entrada = fechaValida(checkIn) ? checkIn : undefined
+  if (entrada) params.set('checkin', entrada)
+  if (entrada && fechaValida(opts.checkOut) && opts.checkOut > entrada) {
+    params.set('checkout', opts.checkOut)
+  }
+  if (opts.adultos !== undefined) {
+    params.set('adult', String(entre(opts.adultos, 1, 30, 2)))
+    params.set('crn', String(entre(opts.habitaciones, 1, 30, 1)))
+  }
+  const destinoUrl = `https://www.trip.com/hotels/list?${params}`
+
+  const marker = travelpayoutsMarker()
+  if (!marker || !tripcomConectado()) return destinoUrl
+  const tp = new URLSearchParams({ marker })
+  const trs = travelpayoutsTrs()
+  if (trs) tp.set('trs', trs)
+  tp.set('p', TP_TRIPCOM.p)
+  tp.set('campaign_id', TP_TRIPCOM.campaignId)
+  tp.set('u', destinoUrl)
+  return `https://tp.media/r?${tp}`
+}
+
+/**
+ * Enlace de hoteles para la UI: Trip.com (Travelpayouts) si está activo; si
+ * no, Booking.com (con su aid si lo hay).
+ */
+export function describeHotelsLink(
+  destino: string,
+  checkIn?: string,
+  opts: BookingLinkOptions = {}
+): EnlaceAfiliado<'tripcom' | 'booking'> {
+  if (tripcomActivo()) {
+    return {
+      url: buildTripcomHotelsLink(destino, checkIn, opts),
+      proveedor: 'tripcom',
+    }
+  }
+  return { url: buildBookingLink(destino, checkIn, opts), proveedor: 'booking' }
+}
+
 /** Alquiler de carros en Booking.com (sustituye al enlace escrito a mano). */
 export function buildCarRentalLink(): string {
   const params = new URLSearchParams({ lang: 'es' })
   const aid = bookingAid()
   if (aid) params.set('aid', aid)
   return `https://www.booking.com/cars/index.html?${params}`
+}
+
+/** Alquiler de carros en DiscoverCars (portada en español). */
+export function buildDiscoverCarsLink(): string {
+  const aid = discoverCarsAid()
+  return aid
+    ? `https://www.discovercars.com/es?${new URLSearchParams({ a_aid: aid })}`
+    : 'https://www.discovercars.com/es'
+}
+
+/**
+ * Enlace de carros para la UI: DiscoverCars si tiene su ID; si no, Booking.com
+ * (sin ID de DiscoverCars no hay motivo para preferirlo).
+ */
+export function describeCarRentalLink(): EnlaceAfiliado<
+  'discovercars' | 'booking_cars'
+> {
+  if (discoverCarsAid()) {
+    return { url: buildDiscoverCarsLink(), proveedor: 'discovercars' }
+  }
+  return { url: buildCarRentalLink(), proveedor: 'booking_cars' }
 }
 
 /**
@@ -535,12 +700,99 @@ export function buildActivityLink(nombre: string, ciudad = ''): string {
 /** @deprecated Usa buildActivityLink al renderizar. Se mantiene por compatibilidad. */
 export const buildViatorLink = buildActivityLink
 
+/** 'Santo Domingo, República Dominicana' → 'santo-domingo' (URL de Civitatis). */
+function slugCiudad(ciudad: string): string {
+  return (normalizar(ciudad).split(',')[0] ?? '').trim().replace(/\s+/g, '-')
+}
+
+/**
+ * Actividad en Civitatis. Con nombre: su buscador. Solo con ciudad: la página
+ * del destino, porque si la búsqueda coincide con un destino Civitatis
+ * redirige y pierde el `aid` (un destino que no existe lleva a la portada
+ * conservándolo).
+ */
+export function buildCivitatisLink(nombre: string, ciudad = ''): string {
+  const aid = civitatisAid()
+  const texto = [nombre, ciudad]
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .join(' ')
+  if (nombre.trim()) {
+    const params = new URLSearchParams({ q: texto })
+    if (aid) params.set('aid', aid)
+    return `https://www.civitatis.com/es/buscar?${params}`
+  }
+  const slug = slugCiudad(ciudad)
+  const base = `https://www.civitatis.com/es/${slug ? `${slug}/` : ''}`
+  return aid ? `${base}?${new URLSearchParams({ aid })}` : base
+}
+
+/** Actividad en GetYourGuide (su buscador, con el Partner ID si lo hay). */
+export function buildGetYourGuideLink(nombre: string, ciudad = ''): string {
+  const texto = [nombre, ciudad]
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .join(' ')
+  const params = new URLSearchParams({ q: texto })
+  const partnerId = gygPartnerId()
+  if (partnerId) {
+    params.set('partner_id', partnerId)
+    params.set('cmp', 'wayio')
+  }
+  return `https://www.getyourguide.com/s/?${params}`
+}
+
+/**
+ * Enlace «Reservar» de una actividad para la UI: el primer socio configurado
+ * en este orden (Viator, Civitatis, GetYourGuide). Si no hay ninguno, Viator
+ * sin comisión, como hasta ahora.
+ */
+export function describeActivityLink(
+  nombre: string,
+  ciudad = ''
+): EnlaceAfiliado<'viator' | 'civitatis' | 'getyourguide'> {
+  if (viatorPid() && viatorMcid()) {
+    return { url: buildActivityLink(nombre, ciudad), proveedor: 'viator' }
+  }
+  if (civitatisAid()) {
+    return { url: buildCivitatisLink(nombre, ciudad), proveedor: 'civitatis' }
+  }
+  if (gygPartnerId()) {
+    return {
+      url: buildGetYourGuideLink(nombre, ciudad),
+      proveedor: 'getyourguide',
+    }
+  }
+  return { url: buildActivityLink(nombre, ciudad), proveedor: 'viator' }
+}
+
 /** eSIM de Airalo (con el código de referido si está configurado). */
 export function buildAiraloLink(_pais?: string): string {
   const ref = airaloRef()
   return ref
     ? `https://ref.airalo.com/${encodeURIComponent(ref)}`
     : 'https://www.airalo.com/es'
+}
+
+/** Seguro de viaje en IATI (con el código de colaborador si está). */
+export function buildIatiLink(): string {
+  const ref = iatiRef()
+  return ref
+    ? `https://www.iatiseguros.com/?${new URLSearchParams({ r: ref })}`
+    : 'https://www.iatiseguros.com/'
+}
+
+/**
+ * eSIM para la UI, solo con el código de Airalo: recomendar una marca sin
+ * comisión no aporta nada al viajero que no pueda buscar él mismo.
+ */
+export function describeEsimLink(): EnlaceAfiliado<'airalo'> | null {
+  return airaloRef() ? { url: buildAiraloLink(), proveedor: 'airalo' } : null
+}
+
+/** Seguro de viaje para la UI, solo con el código de IATI. */
+export function describeInsuranceLink(): EnlaceAfiliado<'iati'> | null {
+  return iatiRef() ? { url: buildIatiLink(), proveedor: 'iati' } : null
 }
 
 // ---------------------------------------------------------------------------

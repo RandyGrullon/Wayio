@@ -19,6 +19,14 @@ import {
 } from '../ui/iconos'
 import { contarNoches, formatCurrency, formatNoches } from '../ui/formato'
 import type { Moneda, Paquete, PlanningTrip } from '../../types/planning'
+import {
+  AVISO_PATROCINADO,
+  enlaceCarros,
+  enlaceEsim,
+  enlaceHoteles,
+  enlaceSeguro,
+  enlaceVuelos,
+} from './enlacesAfiliado'
 
 interface Props {
   trip: PlanningTrip
@@ -45,9 +53,11 @@ const CAR_DAILY: Record<Paquete, number> = {
   premium: 95,
 }
 
-const enc = encodeURIComponent
+function abrir(url: string): void {
+  Linking.openURL(url).catch(() => undefined)
+}
 
-/** Abre el enlace de afiliado del backend (data.enlace) o la búsqueda genérica. */
+/** Abre el enlace de afiliado del backend (data.enlace) o el de respaldo. */
 async function abrirBusqueda(
   pedir: () => Promise<SearchResponse>,
   respaldo: string
@@ -97,6 +107,10 @@ export function TripEssentials({
   const hotelEst =
     hotelIncluido || !enUsd ? null : noches * habitaciones * HOTEL_NIGHTLY[tier]
   const carroEst = enUsd ? (noches + 1) * CAR_DAILY[tier] : null
+
+  // eSIM y seguro solo aparecen con su ID configurado.
+  const esim = enlaceEsim()
+  const seguro = enlaceSeguro()
 
   const [vuelo, setVuelo] = useState(!sinVuelo && vueloEst !== null)
   const [hotel, setHotel] = useState(false)
@@ -175,7 +189,13 @@ export function TripEssentials({
                   personas,
                   { returnDate: trip.fechaFin, currency: moneda }
                 ),
-              `https://www.skyscanner.com/transport/flights/${enc(trip.origen)}/${enc(trip.destino)}/`
+              enlaceVuelos({
+                origen: trip.origen,
+                destino: trip.destino,
+                ida: trip.fechaInicio,
+                vuelta: trip.fechaFin,
+                personas,
+              })
             )
           }
         />
@@ -211,7 +231,13 @@ export function TripEssentials({
                 trip.fechaFin,
                 personas
               ),
-            `https://www.booking.com/searchresults.html?ss=${enc(trip.destino)}&checkin=${enc(trip.fechaInicio)}&checkout=${enc(trip.fechaFin)}&group_adults=${personas}`
+            enlaceHoteles({
+              destino: trip.destino,
+              entrada: trip.fechaInicio,
+              salida: trip.fechaFin,
+              adultos: personas,
+              habitaciones,
+            })
           )
         }
       />
@@ -224,12 +250,34 @@ export function TripEssentials({
         activo={carro}
         onCambiar={carroEst !== null ? setCarro : null}
         enlace="Ver carros"
-        onEnlace={() => {
-          Linking.openURL(
-            `https://www.booking.com/cars/index.html?ss=${enc(trip.destino)}`
-          ).catch(() => undefined)
-        }}
+        onEnlace={() => abrir(enlaceCarros(trip.destino))}
       />
+
+      {esim || seguro ? (
+        <View style={styles.extras}>
+          {esim ? (
+            <Button
+              title="eSIM con datos"
+              variant="link"
+              iconEnd={ExternalLink}
+              accessibilityHint="Abre Airalo (enlace patrocinado)"
+              onPress={() => abrir(esim)}
+            />
+          ) : null}
+          {seguro ? (
+            <Button
+              title="Seguro de viaje"
+              variant="link"
+              iconEnd={ExternalLink}
+              accessibilityHint="Abre IATI Seguros (enlace patrocinado)"
+              onPress={() => abrir(seguro)}
+            />
+          ) : null}
+        </View>
+      ) : null}
+      <Txt variant="caption" color="fgSubtle" style={styles.aviso}>
+        {AVISO_PATROCINADO}
+      </Txt>
 
       {/* TOTAL ESTIMADO único */}
       <Card variant="boleto" style={styles.total}>
@@ -377,6 +425,15 @@ const crearEstilos = (_t: Tema) =>
       marginTop: 10,
     },
     switch: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    extras: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      alignItems: 'center',
+      columnGap: 20,
+      rowGap: 4,
+      marginTop: 12,
+    },
+    aviso: { marginTop: 10 },
     total: { marginTop: 16 },
     totalCuerpo: { padding: 20 },
     barra: {

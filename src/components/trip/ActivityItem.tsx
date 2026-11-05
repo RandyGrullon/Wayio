@@ -16,12 +16,14 @@ import { Badge } from '@/components/ui/Badge'
 import { ButtonLink } from '@/components/ui/Button'
 import {
   AFFILIATE_REL,
-  buildActivityLink,
-  buildBookingLink,
   buildNavigationLinks,
+  describeActivityLink,
+  describeHotelsLink,
 } from '@/constants/affiliateLinks'
 import { diaClases } from '@/constants/mapColors'
 import { track } from '@/lib/analytics/events'
+import { proveedorAnalitica } from './afiliados'
+import { EtiquetaPatrocinado } from './Patrocinado'
 import {
   formatCurrency,
   formatDuracion,
@@ -71,13 +73,11 @@ export interface ActivityItemProps {
   className?: string
 }
 
-const PROVEEDOR_ACTIVIDAD = 'viator' as const
-
 /**
  * Fila del timeline de un día (docs/DISENO.md §6.5): columna de hora en 12 h,
  * riel punteado con el punto del color del día y contenido sin caja.
- * El enlace de reserva se construye AL RENDERIZAR (buildActivityLink), nunca
- * se lee el `linkAfiliado` guardado.
+ * El enlace de reserva se construye AL RENDERIZAR (describeActivityLink /
+ * describeHotelsLink), nunca se lee el `linkAfiliado` guardado.
  */
 export function ActivityItem({
   activity,
@@ -123,18 +123,16 @@ export function ActivityItem({
     modo === 'completo' && !activity.reservaPagada && !perdida
       ? checkIn
         ? {
-            url: buildBookingLink(
+            ...describeHotelsLink(
               `${activity.nombre.replace(/^\s*check-?in\s*(en|:)?\s*/i, '')} ${ciudad}`.trim()
             ),
             etiqueta: 'Ver hotel',
-            proveedor: 'booking' as const,
             categoria: 'hotel' as const,
           }
         : activity.reservaRequerida && activity.tipo !== 'traslado'
           ? {
-              url: buildActivityLink(activity.nombre, ciudad),
+              ...describeActivityLink(activity.nombre, ciudad),
               etiqueta: 'Reservar',
-              proveedor: PROVEEDOR_ACTIVIDAD,
               categoria: 'actividad' as const,
             }
           : null
@@ -332,7 +330,7 @@ export function ActivityItem({
                 aria-label={`${reserva.etiqueta}: ${activity.nombre} (enlace patrocinado, se abre en otra pestaña)`}
                 onClick={() =>
                   track('click_afiliado', {
-                    proveedor: reserva.proveedor,
+                    proveedor: proveedorAnalitica(reserva.proveedor),
                     categoria: reserva.categoria,
                     destino,
                     tripId,
@@ -343,6 +341,7 @@ export function ActivityItem({
                 {reserva.etiqueta}
               </ButtonLink>
             ) : null}
+            {reserva ? <EtiquetaPatrocinado className="-ml-1" /> : null}
             {acciones}
           </div>
         ) : null}

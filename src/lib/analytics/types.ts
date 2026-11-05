@@ -18,6 +18,11 @@ export type ProveedorAfiliado =
   | 'google_flights'
   | 'aviasales'
   | 'airalo'
+  | 'tripcom'
+  | 'civitatis'
+  | 'getyourguide'
+  | 'discovercars'
+  | 'iati'
   | 'otro'
 
 /** Qué se estaba buscando al pulsar el enlace de afiliado. */
@@ -27,6 +32,7 @@ export type CategoriaAfiliado =
   | 'actividad'
   | 'carro'
   | 'esim'
+  | 'seguro'
 
 /** Propiedades heredadas (eventos antiguos que aún emite parte de la UI). */
 export type LegacyProps = Record<
