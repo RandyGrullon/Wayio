@@ -6,17 +6,17 @@
 
 ## Orden recomendado
 
-| #   | Servicio                                                      | Para qué                                                                                  | ¿Obligatorio?                 | Coste                   |
-| --- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------- | ----------------------------- | ----------------------- |
-| 1   | **Anthropic (Claude)**                                        | Generar itinerarios, interpretar la descripción libre, ajustes por chat, reagendar, video | Sí, para la IA real           | Pago por uso            |
-| 2   | **Supabase**                                                  | Login, guardar/compartir viajes, grupos, panel admin, caché                               | Sí, para cuentas              | Plan Free               |
-| 3   | **Upstash Redis**                                             | Límites de uso globales (protege tu factura de IA)                                        | Muy recomendado en producción | Plan Free               |
-| 4   | **Geoapify**                                                  | Ubicar lugares y rutas por calles en el mapa con uso comercial                            | Muy recomendado si cobras     | Plan Free (o US$59/mes) |
-| 5   | OpenWeather                                                   | Pronóstico real si el viaje empieza en ≤ 5 días                                           | Opcional                      | Gratis                  |
-| 6   | Afiliados (Viator, Booking, Skyscanner/Travelpayouts, Airalo) | Ganar comisión con los enlaces                                                            | Opcional                      | Gratis                  |
-| 7   | Stripe                                                        | Suscripciones Pro                                                                         | Solo si vas a cobrar          | Comisión por venta      |
-| 8   | PostHog / Sentry                                              | Analítica / errores                                                                       | Opcional                      | Planes gratis           |
-| 9   | Mapbox + Expo/EAS                                             | App móvil (mapa y builds)                                                                 | Solo móvil                    | Free / pago de tiendas  |
+| #   | Servicio                                         | Para qué                                                                                  | ¿Obligatorio?                 | Coste                   |
+| --- | ------------------------------------------------ | ----------------------------------------------------------------------------------------- | ----------------------------- | ----------------------- |
+| 1   | **Anthropic (Claude)**                           | Generar itinerarios, interpretar la descripción libre, ajustes por chat, reagendar, video | Sí, para la IA real           | Pago por uso            |
+| 2   | **Supabase**                                     | Login, guardar/compartir viajes, grupos, panel admin, caché                               | Sí, para cuentas              | Plan Free               |
+| 3   | **Upstash Redis**                                | Límites de uso globales (protege tu factura de IA)                                        | Muy recomendado en producción | Plan Free               |
+| 4   | **Geoapify**                                     | Ubicar lugares y rutas por calles en el mapa con uso comercial                            | Muy recomendado si cobras     | Plan Free (o US$59/mes) |
+| 5   | OpenWeather                                      | Pronóstico real si el viaje empieza en ≤ 5 días                                           | Opcional                      | Gratis                  |
+| 6   | Precios, afiliados y worker de video (sección 5) | Precios reales de vuelos y hoteles, comisión por reservas y viajes desde video            | Opcional                      | Gratis (worker ~US$5)   |
+| 7   | Stripe                                           | Suscripciones Pro                                                                         | Solo si vas a cobrar          | Comisión por venta      |
+| 8   | PostHog / Sentry                                 | Analítica / errores                                                                       | Opcional                      | Planes gratis           |
+| 9   | Mapbox + Expo/EAS                                | App móvil (mapa y builds)                                                                 | Solo móvil                    | Free / pago de tiendas  |
 
 ---
 
@@ -139,15 +139,47 @@ Cómo funciona:
 
 - <https://openweathermap.org/api> → API keys → `OPENWEATHER_API_KEY=` (tarda hasta 2 h en activarse). Si el viaje empieza en ≤ 5 días se usa el pronóstico real de esas fechas; si no, se muestra el clima actual con esa etiqueta.
 
-## 5. Búsqueda real y afiliados
+## 5. Precios reales, afiliados y video
 
-| Qué                    | Estado                                                                | Qué hacer                                                                                                                                                                                  |
-| ---------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Vuelos con precio      | **Amadeus Self-Service cerró (17-jul-2026)**; no hay API autoservicio | Se usan enlaces de afiliado con fechas (Skyscanner/Aviasales/Google Flights). Para precios reales: Duffel (autoservicio) o Travelpayouts Data API                                          |
-| Hoteles con precio     | La API de Booking exige contrato                                      | Enlaces de Booking con fechas y huéspedes. Para precios: LiteAPI (sandbox gratis)                                                                                                          |
-| Actividades con precio | **Viator Partner API** (autoservicio "Basic Access")                  | Alta en <https://partnerresources.viator.com> → `VIATOR_API_KEY`, `NEXT_PUBLIC_VIATOR_PID`, `NEXT_PUBLIC_VIATOR_MCID` (prueba con `VIATOR_API_URL=https://api.sandbox.viator.com/partner`) |
+Todo funciona con solo poner la clave o el ID: sin ellos, la app se comporta como antes (enlaces sin comisión y sin precios).
 
-IDs de afiliado (públicos; si faltan, los enlaces funcionan sin comisión): `NEXT_PUBLIC_BOOKING_AID` (Booking vía Awin/CJ), `NEXT_PUBLIC_SKYSCANNER_ASSOCIATE_ID` (Impact), `NEXT_PUBLIC_TP_MARKER` (Travelpayouts/Aviasales), `NEXT_PUBLIC_AIRALO_REF`. Tras desplegar, haz un clic de prueba en cada panel de afiliado para confirmar la atribución.
+### Precios de vuelos — Travelpayouts (`TRAVELPAYOUTS_TOKEN`)
+
+1. Crea cuenta gratis en <https://www.travelpayouts.com> y únete al programa Aviasales.
+2. En el panel, Profile → API token: copia el token a `TRAVELPAYOUTS_TOKEN` en Vercel (Production y Preview), sin `NEXT_PUBLIC`.
+3. Tu número de socio (marker) va en `NEXT_PUBLIC_TP_MARKER`: sin él los enlaces funcionan pero no generan comisión.
+4. Los precios son de caché de búsquedas de Aviasales de las últimas 48 h: Wayio los muestra como «desde», por persona y con aviso de que pueden cambiar. En rutas poco buscadas puede no haber precio (sale el enlace del buscador). Límite: 600 peticiones/min (Wayio cachea 1 h por búsqueda).
+
+### Precios de hoteles — LiteAPI (`LITEAPI_KEY`)
+
+1. Regístrate en <https://www.liteapi.travel> (sin tarjeta) → Developer → API Keys.
+2. Para probar, usa la clave de sandbox: los precios salen marcados «de prueba».
+3. Para precios reales, añade una tarjeta en el panel para obtener la clave de producción y configura el cobro de tus comisiones (payout). Pon la clave en `LITEAPI_KEY` (sin `NEXT_PUBLIC`).
+4. Opcional, para cobrar comisión de LiteAPI: crea tu sitio de marca blanca (Whitelabel), elige tu comisión y pon su dirección en `LITEAPI_WHITELABEL_URL`. Sin ella, cada hotel enlaza a Booking con tu AID.
+5. Límites: sandbox 5 peticiones/s, producción 250/s (Wayio cachea 30 min por búsqueda). Se muestra el mayor entre la tarifa y el precio público sugerido, como pide LiteAPI.
+
+### Actividades con precio — Viator (`VIATOR_API_KEY`)
+
+Alta en <https://partnerresources.viator.com> («Basic Access») → `VIATOR_API_KEY`, `NEXT_PUBLIC_VIATOR_PID` y `NEXT_PUBLIC_VIATOR_MCID` (prueba con `VIATOR_API_URL=https://api.sandbox.viator.com/partner`).
+
+### Afiliados: solo hay que poner los IDs
+
+Cada ID es una variable pública (`NEXT_PUBLIC_*` en la web y la misma con `EXPO_PUBLIC_*` en la app). Si falta, el enlace funciona igual pero sin comisión; la eSIM y el seguro solo se muestran con su ID. Junto a los botones de reserva sale siempre el aviso de enlace patrocinado (FTC y LSSI). Tras desplegar, haz un clic de prueba en cada enlace y comprueba que la URL final lleva tu ID.
+
+1. **Travelpayouts** (vuelos y hoteles de Trip.com, 5,5 % en hoteles): crea un proyecto en travelpayouts.com. `NEXT_PUBLIC_TP_MARKER` es tu ID de socio (el `marker=` de cualquier enlace del panel); `NEXT_PUBLIC_TP_TRS` es el ID del proyecto (opcional). Conecta el programa **Trip.com** a tu proyecto y, aprobado, pon `NEXT_PUBLIC_TP_TRIPCOM=true`: los hoteles irán a Trip.com en vez de Booking. Comprobación: un enlace largo de Trip.com del panel debe llevar `p=8626` y `campaign_id=121` (si cambian, hay que actualizar el código).
+2. **Viator** (actividades): `NEXT_PUBLIC_VIATOR_PID` y `NEXT_PUBLIC_VIATOR_MCID` salen de cualquier enlace del panel (`pid=P00…&mcid=…`). Hacen falta los dos.
+3. **Airalo** (eSIM): `NEXT_PUBLIC_AIRALO_REF` es el código de «Invita y gana» de tu perfil en la app; con él aparece «eSIM con datos». Ese programa paga en crédito: la comisión en dinero (hasta 10 %) va por Impact y hoy no está integrada.
+4. **Civitatis** (actividades en español, 8-10 %, cookie de 30 días): alta en civitatis.com/es/afiliados (piden una web de viajes publicada). `NEXT_PUBLIC_CIVITATIS_AID` es tu número de afiliado. Si no hay Viator, «Reservar» va a Civitatis. Exigen consentimiento de cookies de analítica y publicidad.
+5. **Expedia** (Creator Program): no se integra; sus enlaces solo salen del Link Builder con la sesión iniciada.
+6. **GetYourGuide** (actividades, cookie de 31 días): alta en partner.getyourguide.com. `NEXT_PUBLIC_GYG_PARTNER_ID` es el Partner ID (menú de tu nombre → Account details). Se usa si no hay Viator ni Civitatis.
+7. **Seguro de viaje — IATI**: alta como colaborador en iatiseguros.com/alta-colaboradores (panel myiati.com). Tu enlace termina en `?r=XXXX`: pon ese valor en `NEXT_PUBLIC_IATI_REF`. IATI vende en España, Portugal, Italia, México, Colombia y Perú (revisa si te sirve para viajeros de RD). Heymondo no se integra: da una URL única sin ID.
+8. **DiscoverCars** (carros, hasta 70 % de su margen, cookie de 365 días): alta en discovercars.com/affiliate. Tu enlace lleva `?a_aid=XXXX`: pon ese valor en `NEXT_PUBLIC_DISCOVERCARS_AID` y «Ver carros» irá a DiscoverCars en vez de Booking.
+
+**Booking.com** exige aprobación por escrito para usar sus enlaces en un producto con IA. Deja `NEXT_PUBLIC_BOOKING_AID` vacío hasta tenerla; mientras, sus enlaces siguen funcionando sin comisión.
+
+### Worker de video (Railway o Fly.io)
+
+Opcional, para «Recrear desde un video» en producción. Despliega `worker-video/` siguiendo [`worker-video/README.md`](worker-video/README.md): en Railway, Root Directory `/worker-video`, variable `VIDEO_WORKER_SECRET` y Generate Domain; en Fly, `fly launch --copy-config`, `fly secrets set` y `fly deploy`. Después pon en Vercel `VIDEO_WORKER_URL` (la URL del worker) y `VIDEO_WORKER_SECRET` (el mismo secreto, `openssl rand -hex 32`) y vuelve a desplegar. No hace falta `VIDEO_ANALYSIS_ENABLED`; si existe con `false`, bórrala. El worker no lleva claves de IA. Coste aproximado: Railway Hobby US$5/mes con US$5 de consumo incluidos; Fly US$1-3/mes con apagado automático. Si YouTube, Instagram o TikTok bloquean la IP del servidor, añade `YTDLP_PROXY` en el worker (proxy residencial, de pago).
 
 ## 6. Stripe (solo si vas a cobrar)
 

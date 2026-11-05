@@ -1,6 +1,17 @@
 # Wayio — estado y pasos para terminar
 
-> Actualizado el 2026-10-20 (planes Gratis y Pro aplicados en el servidor); el 2026-10-17 (freno al gasto de IA, y geocodificación y rutas con Geoapify); antes, el 2026-10-09, tras el análisis completo, la reconstrucción de la IA, los arreglos de seguridad, el rediseño y la integración final. Los detalles de cada servicio están en [API-KEYS-GUIA.md](API-KEYS-GUIA.md).
+> Actualizado el 2026-11-05 (integraciones que solo piden la clave y pendientes cerrados); el 2026-10-20 (planes Gratis y Pro aplicados en el servidor); el 2026-10-17 (freno al gasto de IA, y geocodificación y rutas con Geoapify); antes, el 2026-10-09, tras el análisis completo, la reconstrucción de la IA, los arreglos de seguridad, el rediseño y la integración final. Los detalles de cada servicio están en [API-KEYS-GUIA.md](API-KEYS-GUIA.md).
+
+## ✅ Integraciones por clave y pendientes cerrados (rama `feat/integraciones-pendientes`, 2026-11-05)
+
+Todo lo de esta sección funciona **con solo poner la clave o el ID** (detalles en la sección 5 de [API-KEYS-GUIA.md](API-KEYS-GUIA.md)); sin ellos la app se comporta como antes.
+
+- **Precios de vuelos** (Travelpayouts · Aviasales Data API, `TRAVELPAYOUTS_TOKEN`) y **de hoteles** (LiteAPI, `LITEAPI_KEY`, opcional `LITEAPI_WHITELABEL_URL`) en `/api/flights` y `/api/hotels`: «desde US$X» con nota del precio, fechas y enlace de reserva con tu ID. Claves en cabecera (nunca en la URL), caché en servidor, límite por usuario o IP y degradación al enlace si el proveedor falla. Web y móvil (`RealSearch`).
+- **Afiliados completos**: Trip.com vía Travelpayouts, Civitatis, GetYourGuide, DiscoverCars e IATI, además de Booking, Viator, Skyscanner/Aviasales y Airalo; cada uno detrás de su `NEXT_PUBLIC_*` (y `EXPO_PUBLIC_*` en el móvil, que ahora también lleva IDs en sus enlaces de respaldo). Aviso de enlace patrocinado junto a los botones (FTC y LSSI). Clics en la analítica con su proveedor.
+- **Worker de video** (`worker-video/`, Docker para Railway o Fly.io): con `VIDEO_WORKER_URL` y `VIDEO_WORKER_SECRET`, «Recrear desde un video» funciona en producción; la IA, el cupo y el tope siguen en la app. Probado en local con YouTube real.
+- **Gastos del grupo**: «Pagó» (cualquier miembro) y «Entre quiénes» (subconjunto), con saldos «X le debe US$Y a Z» en céntimos, en web y móvil. Migración `20261105140000_gastos_pagador_y_reparto.sql` (columnas `registrado_por` y `participantes`, trigger que valida que son miembros, RLS y backfill de los gastos antiguos). Sin ella todo sigue como antes y elegir otro pagador o un subconjunto devuelve 503 `expense_split_unavailable`.
+- **Modo mantenimiento y flags** leídos por web y móvil vía `/api/config`: aviso visible en las dos, y `/api/generate`, `/stream` y `/api/adjust` responden 503 `mantenimiento` antes de gastar IA (el planificador web avisa sin llamar). Hook `useFlag(clave)` en web y móvil; `paywall` controla el «Ver planes» del chat de ajustes.
+- **Mapa**: trazo de 600 ms de la ruta al cambiar de día (§7.4), sin animación con movimiento reducido.
 
 ## ✅ Planes Gratis y Pro en el servidor (rama `feat/planes-rentabilidad`, 2026-10-20)
 
@@ -90,7 +101,7 @@
 1. **IA**: pon `ANTHROPIC_API_KEY` en `.env.local`, arranca `npm run dev` y ejecuta `npm run eval:ia -- --base http://localhost:3000 --interpret`. Todos los casos deberían salir sin errores (ver el informe en `scripts/eval-ia/resultados/`). Generar exige sesión: con Supabase configurado, pon `EVAL_IA_BEARER` con el access_token de una cuenta de pruebas.
 2. **Supabase**:
    - restaura el proyecto si está pausado;
-   - en el SQL Editor, pega y ejecuta `supabase/migrations/20261008120000_seguridad_y_flujos.sql`, después `supabase/migrations/20261017120000_ai_gasto_diario.sql` (RPC del tope diario de IA; sin ella el tope queda abierto) y por último `supabase/migrations/20261017130000_cupos_y_rentabilidad.sql` (cupos del plan Gratis y ajustes privados del admin; sin ella los cupos quedan abiertos y la calculadora del admin no puede guardar);
+   - en el SQL Editor, pega y ejecuta `supabase/migrations/20261008120000_seguridad_y_flujos.sql`, después `supabase/migrations/20261017120000_ai_gasto_diario.sql` (RPC del tope diario de IA; sin ella el tope queda abierto) después `supabase/migrations/20261017130000_cupos_y_rentabilidad.sql` (cupos del plan Gratis y ajustes privados del admin; sin ella los cupos quedan abiertos y la calculadora del admin no puede guardar) y por último `supabase/migrations/20261105140000_gastos_pagador_y_reparto.sql` (gastos del grupo con «Pagó» y «Entre quiénes»);
    - revisa los admins y comprueba realtime;
    - configura Auth (URLs, plantillas de correo, SMTP y Google), guía en `supabase/CONFIGURACION-AUTH.md`.
 3. **Upstash Redis** (gratis): `UPSTASH_REDIS_REST_URL` y `UPSTASH_REDIS_REST_TOKEN`, para que los límites de uso protejan tu factura de IA en producción (sin Upstash cada instancia cuenta por su lado).
@@ -103,23 +114,27 @@
    - **`GEOAPIFY_API_KEY`** (gratis en myprojects.geoapify.com, sin tarjeta; guía en la sección 4 de [API-KEYS-GUIA.md](API-KEYS-GUIA.md)) y vuelve a desplegar para que salgan los créditos de Geoapify en el mapa. Con Upstash configurado el presupuesto diario (`GEOAPIFY_CREDITOS_DIA`) es global; sin él, por instancia. Después, `npm run verificar` en local con la misma clave;
    - **antes de poner la clave**, publica una build de la app móvil con el enlace «Powered by Geoapify» del mapa (ya está en el código; el plan Free lo exige porque la app muestra coordenadas de Geoapify). Las builds anteriores no lo tienen;
    - borra `AMADEUS_*`, `BOOKING_API_KEY` y `NEXT_PUBLIC_SITE_URL`.
-5. **Afiliados** (es donde ganas dinero sin cobrar al usuario): Viator Partner (`VIATOR_API_KEY`, `PID`, `MCID`), Booking vía Awin/CJ, Travelpayouts o Skyscanner, y Airalo. Después de desplegar, haz un clic de prueba en cada panel de afiliado.
-6. **Cobros** (solo si vas a cobrar):
+5. **Afiliados y precios** (es donde ganas dinero sin cobrar al usuario), en el orden de la sección 5 de la guía: Travelpayouts (marker y, con Trip.com aprobado, `NEXT_PUBLIC_TP_TRIPCOM=true`), Viator (`VIATOR_API_KEY`, PID y MCID), Airalo, Civitatis, GetYourGuide, IATI y DiscoverCars; para precios, `TRAVELPAYOUTS_TOKEN` y `LITEAPI_KEY`. Pon los mismos IDs con `EXPO_PUBLIC_*` en `mobile/.env`. Booking solo con su aprobación escrita para IA. Después de desplegar, haz un clic de prueba en cada enlace y comprueba que lleva tu ID.
+6. **Worker de video** (opcional): despliega `worker-video/` en Railway o Fly según su README, pon `VIDEO_WORKER_URL` y `VIDEO_WORKER_SECRET` en Vercel, borra `VIDEO_ANALYSIS_ENABLED=false` si existe y prueba un enlace de cada plataforma. Riesgo: bloqueo de IPs de servidor (YouTube «not a bot», Instagram pide sesión) → `YTDLP_PROXY`.
+7. **Cobros** (solo si vas a cobrar):
    - primero decide con qué entidad: Stripe no opera con comercios en RD, así que necesitarías una LLC en EE. UU., Paddle o Lemon Squeezy;
    - después crea productos, webhook y Customer Portal según la guía.
-7. **PostHog y Sentry** (opcional): las claves de la guía.
-8. **App móvil**:
+8. **PostHog y Sentry** (opcional): las claves de la guía.
+9. **App móvil**:
    - `cd mobile && npx expo install expo-dev-client expo-system-ui`;
    - crea `mobile/.env` con las `EXPO_PUBLIC_*`;
    - genera un _development build_ con `npx expo run:android` o `eas build --profile development`. Expo Go ya no sirve para este proyecto.
-9. **Pruebas finales con 2 cuentas** (checklist):
-   - B no puede hacerse admin;
-   - B no ve el grupo de A hasta abrir el enlace, y después el chat llega en vivo;
-   - un visitante sin sesión ve `/viaje-compartido/<id>` solo si A lo hizo público;
-   - el pago de prueba con la tarjeta 4242 cambia el plan;
-   - con una cuenta Gratis, el tercer viaje del mes da el aviso de cupo agotado (402) y `GET /api/cupo` lo refleja; con Pro, no;
-   - la recuperación de contraseña funciona de punta a punta;
-   - en el móvil: crear cuenta, generar, guardar y modo en vivo.
+10. **Pruebas finales con 2 y 3 cuentas** (checklist):
+
+- B no puede hacerse admin;
+- B no ve el grupo de A hasta abrir el enlace, y después el chat llega en vivo;
+- un visitante sin sesión ve `/viaje-compartido/<id>` solo si A lo hizo público;
+- el pago de prueba con la tarjeta 4242 cambia el plan;
+- con una cuenta Gratis, el tercer viaje del mes da el aviso de cupo agotado (402) y `GET /api/cupo` lo refleja; con Pro, no;
+- la recuperación de contraseña funciona de punta a punta;
+- en el móvil: crear cuenta, generar, guardar y modo en vivo;
+- con 3 cuentas en un grupo: un gasto pagado por otro y otro solo para dos, y que los saldos cuadren en las tres sesiones (web y móvil);
+- activa el modo mantenimiento en `/admin/settings` y comprueba el aviso y el 503 al trazar y ajustar; apágalo y que vuelva a funcionar.
 
 ## 🟡 Decisiones de producto pendientes
 
@@ -127,11 +142,12 @@
 - **Modelo del itinerario**: sigue `claude-opus-5-5` ($4/$20 por millón). `AI_ITINERARY_MODEL=claude-sonnet-5-5` lo abarata a la mitad; es decisión tuya, el tope diario no lo cambia.
 - **Valores de los límites y del tope**: los de ahora son para la beta (`src/lib/security/aiGuard.ts` y `AI_DAILY_BUDGET_USD`). Revísalos con el gasto real de `/admin/ai`.
 - **Reservas con depósito**: desactivadas (`NEXT_PUBLIC_RESERVAS_ENABLED=false`) hasta que haya un proveedor real de reservas y una revisión legal.
-- **Precios reales de vuelos y hoteles**: hoy son enlaces de afiliado con fechas. Para precios en la app: Duffel o Travelpayouts (vuelos) y LiteAPI (hoteles).
-- **Video de TikTok/Instagram**: no funciona en Vercel serverless (necesita ffmpeg y yt-dlp). Muévelo a un worker en contenedor (Railway, Fly.io o Cloud Run) o déjalo desactivado.
-- **Feature flags y modo mantenimiento del admin**: se guardan pero nadie los lee todavía.
+- **Precios de hoteles**: se muestra el mayor entre la tarifa de LiteAPI y su precio público sugerido (lo que pide LiteAPI); confírmalo. Supuestos: 2 huéspedes por habitación, nacionalidad DO y 12 hoteles mostrados. El formato de ocupación del enlace a la marca blanca hay que comprobarlo con una marca blanca real.
+- **Afiliados**: Trip.com va antes que Booking cuando está activo; el código de Airalo actual es el de referidos (crédito), no el de comisión (Impact); IATI no vende en RD.
+- **Video**: el worker no usa el título del video (podría ayudar a la IA, pero abre otra vía de inyección de instrucciones). Revisa los textos nuevos de error «bloqueado», «ocupado» y «cancelado».
+- **Flags**: si `/api/config` falla, `useFlag` devuelve activo para no esconder funciones. Hoy solo `paywall` se usa (el «Ver planes» del chat de ajustes en web y móvil).
 - **Geocoding y rutas**: la migración a Geoapify está hecha en código; falta poner `GEOAPIFY_API_KEY` en Vercel (ver arriba). Vigila los créditos diarios en su panel y pasa al plan API 10 (US$59/mes) si te acercas de forma sostenida a los 3000 del plan Free (y entonces sube `GEOAPIFY_CREDITOS_DIA`, que por defecto corta en 3000).
-- **Gastos del grupo**: hoy siempre paga quien lo registra y se reparte entre todos. «Pagó» y «Entre quiénes» necesitan columnas nuevas y cambios en la API.
+- **Gastos del grupo**: cualquier miembro puede apuntar que pagó otro (queda «Lo apuntó X»); falta el botón y el endpoint para borrar un gasto (la RLS ya lo permite al que lo apuntó o al pagador). Los gastos antiguos se reparten entre los miembros que había al aplicar la migración.
 - **Páginas legales** (`/privacidad`, `/terminos`): son un borrador (edad mínima, conservación de datos, nombre del responsable); revísalas con un abogado.
 
 ## 🧹 Deuda técnica conocida
@@ -139,5 +155,7 @@
 - Quitar los alias `TEMPORAL` de colores de `globals.css` cuando ninguna pantalla los use (spec §2.2).
 - Probar en dispositivo (no había emulador): la intro móvil, los hápticos, el teclado sobre las hojas en Android y el modo en vivo en segundo plano.
 - Revisar en un Android de gama baja la intro y el mapa.
-- Mapa: falta la animación de 600 ms del trazo al cambiar de día (§7.4); el día activo ya se resalta con línea más gruesa y los demás atenuados.
+- `saldos.ts` está duplicado en web (`src/lib/grupo/`) y móvil (`mobile/src/components/group/`): hay que mantenerlos iguales. `useGastosGrupo` podría fundirse en `useGroup`.
+- La numeración de migraciones en `scripts/verificar-servicios.mjs` («Migración 8 · gastos») supone que las ramas de cobro con Creem y de compras integradas añaden la 6 y la 7: renumera al unir las ramas.
+- `docs/DISENO.md` §7.4 habla de «dasharray» para el trazo del mapa; la técnica final es una geometría que crece.
 - En `next dev`, mientras el servidor recompila, la consola puede mostrar un «SyntaxError: Invalid or unexpected token» de un hot-update; no ocurre en producción (verificado con `next build` + `next start`).
