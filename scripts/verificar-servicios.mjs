@@ -189,8 +189,8 @@ const RPC_MIG_3 = [
 const RPC_MIG_4 = ['ai_gasto_desde']
 const TABLAS_MIG_5 = ['usage_counters', 'admin_private_settings']
 const RPC_MIG_5 = ['consumir_cupo', 'devolver_cupo']
-const TABLAS_MIG_6 = ['revenuecat_events']
-const COLUMNAS_MIG_6 = [
+const TABLAS_MIG_7 = ['revenuecat_events']
+const COLUMNAS_MIG_7 = [
   'store_product_id',
   'store_transaction_id',
   'store_environment',
@@ -307,18 +307,18 @@ async function supabase() {
       : 'cupos del plan Gratis y ajustes privados del admin'
   )
   const columnasSubs = esquema?.definitions?.subscriptions?.properties ?? {}
-  const falta6 = [
-    ...TABLAS_MIG_6.filter((t) => !hay(t)),
-    ...COLUMNAS_MIG_6.filter((c) => !(c in columnasSubs)).map(
+  const falta7 = [
+    ...TABLAS_MIG_7.filter((t) => !hay(t)),
+    ...COLUMNAS_MIG_7.filter((c) => !(c in columnasSubs)).map(
       (c) => `subscriptions.${c}`
     ),
   ]
   anotar(
     'Base de datos',
-    'Migración 6 · compras de la app',
-    falta6.length ? 'FALTA' : 'OK',
-    falta6.length
-      ? `faltan: ${falta6.join(', ')} → ejecuta 20261105120000_compras_en_tienda.sql (sin ella el webhook de RevenueCat no puede guardar las compras de App Store y Google Play)`
+    'Migración 7 · compras de la app',
+    falta7.length ? 'FALTA' : 'OK',
+    falta7.length
+      ? `faltan: ${falta7.join(', ')} → ejecuta 20261105130000_compras_en_tienda.sql (sin ella el webhook de RevenueCat no puede guardar las compras de App Store y Google Play)`
       : 'compras integradas (App Store y Google Play) y su plan efectivo'
   )
 

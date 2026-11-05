@@ -6,7 +6,7 @@
 -- proyecto vacío como en uno que ya tenía una versión anterior del esquema.
 --
 -- Es la fuente completa: equivale a aplicar, en orden, todas las migraciones
--- de supabase/migrations (la última: 20261105120000_compras_en_tienda.sql).
+-- de supabase/migrations (la última: 20261105130000_compras_en_tienda.sql).
 --
 -- Incluye:
 --   1. Tablas de la app (perfiles, viajes, grupos, suscripciones, referidos,
@@ -314,9 +314,36 @@ alter table public.subscriptions add constraint subscriptions_status_check
     'active', 'canceled', 'past_due', 'trialing', 'incomplete',
     'incomplete_expired', 'unpaid', 'paused'
   ));
-alter table public.subscriptions drop constraint if exists subscriptions_source_check;
-alter table public.subscriptions add constraint subscriptions_source_check
-  check (source in ('system', 'stripe', 'admin', 'app_store', 'play_store'));
+-- source: CHECK ADITIVO. Parte de la lista base, conserva los valores que ya
+-- admita el CHECK actual (otra migración puede haber añadido alguno) y suma
+-- los de las compras integradas. Así se puede volver a correr este archivo
+-- sobre una base con datos sin que falle por filas de un origen nuevo.
+do $$
+declare
+  permitidos text[] := array['system', 'stripe', 'admin', 'app_store', 'play_store'];
+  definicion text;
+begin
+  select pg_get_constraintdef(c.oid)
+    into definicion
+    from pg_constraint c
+   where c.conrelid = 'public.subscriptions'::regclass
+     and c.conname = 'subscriptions_source_check';
+  if definicion is not null then
+    permitidos := permitidos || array(
+      select btrim(trozo, ' {}"')
+        from regexp_matches(definicion, '''([^'']+)''', 'g') as m,
+             unnest(string_to_array(m[1], ',')) as trozo
+    );
+  end if;
+  permitidos := array(
+    select distinct v from unnest(permitidos) as v where v <> '' order by v
+  );
+  alter table public.subscriptions drop constraint if exists subscriptions_source_check;
+  execute format(
+    'alter table public.subscriptions add constraint subscriptions_source_check check (source in (%s))',
+    (select string_agg(quote_literal(v), ', ') from unnest(permitidos) as v)
+  );
+end $$;
 alter table public.subscriptions drop constraint if exists subscriptions_store_environment_check;
 alter table public.subscriptions add constraint subscriptions_store_environment_check
   check (store_environment is null or store_environment in ('SANDBOX', 'PRODUCTION'));

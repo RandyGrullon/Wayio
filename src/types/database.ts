@@ -132,7 +132,7 @@ export interface SubscriptionRow {
   current_period_end: string | null
   cancel_at_period_end: boolean
   source?: SubscriptionSource
-  /** Compras integradas: producto de la tienda (migración 20261105120000). */
+  /** Compras integradas: producto de la tienda (migración 20261105130000). */
   store_product_id?: string | null
   /** Compras integradas: transacción original (igual en cada renovación). */
   store_transaction_id?: string | null

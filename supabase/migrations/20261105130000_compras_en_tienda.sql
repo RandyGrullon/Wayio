@@ -1,8 +1,9 @@
 -- ============================================================================
 -- Wayio — Migración: compras integradas de la app (App Store y Google Play)
 -- ----------------------------------------------------------------------------
---   A. subscriptions.source admite 'app_store' y 'play_store': el plan lo
---      cobró la tienda a través de RevenueCat (webhook /api/revenuecat/webhook).
+--   A. subscriptions.source admite además 'app_store' y 'play_store': el plan
+--      lo cobró la tienda a través de RevenueCat (webhook
+--      /api/revenuecat/webhook). Conserva los valores que ya hubiera.
 --   B. Columnas de la tienda en subscriptions: producto, transacción original
 --      y entorno (SANDBOX = pruebas, revisión de Apple y testers; no es
 --      dinero real).
@@ -22,9 +23,40 @@
 -- ----------------------------------------------------------------------------
 -- A. ORIGEN DEL PLAN
 -- ----------------------------------------------------------------------------
-alter table public.subscriptions drop constraint if exists subscriptions_source_check;
-alter table public.subscriptions add constraint subscriptions_source_check
-  check (source in ('system', 'stripe', 'admin', 'app_store', 'play_store'));
+-- ADITIVO: conserva los valores que ya admita el CHECK (p. ej. 'creem' de la
+-- migración del cobro web, que va antes) y les suma 'app_store' y
+-- 'play_store'. Así no importa en qué orden se apliquen ni se pierde nada.
+do $$
+declare
+  permitidos text[] := array['system', 'stripe', 'admin'];
+  definicion text;
+begin
+  select pg_get_constraintdef(c.oid)
+    into definicion
+    from pg_constraint c
+   where c.conrelid = 'public.subscriptions'::regclass
+     and c.conname = 'subscriptions_source_check';
+  -- Valores entre comillas de la definición actual; admite las dos formas
+  -- en que Postgres la escribe: ARRAY['a'::text, …] y '{a,b}'::text[].
+  if definicion is not null then
+    permitidos := permitidos || array(
+      select btrim(trozo, ' {}"')
+        from regexp_matches(definicion, '''([^'']+)''', 'g') as m,
+             unnest(string_to_array(m[1], ',')) as trozo
+    );
+  end if;
+  permitidos := array(
+    select distinct v
+      from unnest(permitidos || array['app_store', 'play_store']) as v
+     where v <> ''
+     order by v
+  );
+  alter table public.subscriptions drop constraint if exists subscriptions_source_check;
+  execute format(
+    'alter table public.subscriptions add constraint subscriptions_source_check check (source in (%s))',
+    (select string_agg(quote_literal(v), ', ') from unnest(permitidos) as v)
+  );
+end $$;
 
 -- ----------------------------------------------------------------------------
 -- B. DATOS DE LA TIENDA
