@@ -189,6 +189,8 @@ const RPC_MIG_3 = [
 const RPC_MIG_4 = ['ai_gasto_desde']
 const TABLAS_MIG_5 = ['usage_counters', 'admin_private_settings']
 const RPC_MIG_5 = ['consumir_cupo', 'devolver_cupo']
+// 20261105140000_gastos_pagador_y_reparto.sql: columnas de group_expenses
+const COLUMNAS_MIG_GASTOS = ['registrado_por', 'participantes']
 
 async function supabase() {
   const url = env('NEXT_PUBLIC_SUPABASE_URL').replace(/\/+$/, '')
@@ -299,6 +301,20 @@ async function supabase() {
     falta5.length
       ? `faltan: ${falta5.join(', ')} → ejecuta 20261017130000_cupos_y_rentabilidad.sql (sin ella el cupo del plan Gratis queda abierto)`
       : 'cupos del plan Gratis y ajustes privados del admin'
+  )
+  const columnasGastos = Object.keys(
+    esquema?.definitions?.group_expenses?.properties ?? {}
+  )
+  const faltaGastos = COLUMNAS_MIG_GASTOS.filter(
+    (c) => !columnasGastos.includes(c)
+  )
+  anotar(
+    'Base de datos',
+    'Migración 8 · gastos: pagó y entre quiénes',
+    faltaGastos.length ? 'FALTA' : 'OK',
+    faltaGastos.length
+      ? `faltan columnas en group_expenses: ${faltaGastos.join(', ')} → ejecuta 20261105140000_gastos_pagador_y_reparto.sql (sin ella cada gasto lo paga quien lo apunta y se reparte entre todos)`
+      : 'quién pagó y entre quiénes se reparte cada gasto'
   )
 
   if (hay('profiles')) {

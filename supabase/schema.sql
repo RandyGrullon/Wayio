@@ -6,7 +6,7 @@
 -- proyecto vacío como en uno que ya tenía una versión anterior del esquema.
 --
 -- Es la fuente completa: equivale a aplicar, en orden, todas las migraciones
--- de supabase/migrations (la última: 20261017130000_cupos_y_rentabilidad.sql).
+-- de supabase/migrations (la última: 20261105140000_gastos_pagador_y_reparto.sql).
 --
 -- Incluye:
 --   1. Tablas de la app (perfiles, viajes, grupos, suscripciones, referidos,
@@ -15,7 +15,8 @@
 --      anuncios, tokens de push, auditoría, settings públicos y privados)
 --   3. Funciones y RPC (membresía, unirse por link, vista pública, referidos,
 --      dispositivos, plan efectivo, gasto diario de IA, cupos del plan
---      Gratis), triggers e índices
+--      Gratis), triggers (incluida la validación de «Pagó» y «Entre quiénes»
+--      de los gastos del grupo) e índices
 --   4. Privilegios por columna + RLS (row level security) por membresía
 --   5. Publicación de Realtime para las tablas de grupo
 --   6. Seed y backfills
@@ -245,16 +246,36 @@ create table if not exists public.group_messages (
   created_at     timestamptz not null default now()
 );
 
+-- Gastos del grupo: pagado_por = quién pagó (cualquier miembro; por defecto
+-- quien registra), registrado_por = quién lo apuntó y participantes = entre
+-- quiénes se reparte a partes iguales. entre_todos es derivado (true si
+-- incluye a todos los miembros). El trigger trg_group_expenses_preparar
+-- (sección 7) valida que todos sean miembros y rellena los valores por
+-- defecto de los clientes viejos.
 create table if not exists public.group_expenses (
   id             uuid primary key default gen_random_uuid(),
   trip_id        uuid not null references public.trips(id) on delete cascade,
-  pagado_por     uuid not null references public.profiles(id) on delete cascade,
+  pagado_por     uuid not null default auth.uid() references public.profiles(id) on delete cascade,
+  registrado_por uuid default auth.uid() references public.profiles(id) on delete set null,
   nombre_pagador text not null,
   concepto       text not null,
   monto          numeric(12, 2) not null,
   entre_todos    boolean not null default true,
+  participantes  uuid[],
   created_at     timestamptz not null default now()
 );
+
+-- Proyectos con una versión anterior del esquema (las restricciones y el
+-- backfill de los gastos antiguos van en la sección 12)
+alter table public.group_expenses
+  add column if not exists registrado_por uuid
+    references public.profiles(id) on delete set null;
+alter table public.group_expenses
+  add column if not exists participantes uuid[];
+alter table public.group_expenses
+  alter column pagado_por set default auth.uid();
+alter table public.group_expenses
+  alter column registrado_por set default auth.uid();
 
 -- Estado de cada actividad por usuario (sync offline de mobile, geofencing).
 -- Mobile hace upsert con onConflict 'trip_id,activity_id,user_id'.
@@ -549,6 +570,89 @@ drop trigger if exists trg_trips_owner_member on public.trips;
 create trigger trg_trips_owner_member
   after insert on public.trips
   for each row execute function public.add_trip_owner_as_member();
+
+-- Gastos del grupo, al insertar: registrado_por = auth.uid(); el pagador y
+-- cada participante tienen que ser miembros del viaje (trip_members); sin
+-- duplicados; nombre del pagador desde trip_members. Si el cliente no manda
+-- participantes (clientes viejos): todos los miembros (entre_todos) o solo
+-- quien pagó. SECURITY DEFINER para leer trip_members sin depender de su
+-- RLS. Errores (message, errcode 23514 → HTTP 400): pagador_no_miembro,
+-- participante_no_miembro, sin_participantes.
+create or replace function public.group_expenses_preparar()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_uid      uuid := auth.uid();
+  v_miembros uuid[];
+  v_nombre   text;
+begin
+  -- Quien registra es SIEMPRE el usuario de la sesión. Sin sesión (service
+  -- role, SQL Editor) vale lo que venga o, si no, el pagador.
+  if v_uid is not null then
+    new.registrado_por := v_uid;
+  end if;
+  new.pagado_por := coalesce(new.pagado_por, new.registrado_por);
+  new.registrado_por := coalesce(new.registrado_por, new.pagado_por);
+
+  select coalesce(array_agg(m.user_id order by m.joined_at, m.user_id), '{}')
+    into v_miembros
+    from public.trip_members m
+   where m.trip_id = new.trip_id;
+
+  if new.pagado_por is null or not (new.pagado_por = any (v_miembros)) then
+    raise exception 'pagador_no_miembro'
+      using errcode = '23514',
+            hint = 'Quien pagó tiene que ser miembro del viaje.';
+  end if;
+
+  if new.participantes is null then
+    -- Clientes viejos: «entre todos» = los miembros de ahora; si no, solo
+    -- quien pagó.
+    new.participantes := case
+      when coalesce(new.entre_todos, true) then v_miembros
+      else array[new.pagado_por]
+    end;
+  else
+    new.participantes := array(
+      select distinct p
+        from unnest(new.participantes) as p
+       where p is not null
+       order by p
+    );
+  end if;
+
+  if cardinality(new.participantes) = 0 then
+    raise exception 'sin_participantes'
+      using errcode = '23514',
+            hint = 'El gasto tiene que repartirse entre al menos una persona.';
+  end if;
+
+  if not (new.participantes <@ v_miembros) then
+    raise exception 'participante_no_miembro'
+      using errcode = '23514',
+            hint = 'Solo se puede repartir entre miembros del viaje.';
+  end if;
+
+  new.entre_todos := v_miembros <@ new.participantes;
+
+  select m.nombre
+    into v_nombre
+    from public.trip_members m
+   where m.trip_id = new.trip_id
+     and m.user_id = new.pagado_por;
+  new.nombre_pagador := coalesce(nullif(btrim(v_nombre), ''), new.nombre_pagador);
+
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_group_expenses_preparar on public.group_expenses;
+create trigger trg_group_expenses_preparar
+  before insert on public.group_expenses
+  for each row execute function public.group_expenses_preparar();
 
 -- RPC join_trip: valida el grupo_link y da de alta al usuario actual como
 -- miembro; devuelve el id del viaje. Errores (message): not_authenticated,
@@ -1103,7 +1207,10 @@ create policy "messages_insert" on public.group_messages
 create policy "messages_delete_own" on public.group_messages
   for delete using (user_id = (select auth.uid()));
 
--- group_expenses: solo puedes registrar gastos que pagaste tú
+-- group_expenses: cualquier miembro registra un gasto (registrado_por = tú;
+-- el trigger valida que quien pagó y los participantes son miembros); lo
+-- borra quien lo apuntó o quien figura como pagador. WITH CHECK se evalúa
+-- después de los triggers BEFORE, así que registrado_por ya es auth.uid().
 drop policy if exists "expenses_select"     on public.group_expenses;
 drop policy if exists "expenses_insert"     on public.group_expenses;
 drop policy if exists "expenses_delete_own" on public.group_expenses;
@@ -1113,10 +1220,12 @@ create policy "expenses_select" on public.group_expenses
   );
 create policy "expenses_insert" on public.group_expenses
   for insert with check (
-    pagado_por = (select auth.uid()) and public.is_trip_member(trip_id)
+    registrado_por = (select auth.uid()) and public.is_trip_member(trip_id)
   );
 create policy "expenses_delete_own" on public.group_expenses
-  for delete using (pagado_por = (select auth.uid()));
+  for delete using (
+    registrado_por = (select auth.uid()) or pagado_por = (select auth.uid())
+  );
 
 -- activity_states: los miembros ven el progreso; cada uno escribe el suyo
 drop policy if exists "activity_states_select" on public.activity_states;
@@ -1285,6 +1394,42 @@ select t.id, p.id, public.nombre_visible(p.full_name, p.email), p.avatar_url
   from public.trips t
   join public.profiles p on p.id = t.user_id
 on conflict (trip_id, user_id) do nothing;
+
+-- Gastos antiguos (antes de «Pagó» y «Entre quiénes»): registrado_por = quien
+-- pagó y participantes = los miembros actuales (como se calculaban hasta
+-- entonces) o solo quien pagó si no era «entre todos». Solo filas sin
+-- participantes: al volver a correr no toca nada.
+update public.group_expenses e
+   set registrado_por = coalesce(e.registrado_por, e.pagado_por),
+       participantes = case
+         when e.entre_todos then coalesce(
+           (select array_agg(m.user_id order by m.joined_at, m.user_id)
+              from public.trip_members m
+             where m.trip_id = e.trip_id),
+           array[e.pagado_por]
+         )
+         else array[e.pagado_por]
+       end
+ where e.participantes is null;
+
+-- Restricciones de gastos DESPUÉS del backfill (NOT VALID: no revisan las
+-- filas viejas, pero sí las que se actualizan)
+alter table public.group_expenses
+  drop constraint if exists group_expenses_participantes_validos;
+alter table public.group_expenses
+  add constraint group_expenses_participantes_validos
+  check (
+    participantes is null
+    or (
+      cardinality(participantes) between 1 and 200
+      and array_position(participantes, null) is null
+    )
+  ) not valid;
+alter table public.group_expenses
+  drop constraint if exists group_expenses_monto_positivo;
+alter table public.group_expenses
+  add constraint group_expenses_monto_positivo
+  check (monto > 0) not valid;
 
 -- Que PostgREST vea ya las funciones y columnas nuevas
 notify pgrst, 'reload schema';

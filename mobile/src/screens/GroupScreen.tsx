@@ -15,10 +15,8 @@ import {
   Avatar,
   AvatarStack,
   Badge,
-  Button,
   Callout,
   Card,
-  CardKicker,
   EmptyState,
   IconButton,
   Input,
@@ -29,9 +27,8 @@ import {
   Tabs,
   Txt,
 } from '../components/ui'
-import { Check, Plus, Send, UserPlus } from '../components/ui/iconos'
+import { Check, Send, UserPlus } from '../components/ui/iconos'
 import {
-  formatCurrency,
   formatFecha,
   formatHora12,
   formatViajeros,
@@ -40,6 +37,8 @@ import {
 } from '../components/ui/formato'
 import { useAuth } from '../context/AuthContext'
 import { useGroup, type UseGroupReturn } from '../hooks/useGroup'
+import { GastosGrupo } from '../components/group/GastosGrupo'
+import { useGastosGrupo } from '../components/group/useGastosGrupo'
 import { getTrip } from '../lib/trips/repository'
 import { config } from '../config'
 import { useEstilos, useTheme, type Tema } from '../theme'
@@ -146,6 +145,10 @@ function Sala({
   grupoLink: string | null
 }): React.ReactElement {
   const group = useGroup(tripId, user)
+  // Gastos con «Pagó» y «Entre quiénes» (aquí y no en la pestaña para no
+  // perder un gasto en camino al cambiar de pestaña).
+  const gastos = useGastosGrupo(tripId, group.expenses, group.members, user.id)
+  const errorAccion = group.actionError ?? gastos.error
   const styles = useEstilos(crearEstilos)
   const [tab, setTab] = useState<Tab>('chat')
   const moneda = monedaDe(trip)
@@ -198,18 +201,21 @@ function Sala({
         options={[
           { value: 'chat', label: 'Chat', count: group.messages.length },
           { value: 'votos', label: 'Votos' },
-          { value: 'gastos', label: 'Gastos', count: group.expenses.length },
+          { value: 'gastos', label: 'Gastos', count: gastos.gastos.length },
           { value: 'miembros', label: 'Miembros', count: group.members.length },
         ]}
       />
 
-      {group.actionError ? (
+      {errorAccion ? (
         <Callout
           tone="danger"
-          onDismiss={group.clearActionError}
+          onDismiss={() => {
+            group.clearActionError()
+            gastos.limpiarError()
+          }}
           style={styles.errorAccion}
         >
-          {group.actionError}
+          {errorAccion}
         </Callout>
       ) : null}
 
@@ -237,7 +243,14 @@ function Sala({
       ) : tab === 'votos' ? (
         <Votos group={group} trip={trip} userId={user.id} />
       ) : tab === 'gastos' ? (
-        <Gastos group={group} moneda={moneda} userId={user.id} />
+        <GastosGrupo
+          gastos={gastos.gastos}
+          pendientes={gastos.pendientes}
+          miembros={group.members}
+          userId={user.id}
+          moneda={moneda}
+          onAnadir={gastos.anadir}
+        />
       ) : (
         <Miembros group={group} userId={user.id} />
       )}
@@ -514,161 +527,6 @@ function Votos({
   )
 }
 
-// ── Gastos ────────────────────────────────────────────────────────────────
-
-function Gastos({
-  group,
-  moneda,
-  userId,
-}: {
-  group: UseGroupReturn
-  moneda: string
-  userId: string
-}): React.ReactElement {
-  const styles = useEstilos(crearEstilos)
-  const [concepto, setConcepto] = useState('')
-  const [monto, setMonto] = useState('')
-  const [error, setError] = useState<string | null>(null)
-
-  const nombreDe = (uid: string): string =>
-    uid === userId
-      ? 'Tú'
-      : (group.members.find((m) => m.user_id === uid)?.nombre ?? 'Alguien')
-
-  // Quién le debe a quién (todos los gastos se reparten entre todos).
-  const deudas = useMemo(() => {
-    const neto = new Map<string, number>()
-    const ids = group.members.map((m) => m.user_id)
-    for (const id of ids) neto.set(id, 0)
-    for (const e of group.expenses) {
-      const entre = e.entre_todos && ids.length > 0 ? ids : [e.pagado_por]
-      const parte = e.monto / Math.max(1, entre.length)
-      neto.set(e.pagado_por, (neto.get(e.pagado_por) ?? 0) + e.monto)
-      for (const id of entre) neto.set(id, (neto.get(id) ?? 0) - parte)
-    }
-    const deudores = [...neto.entries()]
-      .filter(([, v]) => v < -0.009)
-      .map(([id, v]) => ({ id, v: -v }))
-    const acreedores = [...neto.entries()]
-      .filter(([, v]) => v > 0.009)
-      .map(([id, v]) => ({ id, v }))
-    const out: { de: string; a: string; monto: number }[] = []
-    let i = 0
-    let j = 0
-    while (i < deudores.length && j < acreedores.length) {
-      const d = deudores[i]
-      const c = acreedores[j]
-      if (!d || !c) break
-      const x = Math.min(d.v, c.v)
-      out.push({ de: d.id, a: c.id, monto: x })
-      d.v -= x
-      c.v -= x
-      if (d.v < 0.01) i++
-      if (c.v < 0.01) j++
-    }
-    return out
-  }, [group.expenses, group.members])
-
-  const anadir = async (): Promise<void> => {
-    const n = Number(monto.replace(',', '.'))
-    if (!concepto.trim()) {
-      setError('Escribe el concepto del gasto.')
-      return
-    }
-    if (!Number.isFinite(n) || n <= 0) {
-      setError('El monto debe ser mayor que cero.')
-      return
-    }
-    setError(null)
-    const ok = await group.addExpense(concepto.trim(), n)
-    if (ok) {
-      setConcepto('')
-      setMonto('')
-    }
-  }
-
-  return (
-    <ScrollView
-      contentContainerStyle={styles.lista}
-      keyboardShouldPersistTaps="handled"
-    >
-      <Card style={styles.formGasto}>
-        <CardKicker>Añadir gasto</CardKicker>
-        <Input
-          label="Concepto"
-          placeholder="Ej.: cena en el malecón"
-          value={concepto}
-          onChangeText={setConcepto}
-          maxLength={200}
-          containerStyle={styles.hueco}
-          error={error && !concepto.trim() ? error : null}
-        />
-        <Input
-          label={`Monto (${moneda})`}
-          placeholder="0"
-          value={monto}
-          onChangeText={(t) => setMonto(t.replace(/[^\d.,]/g, ''))}
-          keyboardType="decimal-pad"
-          error={error && concepto.trim() ? error : null}
-          hint="Se reparte entre todos los miembros."
-        />
-        <Button
-          title="Añadir gasto"
-          variant="tinta"
-          icon={Plus}
-          onPress={() => void anadir()}
-        />
-      </Card>
-
-      {group.expenses.length === 0 ? (
-        <EmptyState
-          title="Sin gastos todavía"
-          description="Anota lo que pague cada uno y Wayio calcula quién le debe a quién."
-        />
-      ) : (
-        <View style={styles.gastos}>
-          {group.expenses.map((e) => (
-            <View key={e.id} style={styles.gasto}>
-              <View style={styles.flex}>
-                <Txt variant="label" numberOfLines={2}>
-                  {e.concepto}
-                </Txt>
-                <Txt variant="caption" color="fgMuted">
-                  {esPendiente(e.id)
-                    ? 'Guardando…'
-                    : `${e.pagado_por === userId ? 'Pagaste tú' : `Pagó ${nombreDe(e.pagado_por)}`} · ${formatFecha(e.created_at, { diaSemana: false })}`}
-                </Txt>
-              </View>
-              <Txt variant="label" tnum>
-                {formatCurrency(e.monto, moneda, { decimales: true })}
-              </Txt>
-            </View>
-          ))}
-        </View>
-      )}
-
-      {deudas.length > 0 ? (
-        <Card style={styles.balances}>
-          <CardKicker>Balances</CardKicker>
-          {deudas.map((d) => (
-            <Txt key={`${d.de}-${d.a}`} variant="bodyS" style={styles.hueco}>
-              {nombreDe(d.de)} {d.de === userId ? 'le debes' : 'le debe'}{' '}
-              <Txt variant="label" tnum>
-                {formatCurrency(d.monto, moneda, { decimales: true })}
-              </Txt>{' '}
-              a {nombreDe(d.a) === 'Tú' ? 'ti' : nombreDe(d.a)}
-            </Txt>
-          ))}
-        </Card>
-      ) : group.expenses.length > 0 ? (
-        <Txt variant="caption" color="fgMuted" style={styles.hueco}>
-          Están a mano: nadie le debe a nadie.
-        </Txt>
-      ) : null}
-    </ScrollView>
-  )
-}
-
 // ── Miembros ──────────────────────────────────────────────────────────────
 
 function Miembros({
@@ -796,20 +654,6 @@ const crearEstilos = (t: Tema) =>
       overflow: 'hidden',
     },
     segmento: { height: 8 },
-    formGasto: { padding: 16, marginBottom: 16 },
-    gastos: {
-      borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: t.colors.border,
-    },
-    gasto: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 12,
-      paddingVertical: 12,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: t.colors.border,
-    },
-    balances: { marginTop: 16, padding: 16 },
     miembro: {
       flexDirection: 'row',
       alignItems: 'center',

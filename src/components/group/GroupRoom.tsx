@@ -33,6 +33,7 @@ import { GroupChat } from './GroupChat'
 import { GroupExpenses } from './GroupExpenses'
 import { MiembrosPanel } from './MiembrosPanel'
 import { useCompartirUbicacion } from './useCompartirUbicacion'
+import { useGastosGrupo } from './useGastosGrupo'
 import { VotingPanel } from './VotingPanel'
 
 const TripMap = dynamic(
@@ -87,6 +88,15 @@ export function GroupRoom({
   // Aquí y no en MiembrosPanel: en móvil ese panel es una pestaña que se
   // desmonta al cambiar de pestaña, y eso apagaría el GPS sin avisar.
   const ubicacion = useCompartirUbicacion(grupo.updateLocation)
+  // Gastos con «Pagó» y «Entre quiénes» (aquí y no en GroupExpenses para no
+  // perder un gasto en camino al cambiar de pestaña).
+  const gastos = useGastosGrupo(
+    tripId,
+    grupo.expenses,
+    grupo.members,
+    currentUser.id
+  )
+  const errorAccion = grupo.actionError ?? gastos.error
   const { success, error: toastError } = useToast()
   const [tab, setTab] = useState<GroupTab>('chat')
   const [copiado, setCopiado] = useState(false)
@@ -305,17 +315,23 @@ export function GroupRoom({
               ) : null}
 
               <div className="min-w-0 lg:col-span-7">
-                {grupo.actionError ? (
+                {errorAccion ? (
                   <Callout
                     tone="danger"
                     className="mb-5"
                     action={
-                      <Button variant="link" onClick={grupo.clearActionError}>
+                      <Button
+                        variant="link"
+                        onClick={() => {
+                          grupo.clearActionError()
+                          gastos.limpiarError()
+                        }}
+                      >
                         Entendido
                       </Button>
                     }
                   >
-                    {grupo.actionError}
+                    {errorAccion}
                   </Callout>
                 ) : null}
 
@@ -331,8 +347,8 @@ export function GroupRoom({
                     </Tab>
                     <Tab
                       value="gastos"
-                      {...(grupo.expenses.length > 0
-                        ? { count: grupo.expenses.length }
+                      {...(gastos.gastos.length > 0
+                        ? { count: gastos.gastos.length }
                         : {})}
                     >
                       Gastos
@@ -404,12 +420,12 @@ export function GroupRoom({
 
                   <TabPanel value="gastos" className="pt-5">
                     <GroupExpenses
-                      expenses={grupo.expenses}
+                      expenses={gastos.gastos}
                       members={grupo.members}
                       currentUserId={currentUser.id}
                       moneda={moneda}
-                      pendingIds={grupo.pendingIds}
-                      addExpense={grupo.addExpense}
+                      pendingIds={gastos.pendientes}
+                      addExpense={gastos.anadir}
                     />
                   </TabPanel>
 
