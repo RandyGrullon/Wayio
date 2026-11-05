@@ -1,0 +1,7 @@
+node_modules
+test
+README.md
+fly.toml
+railway.json
+*.log
+.env*

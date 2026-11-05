@@ -1,0 +1,40 @@
+# Fly.io — worker de video de Wayio (ver README.md, «Opción B»).
+# Desde worker-video/:  fly launch --copy-config --no-deploy
+#                       fly secrets set VIDEO_WORKER_SECRET=...
+#                       fly deploy
+# Cambia «app» si el nombre ya está cogido. «iad» (Virginia) queda junto a la
+# región por defecto de las funciones de Vercel (iad1).
+
+app = "wayio-video"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  MAX_TRABAJOS = "2"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # Se apaga sin tráfico y arranca solo con la siguiente petición (pagas por
+  # segundo encendido). Una descarga en curso lo mantiene encendido.
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 2
+    hard_limit = 4
+
+  [[http_service.checks]]
+    grace_period = "30s"
+    interval = "30s"
+    method = "GET"
+    path = "/salud"
+    timeout = "5s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"

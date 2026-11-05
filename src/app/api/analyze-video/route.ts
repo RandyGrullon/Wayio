@@ -38,9 +38,11 @@ import {
  * code 'tope_diario'; el resultado de ejemplo sin IA nunca se bloquea). En
  * el plan Gratis, fotos y videos comparten el cupo mensual 'analizar' (402
  * code 'cupo_agotado', ver src/lib/planes/cupo.ts); un análisis que falla no
- * lo gasta. El modo video depende del flag VIDEO_ANALYSIS_ENABLED
- * (desactivado por defecto en producción): desactivado, su 503 llega antes
- * de tocar el cupo.
+ * lo gasta. El modo video se activa solo al configurar el worker
+ * (VIDEO_WORKER_URL + VIDEO_WORKER_SECRET, carpeta worker-video/) o con el
+ * flag VIDEO_ANALYSIS_ENABLED ('false' lo apaga siempre; sin worker ni flag,
+ * desactivado en producción): desactivado, su 503 llega antes de tocar el
+ * cupo.
  */
 
 export const maxDuration = 300

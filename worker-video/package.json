@@ -1,0 +1,14 @@
+{
+  "name": "wayio-worker-video",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Worker de Wayio: descarga videos de viaje con yt-dlp y devuelve fotogramas (ffmpeg). Sin IA ni dependencias npm.",
+  "type": "module",
+  "engines": {
+    "node": ">=20.3"
+  },
+  "scripts": {
+    "start": "node src/servidor.mjs",
+    "test": "node --test"
+  }
+}

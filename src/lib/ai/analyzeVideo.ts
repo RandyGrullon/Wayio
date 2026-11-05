@@ -11,13 +11,19 @@ import { aiProvider } from '@/lib/ai/config'
 import { esObjeto, estadoPorErrorIA, parsearJsonIA } from '@/lib/ai/routeKit'
 
 /**
- * "Recrear viaje desde un video": descarga el video (yt-dlp), extrae unos
- * pocos fotogramas (ffmpeg) y los manda por lotes a la IA de visión para
- * identificar lugares. También analiza una sola foto (base64).
+ * "Recrear viaje desde un video": descarga el video, extrae unos pocos
+ * fotogramas y los manda por lotes a la IA de visión para identificar
+ * lugares. También analiza una sola foto (base64).
  *
- * - yt-dlp y ffmpeg se cargan con import DINÁMICO dentro de la función: si no
- *   están en el servidor (p. ej. serverless), solo falla esta función con un
- *   error amable, nunca la ruta entera ni el modo demo.
+ * Dos formas de sacar los fotogramas:
+ * - Worker (VIDEO_WORKER_URL + VIDEO_WORKER_SECRET): un contenedor aparte
+ *   (carpeta worker-video/) descarga con yt-dlp y extrae con ffmpeg; aquí solo
+ *   llegan los JPG. Es lo que funciona en Vercel. La IA, el cupo, el tope
+ *   diario y el registro de costes siguen en esta app.
+ * - Local: yt-dlp y ffmpeg en este mismo servidor, con import DINÁMICO dentro
+ *   de la función: si no están (p. ej. serverless), solo falla esta función
+ *   con un error amable, nunca la ruta entera ni el modo demo.
+ *
  * - Solo se aceptan URLs de plataformas conocidas (sin IPs ni hosts internos).
  * - Límites: 10 min de video, 20 fotogramas, foto ≤ 5 MB.
  * - Los temporales se borran siempre (finally).
@@ -89,22 +95,72 @@ const MAX_FOTOGRAMAS = 20
 export const MAX_IMAGEN_BASE64 = 5 * 1024 * 1024
 const CONFIANZA_MINIMA = 0.7
 
+/** Mensajes para el usuario (los comparten el modo local y el worker). */
+const MSG = {
+  urlNoValida:
+    'Ese enlace no parece válido. Copia el enlace completo del video.',
+  herramientas:
+    'El análisis de videos no está disponible por ahora. Escribe el destino o sube una foto del lugar.',
+  dns: 'No pudimos acceder a ese enlace. Comprueba que esté bien escrito.',
+  descargaLenta:
+    'La descarga del video tardó demasiado. Prueba con un video más corto.',
+  noReconocido:
+    'No reconocemos ese enlace como un video. Copia el enlace directo del video e inténtalo de nuevo.',
+  pesado: 'El video es demasiado pesado. Prueba con uno más corto.',
+  privado:
+    'Ese video es privado o pide iniciar sesión, así que no podemos verlo. Prueba con un video público.',
+  noDisponible: 'Ese video ya no está disponible.',
+  descargaGenerica:
+    'No pudimos descargar ese video. Comprueba que el enlace sea público e inténtalo de nuevo.',
+  directo:
+    'No podemos analizar transmisiones en directo. Prueba con un video ya publicado.',
+  duracion:
+    'El video dura más de 10 minutos. Prueba con uno más corto, como un reel o un short.',
+  sinArchivo:
+    'No pudimos descargar ese video. Comprueba que sea público y que dure menos de 10 minutos.',
+  sinFotogramas:
+    'No pudimos leer las imágenes del video. Prueba con otro enlace.',
+  // Solo con worker:
+  bloqueado:
+    'La plataforma no nos dejó descargar ese video ahora mismo. Prueba con otro enlace o sube una foto del lugar.',
+  ocupado:
+    'Ahora mismo estamos analizando muchos videos. Inténtalo de nuevo en unos minutos.',
+  cancelado: 'Se canceló el análisis del video.',
+} as const
+
 // ---------------------------------------------------------------------------
 // Feature flag y validación de URL
 // ---------------------------------------------------------------------------
 
 /**
- * VIDEO_ANALYSIS_ENABLED: 'true' lo activa, 'false' lo desactiva. Sin valor,
- * activo en desarrollo y desactivado en producción (yt-dlp/ffmpeg no suelen
- * estar disponibles en serverless).
+ * ¿Hay worker de video? Hacen falta VIDEO_WORKER_URL y VIDEO_WORKER_SECRET
+ * (con una sola se sigue en modo local).
+ */
+function workerConfigurado(): boolean {
+  return Boolean(
+    process.env.VIDEO_WORKER_URL?.trim() &&
+    process.env.VIDEO_WORKER_SECRET?.trim()
+  )
+}
+
+/**
+ * VIDEO_ANALYSIS_ENABLED: 'true' lo activa, 'false' lo desactiva (también con
+ * worker: sirve de interruptor). Sin valor: activo si hay worker configurado
+ * y, si no, activo en desarrollo y desactivado en producción (yt-dlp/ffmpeg
+ * no suelen estar disponibles en serverless).
  */
 export function videoAnalysisEnabled(): boolean {
   const v = process.env.VIDEO_ANALYSIS_ENABLED?.trim().toLowerCase()
   if (v === 'true' || v === '1') return true
   if (v === 'false' || v === '0') return false
+  if (workerConfigurado()) return true
   return process.env.NODE_ENV !== 'production'
 }
 
+/**
+ * Plataformas aceptadas. worker-video/src/url.mjs tiene una copia que DEBE
+ * coincidir (su prueba lo comprueba).
+ */
 const HOSTS_PERMITIDOS = [
   'youtube.com',
   'youtu.be',
@@ -126,11 +182,7 @@ export function normalizarUrlVideo(input: string): string {
   try {
     url = new URL(s)
   } catch {
-    throw new VideoAnalysisError(
-      'url_no_valida',
-      'Ese enlace no parece válido. Copia el enlace completo del video.',
-      400
-    )
+    throw new VideoAnalysisError('url_no_valida', MSG.urlNoValida, 400)
   }
   if (url.protocol !== 'https:' && url.protocol !== 'http:') {
     throw new VideoAnalysisError('url_no_permitida', MSG_PLATAFORMAS, 400)
@@ -188,12 +240,7 @@ async function comprobarDestinoPublico(host: string): Promise<void> {
   try {
     direcciones = await lookup(host, { all: true, verbatim: true })
   } catch (err) {
-    throw new VideoAnalysisError(
-      'descarga',
-      'No pudimos acceder a ese enlace. Comprueba que esté bien escrito.',
-      422,
-      err
-    )
+    throw new VideoAnalysisError('descarga', MSG.dns, 422, err)
   }
   if (
     direcciones.length === 0 ||
@@ -221,12 +268,7 @@ async function cargarHerramientas() {
     }
     return { ffmpeg: ffmpegMod.default, ytDlp: ytMod.default, ffmpegPath }
   } catch (err) {
-    throw new VideoAnalysisError(
-      'herramientas',
-      'El análisis de videos no está disponible por ahora. Escribe el destino o sube una foto del lugar.',
-      503,
-      err
-    )
+    throw new VideoAnalysisError('herramientas', MSG.herramientas, 503, err)
   }
 }
 
@@ -287,63 +329,33 @@ function errorDeDescarga(err: unknown): VideoAnalysisError {
   }`
   // El binario de yt-dlp no está instalado en el servidor.
   if (e.code === 'ENOENT' || e.code === 'EACCES') {
-    return new VideoAnalysisError(
-      'herramientas',
-      'El análisis de videos no está disponible por ahora. Escribe el destino o sube una foto del lugar.',
-      503,
-      err
-    )
+    return new VideoAnalysisError('herramientas', MSG.herramientas, 503, err)
   }
   if (e.timedOut === true) {
-    return new VideoAnalysisError(
-      'descarga',
-      'La descarga del video tardó demasiado. Prueba con un video más corto.',
-      504,
-      err
-    )
+    return new VideoAnalysisError('descarga', MSG.descargaLenta, 504, err)
   }
   if (/unsupported url|no suitable extractor/i.test(detalle)) {
     return new VideoAnalysisError(
       'url_no_permitida',
-      'No reconocemos ese enlace como un video. Copia el enlace directo del video e inténtalo de nuevo.',
+      MSG.noReconocido,
       400,
       err
     )
   }
   if (/max-filesize|larger than/i.test(detalle)) {
-    return new VideoAnalysisError(
-      'muy_largo',
-      'El video es demasiado pesado. Prueba con uno más corto.',
-      422,
-      err
-    )
+    return new VideoAnalysisError('muy_largo', MSG.pesado, 422, err)
   }
   if (
     /private|login|log in|sign in|cookies|age-restricted|confirm your age/i.test(
       detalle
     )
   ) {
-    return new VideoAnalysisError(
-      'descarga',
-      'Ese video es privado o pide iniciar sesión, así que no podemos verlo. Prueba con un video público.',
-      422,
-      err
-    )
+    return new VideoAnalysisError('descarga', MSG.privado, 422, err)
   }
   if (/not available|unavailable|removed|404/i.test(detalle)) {
-    return new VideoAnalysisError(
-      'descarga',
-      'Ese video ya no está disponible.',
-      422,
-      err
-    )
+    return new VideoAnalysisError('descarga', MSG.noDisponible, 422, err)
   }
-  return new VideoAnalysisError(
-    'descarga',
-    'No pudimos descargar ese video. Comprueba que el enlace sea público e inténtalo de nuevo.',
-    502,
-    err
-  )
+  return new VideoAnalysisError('descarga', MSG.descargaGenerica, 502, err)
 }
 
 async function descargarVideo(
@@ -367,22 +379,14 @@ async function descargarVideo(
   }
   const meta = esObjeto(info) ? info : {}
   if (meta.is_live === true) {
-    throw new VideoAnalysisError(
-      'descarga',
-      'No podemos analizar transmisiones en directo. Prueba con un video ya publicado.',
-      422
-    )
+    throw new VideoAnalysisError('descarga', MSG.directo, 422)
   }
   const duracion =
     typeof meta.duration === 'number' && Number.isFinite(meta.duration)
       ? meta.duration
       : 0
   if (duracion > MAX_DURACION_SEG) {
-    throw new VideoAnalysisError(
-      'muy_largo',
-      'El video dura más de 10 minutos. Prueba con uno más corto, como un reel o un short.',
-      422
-    )
+    throw new VideoAnalysisError('muy_largo', MSG.duracion, 422)
   }
 
   // 2) Descarga: solo la pista de video (≤720p), sin audio si se puede.
@@ -413,11 +417,7 @@ async function descargarVideo(
       f.startsWith('video.') && !f.endsWith('.part') && !f.endsWith('.ytdl')
   )
   if (!archivo) {
-    throw new VideoAnalysisError(
-      'descarga',
-      'No pudimos descargar ese video. Comprueba que sea público y que dure menos de 10 minutos.',
-      422
-    )
+    throw new VideoAnalysisError('descarga', MSG.sinArchivo, 422)
   }
   return { archivo: path.join(dir, archivo), duracion }
 }
@@ -451,12 +451,7 @@ async function extraerFotogramas(
         .run()
     })
   } catch (err) {
-    throw new VideoAnalysisError(
-      'sin_fotogramas',
-      'No pudimos leer las imágenes del video. Prueba con otro enlace.',
-      422,
-      err
-    )
+    throw new VideoAnalysisError('sin_fotogramas', MSG.sinFotogramas, 422, err)
   }
   const frames = (await fsp.readdir(dir))
     .filter((f) => /^frame-\d+\.jpg$/.test(f))
@@ -464,13 +459,314 @@ async function extraerFotogramas(
     .slice(0, MAX_FOTOGRAMAS)
     .map((f) => path.join(dir, f))
   if (frames.length === 0) {
-    throw new VideoAnalysisError(
-      'sin_fotogramas',
-      'No pudimos leer las imágenes del video. Prueba con otro enlace.',
-      422
-    )
+    throw new VideoAnalysisError('sin_fotogramas', MSG.sinFotogramas, 422)
   }
   return frames
+}
+
+/** Modo local: descarga y fotogramas en este servidor (yt-dlp + ffmpeg). */
+async function fotogramasLocales(
+  url: string,
+  opts: OpcionesAnalisis
+): Promise<Imagen[]> {
+  await comprobarDestinoPublico(new URL(url).hostname)
+  const h = await cargarHerramientas()
+
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'wayio-video-'))
+  try {
+    const { archivo, duracion } = await descargarVideo(
+      h,
+      url,
+      dir,
+      opts.deadline
+    )
+    const framesDir = path.join(dir, 'frames')
+    await fsp.mkdir(framesDir)
+    const frames = await extraerFotogramas(
+      h,
+      archivo,
+      framesDir,
+      duracion,
+      opts.deadline
+    )
+    // El video ya no hace falta: liberamos disco cuanto antes.
+    await fsp.rm(archivo, { force: true }).catch(() => undefined)
+
+    return await Promise.all(
+      frames.map(async (f) => ({
+        data: (await fsp.readFile(f)).toString('base64'),
+        mediaType: 'image/jpeg' as const,
+      }))
+    )
+  } finally {
+    await fsp.rm(dir, { recursive: true, force: true }).catch(() => undefined)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Worker de video (worker-video/): descarga y fotogramas fuera de Vercel
+// ---------------------------------------------------------------------------
+
+/** Margen para la IA de visión después de recibir los fotogramas. */
+const RESERVA_VISION_MS = 45_000
+/** Tiempo máximo que se le da al worker (descarga + ffmpeg). */
+const MAX_TIEMPO_WORKER_MS = 230_000
+/** Tope de la respuesta del worker (20 JPG de ≤1024 px rondan 1-4 MB). */
+const MAX_RESPUESTA_WORKER = 40 * 1024 * 1024
+const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/
+
+/**
+ * Worker caído o mal configurado: al usuario, el mensaje de siempre; el
+ * detalle va como causa a Sentry (nunca lleva el secreto).
+ */
+function errorWorkerNoDisponible(
+  detalle: string,
+  cause?: unknown
+): VideoAnalysisError {
+  return new VideoAnalysisError(
+    'herramientas',
+    MSG.herramientas,
+    503,
+    new Error(detalle, cause !== undefined ? { cause } : undefined)
+  )
+}
+
+/**
+ * POST /fotogramas del worker a partir de VIDEO_WORKER_URL. Admite la URL
+ * base con o sin https:// y con o sin /fotogramas al final.
+ */
+function endpointWorker(): URL {
+  const crudo = process.env.VIDEO_WORKER_URL?.trim() ?? ''
+  let url: URL
+  try {
+    url = new URL(
+      /^[a-z][a-z0-9+.-]*:\/\//i.test(crudo) ? crudo : `https://${crudo}`
+    )
+  } catch {
+    throw errorWorkerNoDisponible('VIDEO_WORKER_URL no es una URL válida')
+  }
+  const local = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
+  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && local)) {
+    throw errorWorkerNoDisponible(
+      'VIDEO_WORKER_URL debe empezar por https:// (http solo en localhost)'
+    )
+  }
+  if (url.username || url.password || url.search) {
+    throw errorWorkerNoDisponible(
+      'VIDEO_WORKER_URL no debe llevar usuario, contraseña ni parámetros'
+    )
+  }
+  const ruta = url.pathname.replace(/\/+$/, '')
+  url.pathname = ruta.endsWith('/fotogramas') ? ruta : `${ruta}/fotogramas`
+  url.hash = ''
+  return url
+}
+
+/** Lee el cuerpo sin pasar de MAX_RESPUESTA_WORKER. */
+async function leerCuerpoLimitado(res: Response): Promise<string> {
+  const declarado = Number(res.headers.get('content-length') ?? 0)
+  if (declarado > MAX_RESPUESTA_WORKER) {
+    throw new Error(`Respuesta del worker demasiado grande (${declarado} B)`)
+  }
+  if (!res.body) return ''
+  const lector = res.body.getReader()
+  const partes: Uint8Array[] = []
+  let total = 0
+  for (;;) {
+    const { done, value } = await lector.read()
+    if (done) break
+    total += value.byteLength
+    if (total > MAX_RESPUESTA_WORKER) {
+      await lector.cancel().catch(() => undefined)
+      throw new Error('Respuesta del worker demasiado grande')
+    }
+    partes.push(value)
+  }
+  return Buffer.concat(partes).toString('utf8')
+}
+
+/** Errores de red con el worker (sin respuesta). */
+function errorDeConexionWorker(
+  err: unknown,
+  signal: AbortSignal | undefined,
+  host: string
+): VideoAnalysisError {
+  if (signal?.aborted) {
+    return new VideoAnalysisError('descarga', MSG.cancelado, 499, err)
+  }
+  const nombre = err instanceof Error ? err.name : ''
+  if (nombre === 'TimeoutError' || nombre === 'AbortError') {
+    return new VideoAnalysisError('descarga', MSG.descargaLenta, 504, err)
+  }
+  // fetch dice solo «fetch failed»; el motivo (ECONNREFUSED, TLS…) va en cause.
+  const motivo =
+    err instanceof Error && err.cause instanceof Error
+      ? `: ${err.cause.message}`
+      : ''
+  const detalle = err instanceof Error ? `${err.message}${motivo}` : String(err)
+  return errorWorkerNoDisponible(
+    `No se pudo hablar con el worker de video (${host}): ${detalle}`,
+    err
+  )
+}
+
+/** Motivos de 'descarga' del worker → mensaje y status de la app. */
+const DESCARGA_POR_MOTIVO = new Map<string, readonly [string, number]>([
+  ['dns', [MSG.dns, 422]],
+  ['tiempo', [MSG.descargaLenta, 504]],
+  ['privado', [MSG.privado, 422]],
+  ['bloqueado', [MSG.bloqueado, 502]],
+  ['no_disponible', [MSG.noDisponible, 422]],
+  ['directo', [MSG.directo, 422]],
+  ['sin_archivo', [MSG.sinArchivo, 422]],
+  ['cancelado', [MSG.cancelado, 499]],
+])
+
+/** Respuesta de error del worker ({ code, motivo }) → códigos de la app. */
+function errorDelWorker(
+  status: number,
+  r: Record<string, unknown>
+): VideoAnalysisError {
+  const code = typeof r.code === 'string' ? r.code : ''
+  const motivo = typeof r.motivo === 'string' ? r.motivo : ''
+  const detalle =
+    typeof r.detalle === 'string' ? `: ${r.detalle.slice(0, 500)}` : ''
+  // Contexto para Sentry (el worker nunca devuelve el secreto).
+  const causa = new Error(
+    `Worker de video: HTTP ${status} ${code || 'sin_codigo'}/${motivo || '-'}${detalle}`
+  )
+  switch (code) {
+    case 'url_no_valida':
+      return new VideoAnalysisError(
+        'url_no_valida',
+        MSG.urlNoValida,
+        400,
+        causa
+      )
+    case 'url_no_permitida':
+      return new VideoAnalysisError(
+        'url_no_permitida',
+        motivo === 'no_reconocido' ? MSG.noReconocido : MSG_PLATAFORMAS,
+        400,
+        causa
+      )
+    case 'muy_largo':
+      return new VideoAnalysisError(
+        'muy_largo',
+        motivo === 'pesado' ? MSG.pesado : MSG.duracion,
+        422,
+        causa
+      )
+    case 'sin_fotogramas':
+      return new VideoAnalysisError(
+        'sin_fotogramas',
+        MSG.sinFotogramas,
+        422,
+        causa
+      )
+    case 'descarga': {
+      const [mensaje, st] = DESCARGA_POR_MOTIVO.get(motivo) ?? [
+        MSG.descargaGenerica,
+        502,
+      ]
+      return new VideoAnalysisError('descarga', mensaje, st, causa)
+    }
+    case 'ocupado':
+      return new VideoAnalysisError('descarga', MSG.ocupado, 503, causa)
+    default:
+      // herramientas, no_autorizado (el secreto no coincide), no_encontrado
+      // (VIDEO_WORKER_URL apunta a otra cosa), interno o una respuesta que no
+      // es del worker.
+      return new VideoAnalysisError(
+        'herramientas',
+        MSG.herramientas,
+        503,
+        causa
+      )
+  }
+}
+
+/** Fotogramas válidos de la respuesta (base64 ≤5 MB y tipo real de imagen). */
+function imagenesDelWorker(r: Record<string, unknown>): Imagen[] {
+  const lista = Array.isArray(r.fotogramas) ? r.fotogramas : []
+  const imagenes: Imagen[] = []
+  for (const f of lista.slice(0, MAX_FOTOGRAMAS)) {
+    if (!esObjeto(f) || typeof f.data !== 'string') continue
+    const data = f.data
+    if (
+      data.length < 16 ||
+      data.length > MAX_IMAGEN_BASE64 ||
+      !BASE64.test(data)
+    ) {
+      continue
+    }
+    // Tipo real por los primeros bytes (no nos fiamos del declarado).
+    const tipo = detectarTipo(Buffer.from(data.slice(0, 32), 'base64'))
+    if (tipo) imagenes.push({ data, mediaType: tipo })
+  }
+  if (imagenes.length === 0) {
+    throw new VideoAnalysisError('sin_fotogramas', MSG.sinFotogramas, 422)
+  }
+  return imagenes
+}
+
+/**
+ * Modo worker: el contenedor descarga y extrae; aquí solo llegan los JPG.
+ * El worker responde 200 enseguida y manda espacios mientras trabaja (para
+ * que ningún proxy corte la conexión); el resultado va en el cuerpo.
+ */
+async function fotogramasDelWorker(
+  url: string,
+  opts: OpcionesAnalisis
+): Promise<Imagen[]> {
+  const endpoint = endpointWorker()
+  const secreto = process.env.VIDEO_WORKER_SECRET?.trim() ?? ''
+  const tiempoWorker = tiempoPara(
+    opts.deadline,
+    RESERVA_VISION_MS,
+    MAX_TIEMPO_WORKER_MS
+  )
+  // Margen para que el worker conteste su propio error de tiempo antes.
+  const limite = AbortSignal.timeout(tiempoWorker + 10_000)
+  const signal = opts.signal ? AbortSignal.any([limite, opts.signal]) : limite
+
+  let status: number
+  let texto: string
+  try {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${secreto}`,
+      },
+      body: JSON.stringify({
+        videoUrl: url,
+        maxFotogramas: MAX_FOTOGRAMAS,
+        maxDuracionSeg: MAX_DURACION_SEG,
+        tiempoMaxMs: tiempoWorker,
+      }),
+      signal,
+      // Una redirección podría llevarse la cabecera con el secreto.
+      redirect: 'error',
+      cache: 'no-store',
+    })
+    status = res.status
+    texto = await leerCuerpoLimitado(res)
+  } catch (err) {
+    throw errorDeConexionWorker(err, opts.signal, endpoint.host)
+  }
+
+  let json: unknown = null
+  try {
+    json = JSON.parse(texto)
+  } catch {
+    // No es JSON (p. ej. una página de error del proxy): se trata abajo.
+  }
+  const cuerpo = esObjeto(json) ? json : {}
+  if (status !== 200 || cuerpo.ok !== true) {
+    throw errorDelWorker(status, cuerpo)
+  }
+  return imagenesDelWorker(cuerpo)
 }
 
 // ---------------------------------------------------------------------------
@@ -716,105 +1012,82 @@ const trocear = <T>(arr: T[], n: number): T[][] => {
   return out
 }
 
+/** Manda los fotogramas por lotes a la IA de visión y consolida el destino. */
+async function analizarFotogramas(
+  imagenes: Imagen[],
+  opts: OpcionesAnalisis,
+  endpoint: string
+): Promise<VideoAnalysisResult> {
+  // Groq admite pocas imágenes por petición; Anthropic, más.
+  const esGroq = aiProvider() === 'groq'
+  const lotes = trocear(imagenes, esGroq ? 3 : 10)
+  const concurrencia = esGroq ? 1 : 2
+
+  const lugares: PlaceFromVideo[] = []
+  let exitosos = 0
+  let pendientesOmitidos = 0
+  let ultimoError: unknown = null
+  let siguiente = 0
+
+  const trabajador = async (): Promise<void> => {
+    while (siguiente < lotes.length) {
+      const lote = lotes[siguiente++]
+      if (!lote) continue
+      // Sin tiempo suficiente: dejamos el resto (resultado parcial).
+      if (opts.deadline - Date.now() < 25_000 || opts.signal?.aborted) {
+        pendientesOmitidos++
+        continue
+      }
+      try {
+        lugares.push(...(await analizarLote(lote, opts, endpoint)))
+        exitosos++
+      } catch (err) {
+        // Un lote fallido no tumba el análisis: seguimos con los demás.
+        ultimoError = err
+      }
+    }
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(concurrencia, lotes.length) }, trabajador)
+  )
+
+  if (exitosos === 0) {
+    throw ultimoError
+      ? errorDeIA(ultimoError)
+      : new VideoAnalysisError(
+          'ia',
+          'El video tardó demasiado en analizarse. Prueba con uno más corto.',
+          504
+        )
+  }
+
+  const unicos = deduplicar(lugares)
+  const { destinoSugerido, resumen } = await consolidar(unicos, opts, endpoint)
+  const parcial = exitosos < lotes.length || pendientesOmitidos > 0
+  return {
+    lugares: unicos,
+    destinoSugerido,
+    resumen,
+    ...(parcial ? { parcial: true } : {}),
+  }
+}
+
 // ---------------------------------------------------------------------------
 // API pública
 // ---------------------------------------------------------------------------
 
-/** Analiza un video por URL (ya normalizada con normalizarUrlVideo). */
+/**
+ * Analiza un video por URL (ya normalizada con normalizarUrlVideo). Con
+ * worker configurado los fotogramas los saca el worker; si no, este servidor.
+ */
 export async function analyzeVideoFromUrl(
   url: string,
   opts: OpcionesAnalisis
 ): Promise<VideoAnalysisResult> {
-  const endpoint = '/api/analyze-video'
-  await comprobarDestinoPublico(new URL(url).hostname)
-  const h = await cargarHerramientas()
-
-  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'wayio-video-'))
-  try {
-    const { archivo, duracion } = await descargarVideo(
-      h,
-      url,
-      dir,
-      opts.deadline
-    )
-    const framesDir = path.join(dir, 'frames')
-    await fsp.mkdir(framesDir)
-    const frames = await extraerFotogramas(
-      h,
-      archivo,
-      framesDir,
-      duracion,
-      opts.deadline
-    )
-    // El video ya no hace falta: liberamos disco cuanto antes.
-    await fsp.rm(archivo, { force: true }).catch(() => undefined)
-
-    const imagenes: Imagen[] = await Promise.all(
-      frames.map(async (f) => ({
-        data: (await fsp.readFile(f)).toString('base64'),
-        mediaType: 'image/jpeg' as const,
-      }))
-    )
-
-    // Groq admite pocas imágenes por petición; Anthropic, más.
-    const esGroq = aiProvider() === 'groq'
-    const lotes = trocear(imagenes, esGroq ? 3 : 10)
-    const concurrencia = esGroq ? 1 : 2
-
-    const lugares: PlaceFromVideo[] = []
-    let exitosos = 0
-    let pendientesOmitidos = 0
-    let ultimoError: unknown = null
-    let siguiente = 0
-
-    const trabajador = async (): Promise<void> => {
-      while (siguiente < lotes.length) {
-        const lote = lotes[siguiente++]
-        if (!lote) continue
-        // Sin tiempo suficiente: dejamos el resto (resultado parcial).
-        if (opts.deadline - Date.now() < 25_000 || opts.signal?.aborted) {
-          pendientesOmitidos++
-          continue
-        }
-        try {
-          lugares.push(...(await analizarLote(lote, opts, endpoint)))
-          exitosos++
-        } catch (err) {
-          // Un lote fallido no tumba el análisis: seguimos con los demás.
-          ultimoError = err
-        }
-      }
-    }
-    await Promise.all(
-      Array.from({ length: Math.min(concurrencia, lotes.length) }, trabajador)
-    )
-
-    if (exitosos === 0) {
-      throw ultimoError
-        ? errorDeIA(ultimoError)
-        : new VideoAnalysisError(
-            'ia',
-            'El video tardó demasiado en analizarse. Prueba con uno más corto.',
-            504
-          )
-    }
-
-    const unicos = deduplicar(lugares)
-    const { destinoSugerido, resumen } = await consolidar(
-      unicos,
-      opts,
-      endpoint
-    )
-    const parcial = exitosos < lotes.length || pendientesOmitidos > 0
-    return {
-      lugares: unicos,
-      destinoSugerido,
-      resumen,
-      ...(parcial ? { parcial: true } : {}),
-    }
-  } finally {
-    await fsp.rm(dir, { recursive: true, force: true }).catch(() => undefined)
-  }
+  const imagenes = workerConfigurado()
+    ? await fotogramasDelWorker(url, opts)
+    : await fotogramasLocales(url, opts)
+  return analizarFotogramas(imagenes, opts, '/api/analyze-video')
 }
 
 const TIPOS_IMAGEN: readonly ImageMediaType[] = [
@@ -867,7 +1140,7 @@ export function prepararImagen(input: string): ImagenPreparada {
       413
     )
   }
-  if (data.length < 16 || !/^[A-Za-z0-9+/]+={0,2}$/.test(data)) {
+  if (data.length < 16 || !BASE64.test(data)) {
     throw new VideoAnalysisError(
       'imagen_no_valida',
       'No pudimos leer esa foto. Prueba con otra en JPG, PNG o WebP.',

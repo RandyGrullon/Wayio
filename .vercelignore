@@ -8,3 +8,4 @@ scripts/eval-ia/resultados/
 brag-output*/
 brag-serie/
 .env*
+worker-video/
