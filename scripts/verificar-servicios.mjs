@@ -189,6 +189,12 @@ const RPC_MIG_3 = [
 const RPC_MIG_4 = ['ai_gasto_desde']
 const TABLAS_MIG_5 = ['usage_counters', 'admin_private_settings']
 const RPC_MIG_5 = ['consumir_cupo', 'devolver_cupo']
+const TABLAS_MIG_6 = ['revenuecat_events']
+const COLUMNAS_MIG_6 = [
+  'store_product_id',
+  'store_transaction_id',
+  'store_environment',
+]
 
 async function supabase() {
   const url = env('NEXT_PUBLIC_SUPABASE_URL').replace(/\/+$/, '')
@@ -299,6 +305,21 @@ async function supabase() {
     falta5.length
       ? `faltan: ${falta5.join(', ')} → ejecuta 20261017130000_cupos_y_rentabilidad.sql (sin ella el cupo del plan Gratis queda abierto)`
       : 'cupos del plan Gratis y ajustes privados del admin'
+  )
+  const columnasSubs = esquema?.definitions?.subscriptions?.properties ?? {}
+  const falta6 = [
+    ...TABLAS_MIG_6.filter((t) => !hay(t)),
+    ...COLUMNAS_MIG_6.filter((c) => !(c in columnasSubs)).map(
+      (c) => `subscriptions.${c}`
+    ),
+  ]
+  anotar(
+    'Base de datos',
+    'Migración 6 · compras de la app',
+    falta6.length ? 'FALTA' : 'OK',
+    falta6.length
+      ? `faltan: ${falta6.join(', ')} → ejecuta 20261105120000_compras_en_tienda.sql (sin ella el webhook de RevenueCat no puede guardar las compras de App Store y Google Play)`
+      : 'compras integradas (App Store y Google Play) y su plan efectivo'
   )
 
   if (hay('profiles')) {
@@ -659,6 +680,28 @@ async function stripe() {
   )
 }
 
+// ── Compras de la app (RevenueCat: App Store y Google Play) ─────────────────
+function revenuecat() {
+  const auth = env('REVENUECAT_WEBHOOK_AUTH')
+  if (!auth) {
+    return anotar(
+      'Pagos',
+      'RevenueCat (compras de la app)',
+      'OPCIONAL',
+      'sin REVENUECAT_WEBHOOK_AUTH las compras de App Store y Google Play no activan Pro (la web no lo necesita)'
+    )
+  }
+  const corto = auth.replace(/^bearer\s+/i, '').length < 24
+  anotar(
+    'Pagos',
+    'REVENUECAT_WEBHOOK_AUTH',
+    corto ? 'AVISO' : 'OK',
+    corto
+      ? 'es corto: usa un secreto largo y aleatorio (p. ej. openssl rand -hex 32)'
+      : 'puesto: compruébalo con «Send test event» en RevenueCat (debe responder 200)'
+  )
+}
+
 // ── App, analítica y errores ────────────────────────────────────────────────
 function plataforma() {
   const base = env('NEXT_PUBLIC_BASE_URL')
@@ -702,6 +745,7 @@ await Promise.all([
   stripe(),
 ])
 plataforma()
+revenuecat()
 
 const ICONO = { OK: '✔', FALTA: '✖', ERROR: '✖', AVISO: '!', OPCIONAL: '·' }
 const ORDEN = [

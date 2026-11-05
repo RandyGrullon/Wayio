@@ -6,11 +6,12 @@
 -- proyecto vacío como en uno que ya tenía una versión anterior del esquema.
 --
 -- Es la fuente completa: equivale a aplicar, en orden, todas las migraciones
--- de supabase/migrations (la última: 20261017130000_cupos_y_rentabilidad.sql).
+-- de supabase/migrations (la última: 20261105120000_compras_en_tienda.sql).
 --
 -- Incluye:
 --   1. Tablas de la app (perfiles, viajes, grupos, suscripciones, referidos,
---      reservas, estados de actividad, cupos mensuales, caché)
+--      reservas, estados de actividad, cupos mensuales, caché, eventos de
+--      Stripe y de RevenueCat)
 --   2. Tablas del panel de administración (logs de IA, feature flags,
 --      anuncios, tokens de push, auditoría, settings públicos y privados)
 --   3. Funciones y RPC (membresía, unirse por link, vista pública, referidos,
@@ -286,13 +287,24 @@ create table if not exists public.subscriptions (
   status                 text not null default 'active',
   current_period_end     timestamptz,
   cancel_at_period_end   boolean not null default false,
-  -- 'system' = free del alta, 'stripe' = pagado, 'admin' = concedido a mano
+  -- 'system' = free del alta, 'stripe' = pagado en la web, 'admin' =
+  -- concedido a mano, 'app_store' / 'play_store' = compra integrada de la app
+  -- (RevenueCat)
   source                 text not null default 'system',
+  -- Compras integradas: producto, transacción ORIGINAL (la misma en cada
+  -- renovación) y entorno de la tienda (SANDBOX = pruebas, no es dinero real)
+  store_product_id       text,
+  store_transaction_id   text,
+  store_environment      text,
   created_at             timestamptz not null default now()
 );
 
 alter table public.subscriptions
   add column if not exists source text not null default 'system';
+alter table public.subscriptions
+  add column if not exists store_product_id text,
+  add column if not exists store_transaction_id text,
+  add column if not exists store_environment text;
 
 -- Estados: el webhook mapea a los 5 clásicos, pero se admiten también los
 -- nuevos de Stripe para que una escritura directa no falle en silencio.
@@ -304,7 +316,10 @@ alter table public.subscriptions add constraint subscriptions_status_check
   ));
 alter table public.subscriptions drop constraint if exists subscriptions_source_check;
 alter table public.subscriptions add constraint subscriptions_source_check
-  check (source in ('system', 'stripe', 'admin'));
+  check (source in ('system', 'stripe', 'admin', 'app_store', 'play_store'));
+alter table public.subscriptions drop constraint if exists subscriptions_store_environment_check;
+alter table public.subscriptions add constraint subscriptions_store_environment_check
+  check (store_environment is null or store_environment in ('SANDBOX', 'PRODUCTION'));
 
 -- Backfill de source para filas creadas antes de existir la columna
 update public.subscriptions
@@ -360,6 +375,16 @@ create trigger trg_reservations_updated_at
 create table if not exists public.stripe_events (
   id           text primary key,
   type         text not null,
+  processed_at timestamptz not null default now()
+);
+
+-- Idempotencia del webhook de RevenueCat (compras integradas de la app):
+-- cada event.id se procesa una vez
+create table if not exists public.revenuecat_events (
+  id           text primary key,
+  type         text not null,
+  app_user_id  text,
+  environment  text,
   processed_at timestamptz not null default now()
 );
 
@@ -493,6 +518,7 @@ create index if not exists idx_subs_status           on public.subscriptions (st
 create index if not exists idx_subs_tier             on public.subscriptions (tier);
 create index if not exists idx_subs_stripe_subscription on public.subscriptions (stripe_subscription_id);
 create index if not exists idx_subs_stripe_customer  on public.subscriptions (stripe_customer_id);
+create index if not exists idx_subs_store_transaction on public.subscriptions (store_transaction_id);
 create index if not exists idx_redemptions_referrer  on public.referral_redemptions (referrer_id);
 create index if not exists idx_reservations_user     on public.reservations (user_id);
 create index if not exists idx_reservations_trip     on public.reservations (trip_id);
@@ -749,10 +775,13 @@ begin
 end;
 $$;
 
--- RPC my_effective_tier: plan efectivo del usuario actual. Las suscripciones
--- recurrentes confían en el estado de Stripe (past_due conserva el acceso
--- mientras Stripe reintenta el cobro); los planes de pago único y los
--- concedidos con fecha caducan al llegar current_period_end.
+-- RPC my_effective_tier: plan efectivo del usuario actual.
+-- - Compras de la tienda (app_store, play_store): acceso hasta
+--   current_period_end + 3 h (demora de la renovación y reintentos del
+--   webhook de RevenueCat); el fin lo escribe siempre el webhook.
+-- - Stripe recurrente: manda el estado de Stripe (past_due conserva el acceso
+--   mientras Stripe reintenta el cobro).
+-- - Pago único o concedido con fecha: caduca al llegar current_period_end.
 create or replace function public.my_effective_tier()
 returns text
 language sql
@@ -762,10 +791,18 @@ stable
 as $$
   select coalesce((
     select case
-             when s.status in ('active', 'trialing', 'past_due')
-              and (s.stripe_subscription_id is not null
-                   or s.current_period_end is null
-                   or s.current_period_end > now())
+             when s.status not in ('active', 'trialing', 'past_due')
+             then 'free'
+             when s.source in ('app_store', 'play_store')
+             then case
+                    when s.current_period_end is not null
+                     and s.current_period_end + interval '3 hours' > now()
+                    then s.tier
+                    else 'free'
+                  end
+             when s.stripe_subscription_id is not null
+               or s.current_period_end is null
+               or s.current_period_end > now()
              then s.tier
              else 'free'
            end
@@ -912,8 +949,9 @@ revoke all on table public.reservations from anon;
 revoke insert, update, delete on table public.reservations from authenticated;
 grant select on table public.reservations to authenticated;
 
--- stripe_events y admin_private_settings: solo service role
+-- stripe_events, revenuecat_events y admin_private_settings: solo service role
 revoke all on table public.stripe_events from anon, authenticated;
+revoke all on table public.revenuecat_events from anon, authenticated;
 revoke all on table public.admin_private_settings from anon, authenticated;
 
 -- usage_counters: el usuario solo LEE sus filas (las escriben las RPC de
@@ -998,6 +1036,7 @@ alter table public.referrals            enable row level security;
 alter table public.referral_redemptions enable row level security;
 alter table public.reservations         enable row level security;
 alter table public.stripe_events        enable row level security;
+alter table public.revenuecat_events    enable row level security;
 alter table public.ai_logs              enable row level security;
 alter table public.feature_flags        enable row level security;
 alter table public.announcements        enable row level security;
@@ -1194,8 +1233,8 @@ drop policy if exists "usage_counters_select_own" on public.usage_counters;
 create policy "usage_counters_select_own" on public.usage_counters
   for select using (user_id = (select auth.uid()));
 
--- ai_logs, admin_audit_log, trip_cache, stripe_events, admin_private_settings:
--- SIN políticas → solo accesibles vía service role (RLS habilitado + sin
+-- ai_logs, admin_audit_log, trip_cache, stripe_events, revenuecat_events,
+-- admin_private_settings: SIN políticas → solo accesibles vía service role (RLS habilitado + sin
 -- policy = denegado)
 
 -- Cierre de is_admin(uuid) (DA-24): ya ninguna política la usa (todas usan
