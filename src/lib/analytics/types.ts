@@ -75,7 +75,7 @@ export interface AnalyticsEventProps {
     /** Dónde estaba el enlace (p. ej. 'essentials', 'actividad', 'mapa'). */
     ubicacion?: string | undefined
   }
-  /** Se abrió un checkout de Stripe (plan o reserva). */
+  /** Se abrió un checkout de pago (plan o reserva), con cualquier proveedor. */
   checkout_iniciado: {
     tipo: 'plan' | 'reserva'
     planId?: string | undefined

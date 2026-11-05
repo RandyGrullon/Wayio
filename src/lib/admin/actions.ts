@@ -2,7 +2,17 @@
 
 import { revalidatePath } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { getStripe, isStripeConfigured } from '@/lib/stripe/server'
+import { getStripe } from '@/lib/stripe/server'
+import {
+  CreemError,
+  cancelarSuscripcion,
+  obtenerSuscripcion,
+} from '@/lib/pagos/creem/server'
+import {
+  NOMBRE_PROVEEDOR,
+  proveedorConfigurado,
+  proveedorDeFila,
+} from '@/lib/pagos/proveedor'
 import { PLANS } from '@/constants/pricing'
 import { requireAdmin } from './auth'
 import { logAdminAction } from './audit'
@@ -137,9 +147,50 @@ export async function grantPlan(
 }
 
 /**
- * Revoca el plan. Si el usuario tiene una suscripción en Stripe, PRIMERO se
- * cancela allí (si no, seguiría pagando sin tener Pro). Después el webhook
- * customer.subscription.deleted confirmará el estado.
+ * Cancela YA una suscripción de Creem. Devuelve null si quedó cancelada (o ya
+ * lo estaba / ya no existe) o el mensaje de error si no se pudo.
+ */
+async function cancelarYaEnCreem(subId: string): Promise<string | null> {
+  try {
+    await cancelarSuscripcion(subId, 'immediate')
+    return null
+  } catch (err) {
+    if (err instanceof CreemError && err.status === 404) return null
+    try {
+      const sub = await obtenerSuscripcion(subId)
+      if (sub.status === 'canceled') return null
+    } catch {
+      // se informa el error original
+    }
+    return err instanceof Error ? err.message : 'error desconocido'
+  }
+}
+
+/** Cancela YA una suscripción de Stripe (null = cancelada o ya no existía). */
+async function cancelarYaEnStripe(subId: string): Promise<string | null> {
+  const stripe = getStripe()
+  try {
+    await stripe.subscriptions.cancel(subId)
+    return null
+  } catch (err) {
+    const code = (err as { code?: string } | null)?.code
+    // Ya no existe en Stripe, o ya estaba cancelada: se puede seguir con
+    // la revocación local. Cualquier otro error: no se toca nada.
+    if (code === 'resource_missing') return null
+    try {
+      const sub = await stripe.subscriptions.retrieve(subId)
+      if (sub.status === 'canceled') return null
+    } catch {
+      // se informa el error original
+    }
+    return err instanceof Error ? err.message : 'error desconocido'
+  }
+}
+
+/**
+ * Revoca el plan. Si el usuario tiene una suscripción recurrente (Creem o
+ * Stripe), PRIMERO se cancela en ese proveedor (si no, seguiría pagando sin
+ * tener Pro). Después el webhook del proveedor confirmará el estado.
  */
 export async function revokePlan(userId: string): Promise<ActionResult> {
   const ctx = await requireAdmin()
@@ -147,48 +198,44 @@ export async function revokePlan(userId: string): Promise<ActionResult> {
 
   const { data: actual, error: errLectura } = await admin
     .from('subscriptions')
-    .select('stripe_subscription_id')
+    .select('*')
     .eq('user_id', userId)
     .maybeSingle()
   if (errLectura) return fallo(errLectura, 'revokePlan (lectura)')
 
-  const subId =
-    (actual as { stripe_subscription_id: string | null } | null)
-      ?.stripe_subscription_id ?? null
-  let canceladaEnStripe = false
-  if (subId) {
-    if (!isStripeConfigured()) {
+  const fila = actual as {
+    stripe_subscription_id: string | null
+    stripe_customer_id: string | null
+    source?: 'system' | 'stripe' | 'creem' | 'admin'
+  } | null
+  const subId = fila?.stripe_subscription_id ?? null
+  // Un plan concedido (source 'admin') puede conservar la suscripción que
+  // pagaba antes: su proveedor se deduce del id del cliente.
+  const proveedor = !fila
+    ? null
+    : fila.source === 'admin'
+      ? proveedorDeFila({ ...fila, source: 'system' })
+      : proveedorDeFila(fila)
+  let canceladaEnProveedor = false
+  if (subId && proveedor) {
+    const nombre = NOMBRE_PROVEEDOR[proveedor]
+    if (!proveedorConfigurado(proveedor)) {
       return {
         ok: false,
-        error:
-          'Este usuario paga con Stripe, pero Stripe no está configurado: cancela la suscripción en el panel de Stripe y vuelve a intentarlo.',
+        error: `Este usuario paga con ${nombre}, pero ${nombre} no está configurado: cancela la suscripción en el panel de ${nombre} y vuelve a intentarlo.`,
       }
     }
-    const stripe = getStripe()
-    try {
-      await stripe.subscriptions.cancel(subId)
-      canceladaEnStripe = true
-    } catch (err) {
-      const code = (err as { code?: string } | null)?.code
-      // Ya no existe en Stripe, o ya estaba cancelada: se puede seguir con
-      // la revocación local. Cualquier otro error: no se toca nada.
-      let yaCancelada = code === 'resource_missing'
-      if (!yaCancelada) {
-        try {
-          const sub = await stripe.subscriptions.retrieve(subId)
-          yaCancelada = sub.status === 'canceled'
-        } catch {
-          yaCancelada = false
-        }
-      }
-      if (!yaCancelada) {
-        const msg = err instanceof Error ? err.message : 'error desconocido'
-        return {
-          ok: false,
-          error: `No se pudo cancelar el cobro en Stripe (${msg}). No se cambió nada.`,
-        }
+    const errorCancelar =
+      proveedor === 'creem'
+        ? await cancelarYaEnCreem(subId)
+        : await cancelarYaEnStripe(subId)
+    if (errorCancelar) {
+      return {
+        ok: false,
+        error: `No se pudo cancelar el cobro en ${nombre} (${errorCancelar}). No se cambió nada.`,
       }
     }
+    canceladaEnProveedor = true
   }
 
   const { error } = await admin
@@ -204,7 +251,10 @@ export async function revokePlan(userId: string): Promise<ActionResult> {
   if (error) return fallo(error, 'revokePlan')
   await logAdminAction(ctx, 'revoke_plan', 'user', userId, {
     stripeSubscriptionId: subId,
-    canceladaEnStripe,
+    proveedor,
+    canceladaEnProveedor,
+    // Clave histórica: el registro de auditoría la sigue leyendo.
+    canceladaEnStripe: canceladaEnProveedor && proveedor === 'stripe',
   })
   revalidatePath('/admin/users')
   revalidatePath(`/admin/users/${userId}`)

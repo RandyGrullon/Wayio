@@ -1,6 +1,6 @@
 # Wayio — estado y pasos para terminar
 
-> Actualizado el 2026-11-05 (integraciones que solo piden la clave y pendientes cerrados); el 2026-10-20 (planes Gratis y Pro aplicados en el servidor); el 2026-10-17 (freno al gasto de IA, y geocodificación y rutas con Geoapify); antes, el 2026-10-09, tras el análisis completo, la reconstrucción de la IA, los arreglos de seguridad, el rediseño y la integración final. Los detalles de cada servicio están en [API-KEYS-GUIA.md](API-KEYS-GUIA.md).
+> Actualizado el 2026-11-05 (cobro web con Creem, integraciones que solo piden la clave y pendientes cerrados); el 2026-10-20 (planes Gratis y Pro aplicados en el servidor); el 2026-10-17 (freno al gasto de IA, y geocodificación y rutas con Geoapify); antes, el 2026-10-09, tras el análisis completo, la reconstrucción de la IA, los arreglos de seguridad, el rediseño y la integración final. Los detalles de cada servicio están en [API-KEYS-GUIA.md](API-KEYS-GUIA.md).
 
 ## ✅ Integraciones por clave y pendientes cerrados (rama `feat/integraciones-pendientes`, 2026-11-05)
 
@@ -12,6 +12,16 @@ Todo lo de esta sección funciona **con solo poner la clave o el ID** (detalles 
 - **Gastos del grupo**: «Pagó» (cualquier miembro) y «Entre quiénes» (subconjunto), con saldos «X le debe US$Y a Z» en céntimos, en web y móvil. Migración `20261105140000_gastos_pagador_y_reparto.sql` (columnas `registrado_por` y `participantes`, trigger que valida que son miembros, RLS y backfill de los gastos antiguos). Sin ella todo sigue como antes y elegir otro pagador o un subconjunto devuelve 503 `expense_split_unavailable`.
 - **Modo mantenimiento y flags** leídos por web y móvil vía `/api/config`: aviso visible en las dos, y `/api/generate`, `/stream` y `/api/adjust` responden 503 `mantenimiento` antes de gastar IA (el planificador web avisa sin llamar). Hook `useFlag(clave)` en web y móvil; `paywall` controla el «Ver planes» del chat de ajustes.
 - **Mapa**: trazo de 600 ms de la ruta al cambiar de día (§7.4), sin animación con movimiento reducido.
+
+## ✅ Cobro web con Creem (rama `feat/cobros-creem`, 2026-11-05)
+
+- **Proveedor configurable** con `PAYMENTS_PROVIDER=creem|stripe` (por defecto `creem`). Creem es merchant of record y paga a bancos de RD; el código de Stripe queda como alternativa sin cambios de lógica (movido a `src/lib/pagos/stripe/cobro.ts`). El proveedor activo solo decide dónde se abren los pagos nuevos: portal, bajas y webhook atienden a cada usuario con el proveedor que le cobra (`subscriptions.source`).
+- **Rutas comunes** (`src/lib/pagos/rutas.ts`): `POST /api/pagos/checkout`, `/api/pagos/portal` y `/api/pagos/suscripcion` (`{ accion: 'cancelar' | 'reanudar' }`: baja al final del periodo pagado, o deshacerla). `/api/stripe/checkout` y `/api/stripe/portal` son alias para las apps móviles ya publicadas.
+- **Webhook** `POST /api/creem/webhook`: firma `creem-signature` (HMAC-SHA256) verificada en tiempo constante, idempotente por evento (`payment_events`) y por estado (lee la suscripción actual en Creem), y escribe en `subscriptions` igual que el de Stripe con `source = 'creem'` (módulo común `src/lib/pagos/filaSuscripcion.ts`). Las columnas `stripe_*` guardan los ids de Creem: la RPC `my_effective_tier`, el admin y las apps ya publicadas funcionan sin cambios. Un reembolso total del pase lo retira.
+- **Web y móvil**: `PricingCards`, `/cuenta` y `PaywallScreen` usan las rutas comunes; ningún texto al cliente nombra al procesador. `/cuenta` suma «Cancelar suscripción» / «Mantener mi suscripción» (el portal de Creem cancela en el acto). La página de planes avisa de que pueden sumarse impuestos locales. `/privacidad` nombra al proveedor activo. Las reservas con depósito solo existen con Stripe.
+- **Admin**: origen «Creem», proveedor en «Estado del entorno», «Revocar plan» cancela también en Creem; la calculadora toma por defecto el canal del proveedor activo (tarifa de Creem verificada el 5-nov-2026: 3,9 % + US$0,40, sin cambios).
+- Migración `20261105120000_cobros_creem.sql` (CHECK de `source` con `'creem'`, comentarios de columnas y tabla `payment_events`), replicada en `supabase/schema.sql` y comprobada por `npm run verificar` («Migración 6», con la comprobación de los productos de Creem).
+- **Probado** contra un simulador local (`npm run creem:mock`, sin cuenta de Creem): checkout, los 3 webhooks del alta, firma inválida, eventos repetidos, portal, baja y reanudación, renovación, pago fallido, baja, pase ligado a viaje, reembolso, alias móviles, base sin la migración y el cambio a `PAYMENTS_PROVIDER=stripe`. **Falta** probarlo contra el modo test real de Creem (sección 6.4 de la guía) y, si algún día se usa, contra Stripe.
 
 ## ✅ Planes Gratis y Pro en el servidor (rama `feat/planes-rentabilidad`, 2026-10-20)
 
@@ -101,7 +111,7 @@ Todo lo de esta sección funciona **con solo poner la clave o el ID** (detalles 
 1. **IA**: pon `ANTHROPIC_API_KEY` en `.env.local`, arranca `npm run dev` y ejecuta `npm run eval:ia -- --base http://localhost:3000 --interpret`. Todos los casos deberían salir sin errores (ver el informe en `scripts/eval-ia/resultados/`). Generar exige sesión: con Supabase configurado, pon `EVAL_IA_BEARER` con el access_token de una cuenta de pruebas.
 2. **Supabase**:
    - restaura el proyecto si está pausado;
-   - en el SQL Editor, pega y ejecuta `supabase/migrations/20261008120000_seguridad_y_flujos.sql`, después `supabase/migrations/20261017120000_ai_gasto_diario.sql` (RPC del tope diario de IA; sin ella el tope queda abierto) después `supabase/migrations/20261017130000_cupos_y_rentabilidad.sql` (cupos del plan Gratis y ajustes privados del admin; sin ella los cupos quedan abiertos y la calculadora del admin no puede guardar) y por último `supabase/migrations/20261105140000_gastos_pagador_y_reparto.sql` (gastos del grupo con «Pagó» y «Entre quiénes»);
+   - en el SQL Editor, pega y ejecuta `supabase/migrations/20261008120000_seguridad_y_flujos.sql`, después `supabase/migrations/20261017120000_ai_gasto_diario.sql` (RPC del tope diario de IA; sin ella el tope queda abierto) después `supabase/migrations/20261017130000_cupos_y_rentabilidad.sql` (cupos del plan Gratis y ajustes privados del admin; sin ella los cupos quedan abiertos y la calculadora del admin no puede guardar), después `supabase/migrations/20261105120000_cobros_creem.sql` (origen 'creem' y eventos de pago) y por último `supabase/migrations/20261105140000_gastos_pagador_y_reparto.sql` (gastos del grupo con «Pagó» y «Entre quiénes»);
    - revisa los admins y comprueba realtime;
    - configura Auth (URLs, plantillas de correo, SMTP y Google), guía en `supabase/CONFIGURACION-AUTH.md`.
 3. **Upstash Redis** (gratis): `UPSTASH_REDIS_REST_URL` y `UPSTASH_REDIS_REST_TOKEN`, para que los límites de uso protejan tu factura de IA en producción (sin Upstash cada instancia cuenta por su lado).
@@ -116,32 +126,34 @@ Todo lo de esta sección funciona **con solo poner la clave o el ID** (detalles 
    - borra `AMADEUS_*`, `BOOKING_API_KEY` y `NEXT_PUBLIC_SITE_URL`.
 5. **Afiliados y precios** (es donde ganas dinero sin cobrar al usuario), en el orden de la sección 5 de la guía: Travelpayouts (marker y, con Trip.com aprobado, `NEXT_PUBLIC_TP_TRIPCOM=true`), Viator (`VIATOR_API_KEY`, PID y MCID), Airalo, Civitatis, GetYourGuide, IATI y DiscoverCars; para precios, `TRAVELPAYOUTS_TOKEN` y `LITEAPI_KEY`. Pon los mismos IDs con `EXPO_PUBLIC_*` en `mobile/.env`. Booking solo con su aprobación escrita para IA. Después de desplegar, haz un clic de prueba en cada enlace y comprueba que lleva tu ID.
 6. **Worker de video** (opcional): despliega `worker-video/` en Railway o Fly según su README, pon `VIDEO_WORKER_URL` y `VIDEO_WORKER_SECRET` en Vercel, borra `VIDEO_ANALYSIS_ENABLED=false` si existe y prueba un enlace de cada plataforma. Riesgo: bloqueo de IPs de servidor (YouTube «not a bot», Instagram pide sesión) → `YTDLP_PROXY`.
-7. **Cobros** (solo si vas a cobrar):
-   - primero decide con qué entidad: Stripe no opera con comercios en RD, así que necesitarías una LLC en EE. UU., Paddle o Lemon Squeezy;
-   - después crea productos, webhook y Customer Portal según la guía.
+7. **Cobros con Creem** (solo si vas a cobrar; guía paso a paso en la sección 6 de [API-KEYS-GUIA.md](API-KEYS-GUIA.md)):
+   - crea la cuenta en creem.io y, con **Test Mode** activado, los 4 productos (USD, 6.99 / 49.99 / 4.99 pago único / 12.99) → `CREEM_PRODUCT_*`, la clave de test → `CREEM_API_KEY` (`CREEM_TEST_MODE=true`) y el webhook `https://<tu-dominio>/api/creem/webhook` → `CREEM_WEBHOOK_SECRET`;
+   - decide el _tax mode_ de los productos (exclusive: el impuesto se suma al pagar y la calculadora cuadra; inclusive: el cliente paga justo el precio y el impuesto sale de tu parte);
+   - prueba el flujo con la tarjeta 4111 1111 1111 1111 (`creem listen --forward-to http://localhost:3000/api/creem/webhook` en local) y `npm run verificar`;
+   - para cobrar de verdad: revisión de la cuenta (dominio propio, privacidad y términos visibles, email de soporte), productos, clave y webhook de **producción**, `CREEM_TEST_MODE=false` en Vercel y una compra real pequeña reembolsada.
 8. **PostHog y Sentry** (opcional): las claves de la guía.
 9. **App móvil**:
    - `cd mobile && npx expo install expo-dev-client expo-system-ui`;
    - crea `mobile/.env` con las `EXPO_PUBLIC_*`;
    - genera un _development build_ con `npx expo run:android` o `eas build --profile development`. Expo Go ya no sirve para este proyecto.
 10. **Pruebas finales con 2 y 3 cuentas** (checklist):
-
-- B no puede hacerse admin;
-- B no ve el grupo de A hasta abrir el enlace, y después el chat llega en vivo;
-- un visitante sin sesión ve `/viaje-compartido/<id>` solo si A lo hizo público;
-- el pago de prueba con la tarjeta 4242 cambia el plan;
-- con una cuenta Gratis, el tercer viaje del mes da el aviso de cupo agotado (402) y `GET /api/cupo` lo refleja; con Pro, no;
-- la recuperación de contraseña funciona de punta a punta;
-- en el móvil: crear cuenta, generar, guardar y modo en vivo;
-- con 3 cuentas en un grupo: un gasto pagado por otro y otro solo para dos, y que los saldos cuadren en las tres sesiones (web y móvil);
-- activa el modo mantenimiento en `/admin/settings` y comprueba el aviso y el 503 al trazar y ajustar; apágalo y que vuelva a funcionar.
+    - B no puede hacerse admin;
+    - B no ve el grupo de A hasta abrir el enlace, y después el chat llega en vivo;
+    - un visitante sin sesión ve `/viaje-compartido/<id>` solo si A lo hizo público;
+    - el pago de prueba con la tarjeta 4111 1111 1111 1111 (modo test de Creem) cambia el plan, y «Cancelar suscripción» en Tu cuenta lo deja activo hasta el fin del periodo;
+    - con una cuenta Gratis, el tercer viaje del mes da el aviso de cupo agotado (402) y `GET /api/cupo` lo refleja; con Pro, no;
+    - la recuperación de contraseña funciona de punta a punta;
+    - en el móvil: crear cuenta, generar, guardar y modo en vivo;
+    - con 3 cuentas en un grupo: un gasto pagado por otro y otro solo para dos, y que los saldos cuadren en las tres sesiones (web y móvil);
+    - activa el modo mantenimiento en `/admin/settings` y comprueba el aviso y el 503 al trazar y ajustar; apágalo y que vuelva a funcionar.
 
 ## 🟡 Decisiones de producto pendientes
 
 - **Valores del cupo Gratis**: decididos (2 viajes, 5 ajustes, 3 fotos o videos al mes) y aplicados en el servidor desde la rama `feat/planes-rentabilidad`. Revísalos con los conteos reales de `usage_counters` (se cuentan todos los planes) y cámbialos en `CUPO_GRATIS` (`src/constants/planes.ts`).
 - **Modelo del itinerario**: sigue `claude-opus-5-5` ($4/$20 por millón). `AI_ITINERARY_MODEL=claude-sonnet-5-5` lo abarata a la mitad; es decisión tuya, el tope diario no lo cambia.
 - **Valores de los límites y del tope**: los de ahora son para la beta (`src/lib/security/aiGuard.ts` y `AI_DAILY_BUDGET_USD`). Revísalos con el gasto real de `/admin/ai`.
-- **Reservas con depósito**: desactivadas (`NEXT_PUBLIC_RESERVAS_ENABLED=false`) hasta que haya un proveedor real de reservas y una revisión legal.
+- **Reservas con depósito**: desactivadas (`NEXT_PUBLIC_RESERVAS_ENABLED=false`) hasta que haya un proveedor real de reservas y una revisión legal. Solo existen con Stripe: Creem (MoR de software) no las admite.
+- **Bajas en la app móvil**: hoy «Gestionar suscripción» abre el portal de pagos, que con Creem cancela en el acto; la web ya ofrece cancelar al final del periodo (`/api/pagos/suscripcion`). Falta el mismo botón en `PaywallScreen`.
 - **Precios de hoteles**: se muestra el mayor entre la tarifa de LiteAPI y su precio público sugerido (lo que pide LiteAPI); confírmalo. Supuestos: 2 huéspedes por habitación, nacionalidad DO y 12 hoteles mostrados. El formato de ocupación del enlace a la marca blanca hay que comprobarlo con una marca blanca real.
 - **Afiliados**: Trip.com va antes que Booking cuando está activo; el código de Airalo actual es el de referidos (crédito), no el de comisión (Impact); IATI no vende en RD.
 - **Video**: el worker no usa el título del video (podría ayudar a la IA, pero abre otra vía de inyección de instrucciones). Revisa los textos nuevos de error «bloqueado», «ocupado» y «cancelado».

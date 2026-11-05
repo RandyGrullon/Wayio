@@ -167,9 +167,10 @@ interface SubParaMrr {
 }
 
 /**
- * ¿Cuenta como ingreso recurrente? Solo suscripciones activas COBRADAS en
- * Stripe: los planes concedidos a mano (source 'admin', sin suscripción de
- * Stripe) no son ingresos y no entran en el MRR (MON-13).
+ * ¿Cuenta como ingreso recurrente? Solo suscripciones activas COBRADAS por un
+ * proveedor (Creem o Stripe): los planes concedidos a mano (source 'admin',
+ * sin suscripción del proveedor) no son ingresos y no entran en el MRR
+ * (MON-13).
  */
 function esIngresoRecurrente(s: SubParaMrr): boolean {
   return (

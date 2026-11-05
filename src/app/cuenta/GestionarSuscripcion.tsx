@@ -7,9 +7,9 @@ import { Callout } from '@/components/ui/Callout'
 import type { ButtonVariant } from '@/components/ui/Button'
 
 /**
- * «Gestionar suscripción» → POST /api/stripe/portal → { url } (portal de
- * Stripe: cambiar plan, tarjeta, facturas, cancelar). 404 no_customer y 503
- * checkout_unavailable traen un mensaje listo para mostrar.
+ * «Gestionar suscripción» → POST /api/pagos/portal → { url } (portal de pagos
+ * del proveedor que cobra al usuario: tarjeta, facturas, cancelar). 404
+ * no_customer y 503 checkout_unavailable traen un mensaje listo para mostrar.
  */
 export function GestionarSuscripcion({
   variant = 'tinta',
@@ -25,7 +25,7 @@ export function GestionarSuscripcion({
     setCargando(true)
     setError(null)
     try {
-      const res = await fetch('/api/stripe/portal', { method: 'POST' })
+      const res = await fetch('/api/pagos/portal', { method: 'POST' })
       let body: Record<string, unknown> = {}
       try {
         body = (await res.json()) as Record<string, unknown>

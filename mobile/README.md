@@ -14,11 +14,14 @@ https://docs.expo.dev/versions/v54.0.0/
   móvil guarda la sesión en `AsyncStorage` (no usa cookies como la web).
 - **Backend web (Next.js)** → IA (`/api/generate[/stream]`, `/api/adjust`,
   `/api/reschedule`, `/api/validate`, `/api/interpret`, `/api/analyze-video`),
-  búsquedas (`/api/hotels`, `/api/activities`, `/api/flights`) y Stripe. Todas
+  búsquedas (`/api/hotels`, `/api/activities`, `/api/flights`) y pagos. Todas
   las llamadas llevan `Authorization: Bearer <access_token>` de Supabase
   (`src/lib/api/http.ts`, con tiempo límite de 60 s; 300 s en la IA larga).
-- **Stripe** → `POST /api/stripe/checkout` con el Bearer y el pago se abre en
-  el navegador seguro de la app (`expo-web-browser`).
+- **Pagos** → `POST /api/pagos/checkout` (y `/api/pagos/portal`) con el Bearer
+  y el pago se abre en el navegador seguro de la app (`expo-web-browser`). El
+  servidor elige el procesador (Creem o Stripe, con `PAYMENTS_PROVIDER`); la
+  app no lo nombra. Las builds viejas usan `/api/stripe/*`, que sigue como
+  alias.
 
 ```
 src/

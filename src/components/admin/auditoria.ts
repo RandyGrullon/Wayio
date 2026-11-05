@@ -91,10 +91,18 @@ function describir(row: AdminAuditRow): string {
       if (plan === 'free') return 'Pasó la cuenta al plan Gratis'
       return plan ? `Concedió el plan ${nombrePlan(plan)}` : 'Concedió un plan'
     }
-    case 'revoke_plan':
-      return bool(meta, 'canceladaEnStripe')
-        ? 'Revocó el plan y canceló el cobro en Stripe'
-        : 'Revocó el plan'
+    case 'revoke_plan': {
+      if (bool(meta, 'canceladaEnStripe')) {
+        return 'Revocó el plan y canceló el cobro en Stripe'
+      }
+      if (bool(meta, 'canceladaEnProveedor')) {
+        const proveedor = texto(meta, 'proveedor')
+        return proveedor === 'creem'
+          ? 'Revocó el plan y canceló el cobro en Creem'
+          : 'Revocó el plan y canceló el cobro'
+      }
+      return 'Revocó el plan'
+    }
     case 'delete_user':
       return 'Eliminó la cuenta'
     case 'delete_trip':

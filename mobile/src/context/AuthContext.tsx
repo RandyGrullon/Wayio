@@ -176,7 +176,8 @@ interface FilaSuscripcion {
 
 /**
  * Misma regla que la RPC my_effective_tier (y `tierEfectivo` de la web):
- * - suscripción recurrente (con stripe_subscription_id): manda Stripe;
+ * - suscripción recurrente (con stripe_subscription_id, que guarda el id del
+ *   proveedor de cobro: Creem o Stripe): manda el estado del proveedor;
  *   active, trialing y past_due (gracia mientras reintenta el cobro) dan
  *   acceso;
  * - pago único («Pase Pro de 30 días») o concedido a mano: además caduca al

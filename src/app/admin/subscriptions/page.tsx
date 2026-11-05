@@ -112,7 +112,7 @@ const COLUMNAS: readonly Columna<SubscriptionItem>[] = [
   },
   {
     id: 'stripe',
-    encabezado: 'ID de Stripe',
+    encabezado: 'ID en el cobro',
     className: 'max-lg:hidden',
     celda: (s) => {
       const valor = s.sub.stripe_subscription_id ?? s.sub.stripe_customer_id
@@ -120,7 +120,7 @@ const COLUMNAS: readonly Columna<SubscriptionItem>[] = [
         <CopiarTexto
           valor={valor}
           mostrar={idCorto(valor)}
-          etiqueta="Copiar ID de Stripe"
+          etiqueta="Copiar ID del cobro"
         />
       ) : (
         <span className="text-fg-subtle">—</span>

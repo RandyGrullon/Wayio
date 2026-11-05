@@ -189,6 +189,9 @@ const RPC_MIG_3 = [
 const RPC_MIG_4 = ['ai_gasto_desde']
 const TABLAS_MIG_5 = ['usage_counters', 'admin_private_settings']
 const RPC_MIG_5 = ['consumir_cupo', 'devolver_cupo']
+// La migración 6 también amplía el CHECK de subscriptions.source con 'creem';
+// eso no se ve por la API, pero va en el mismo archivo que payment_events.
+const TABLAS_MIG_6 = ['payment_events']
 // 20261105140000_gastos_pagador_y_reparto.sql: columnas de group_expenses
 const COLUMNAS_MIG_GASTOS = ['registrado_por', 'participantes']
 
@@ -301,6 +304,15 @@ async function supabase() {
     falta5.length
       ? `faltan: ${falta5.join(', ')} → ejecuta 20261017130000_cupos_y_rentabilidad.sql (sin ella el cupo del plan Gratis queda abierto)`
       : 'cupos del plan Gratis y ajustes privados del admin'
+  )
+  const falta6 = TABLAS_MIG_6.filter((t) => !hay(t))
+  anotar(
+    'Base de datos',
+    'Migración 6 · cobro con Creem',
+    falta6.length ? 'FALTA' : 'OK',
+    falta6.length
+      ? `faltan: ${falta6.join(', ')} → ejecuta 20261105120000_cobros_creem.sql (sin ella los pagos con Creem no quedan marcados como Creem y el webhook pierde la idempotencia)`
+      : "eventos de pago y origen 'creem' en las suscripciones"
   )
   const columnasGastos = Object.keys(
     esquema?.definitions?.group_expenses?.properties ?? {}
@@ -621,15 +633,115 @@ async function busqueda() {
   }
 }
 
-// ── Pagos (Stripe) ──────────────────────────────────────────────────────────
+// ── Pagos (Creem o Stripe, según PAYMENTS_PROVIDER) ─────────────────────────
+const PROVEEDOR_PAGOS =
+  env('PAYMENTS_PROVIDER').toLowerCase() === 'stripe' ? 'stripe' : 'creem'
+
+function proveedorPagos() {
+  const crudo = env('PAYMENTS_PROVIDER')
+  const valido = !crudo || ['creem', 'stripe'].includes(crudo.toLowerCase())
+  anotar(
+    'Pagos',
+    'PAYMENTS_PROVIDER',
+    valido ? 'OK' : 'AVISO',
+    valido
+      ? `${PROVEEDOR_PAGOS}${crudo ? '' : ' (por defecto)'}: los pagos nuevos van por ${PROVEEDOR_PAGOS === 'creem' ? 'Creem' : 'Stripe'}`
+      : `"${crudo}" no es creem ni stripe: se usa creem`
+  )
+}
+
+async function creem() {
+  const activo = PROVEEDOR_PAGOS === 'creem'
+  const clave = env('CREEM_API_KEY')
+  if (!clave)
+    return anotar(
+      'Pagos',
+      'Creem',
+      activo ? 'FALTA' : 'OPCIONAL',
+      activo
+        ? 'sin CREEM_API_KEY los planes de pago quedan desactivados'
+        : 'proveedor alternativo: no hace falta mientras PAYMENTS_PROVIDER=stripe'
+    )
+  const modoEnv = env('CREEM_TEST_MODE').toLowerCase()
+  const prueba =
+    modoEnv === 'true'
+      ? true
+      : modoEnv === 'false'
+        ? false
+        : clave.startsWith('creem_test_')
+  const base =
+    env('CREEM_API_URL').replace(/\/+$/, '') ||
+    (prueba ? 'https://test-api.creem.io' : 'https://api.creem.io')
+  const modo = prueba ? 'test' : 'PRODUCCIÓN'
+  if (prueba !== clave.startsWith('creem_test_')) {
+    anotar(
+      'Pagos',
+      'CREEM_TEST_MODE',
+      'AVISO',
+      `modo ${modo} con una clave ${clave.startsWith('creem_test_') ? 'de test' : 'que no es de test'}: Creem rechazará las llamadas`
+    )
+  }
+  const productos = [
+    ['CREEM_PRODUCT_MONTHLY', 'recurring'],
+    ['CREEM_PRODUCT_ANNUAL', 'recurring'],
+    ['CREEM_PRODUCT_PER_TRIP', 'onetime'],
+    ['CREEM_PRODUCT_GROUP', 'recurring'],
+  ]
+  for (const [k, tipo] of productos) {
+    // pro_grupo no se vende hoy (PLANES_A_LA_VENTA): su producto es opcional.
+    const opcional = k === 'CREEM_PRODUCT_GROUP'
+    if (!env(k)) {
+      anotar(
+        'Pagos',
+        k,
+        opcional || !activo ? 'OPCIONAL' : 'FALTA',
+        opcional ? 'Pro Grupo no está a la venta' : 'producto sin configurar'
+      )
+      continue
+    }
+    try {
+      const r = await pedir(
+        `${base}/v1/products/${encodeURIComponent(env(k))}`,
+        {
+          headers: { 'x-api-key': clave },
+        }
+      )
+      const tipoReal = r.cuerpo?.billing_type
+      anotar(
+        'Pagos',
+        k,
+        !r.ok ? 'ERROR' : tipoReal && tipoReal !== tipo ? 'AVISO' : 'OK',
+        r.ok
+          ? `${(r.cuerpo.price ?? 0) / 100} ${r.cuerpo.currency ?? ''} · ${tipoReal ?? '?'}${tipoReal && tipoReal !== tipo ? ` (debería ser ${tipo})` : ''} (modo ${modo})`
+          : r.status === 401 || r.status === 403
+            ? 'CREEM_API_KEY no válida para este modo'
+            : `HTTP ${r.status}: el producto no existe en este modo de Creem`
+      )
+    } catch (e) {
+      anotar('Pagos', k, 'ERROR', motivo(e))
+    }
+  }
+  anotar(
+    'Pagos',
+    'CREEM_WEBHOOK_SECRET',
+    env('CREEM_WEBHOOK_SECRET') ? 'OK' : activo ? 'FALTA' : 'OPCIONAL',
+    env('CREEM_WEBHOOK_SECRET')
+      ? 'puesto (se valida al llegar el primer evento a /api/creem/webhook)'
+      : 'sin él los pagos no activan el plan'
+  )
+}
+
 async function stripe() {
+  const activo = PROVEEDOR_PAGOS === 'stripe'
   const clave = env('STRIPE_SECRET_KEY')
   if (!clave)
     return anotar(
       'Pagos',
       'Stripe',
-      'OPCIONAL',
-      'sin clave los planes de pago quedan desactivados'
+      activo ? 'FALTA' : 'OPCIONAL',
+      activo
+        ? 'sin STRIPE_SECRET_KEY los planes de pago quedan desactivados'
+        : 'proveedor alternativo: no hace falta mientras PAYMENTS_PROVIDER=creem'
     )
   const modo =
     clave.startsWith('sk_live') || clave.startsWith('rk_live')
@@ -643,7 +755,7 @@ async function stripe() {
   ]
   for (const k of precios) {
     if (!env(k)) {
-      anotar('Pagos', k, 'FALTA', 'precio sin configurar')
+      anotar('Pagos', k, activo ? 'FALTA' : 'OPCIONAL', 'precio sin configurar')
       continue
     }
     try {
@@ -668,7 +780,7 @@ async function stripe() {
   anotar(
     'Pagos',
     'STRIPE_WEBHOOK_SECRET',
-    env('STRIPE_WEBHOOK_SECRET') ? 'OK' : 'FALTA',
+    env('STRIPE_WEBHOOK_SECRET') ? 'OK' : activo ? 'FALTA' : 'OPCIONAL',
     env('STRIPE_WEBHOOK_SECRET')
       ? 'puesto (se valida al llegar el primer evento)'
       : 'sin él los pagos no activan el plan'
@@ -708,6 +820,7 @@ function plataforma() {
 
 // ── Ejecución e informe ─────────────────────────────────────────────────────
 const tieneEnv = existsSync(join(RAIZ, '.env.local'))
+proveedorPagos()
 await Promise.all([
   ia(),
   topeIa(),
@@ -715,6 +828,7 @@ await Promise.all([
   upstash(),
   mapa(),
   busqueda(),
+  creem(),
   stripe(),
 ])
 plataforma()

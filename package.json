@@ -15,7 +15,8 @@
     "pre-deploy": "npm run validate && npm run build",
     "prepare": "husky",
     "eval:ia": "node scripts/eval-ia/run.mjs",
-    "verificar": "node scripts/verificar-servicios.mjs"
+    "verificar": "node scripts/verificar-servicios.mjs",
+    "creem:mock": "node scripts/creem-mock.mjs"
   },
   "lint-staged": {
     "*.{ts,tsx}": [

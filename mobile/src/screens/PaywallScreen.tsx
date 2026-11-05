@@ -58,7 +58,7 @@ const RETORNO = 'wayio://pago'
 /** Sin respuesta del backend en este tiempo, se deja de esperar. */
 const TOPE_PAGO_MS = 30_000
 
-/** Mensaje amable de un error de Stripe (nunca el código técnico). */
+/** Mensaje amable de un error del pago (nunca el código técnico). */
 function mensajePago(e: unknown): string {
   if (e instanceof BackendError) {
     const mensaje = e.data?.['mensaje']
@@ -120,9 +120,11 @@ function FilaUso({
 /**
  * Planes (M05): Gratis con sus cupos del mes y lo que Pro añade de verdad,
  * con el uso del mes de la cuenta (GET /api/cupo). El cobro va por POST
- * /api/stripe/checkout con el Bearer de la sesión y Stripe en el navegador
- * seguro de la app; al volver se relee el plan (`refreshTier`) y el uso. Con
- * plan activo, «Gestionar suscripción» abre el portal. Pro Grupo no se vende
+ * /api/pagos/checkout con el Bearer de la sesión y el pago se abre en el
+ * navegador seguro de la app (Creem o Stripe, lo decide el servidor con
+ * PAYMENTS_PROVIDER; la app no nombra al procesador); al volver se relee el
+ * plan (`refreshTier`) y el uso. Con plan activo, «Gestionar suscripción»
+ * abre el portal de pagos (POST /api/pagos/portal), donde también se cancela. Pro Grupo no se vende
  * (quien ya lo tiene lo sigue viendo como su plan).
  */
 export function PaywallScreen(): React.ReactElement {
@@ -169,7 +171,7 @@ export function PaywallScreen(): React.ReactElement {
     setError(null)
     try {
       const r = await conTope(
-        postJSON<RespuestaCheckout>('/api/stripe/checkout', { planId: plan }),
+        postJSON<RespuestaCheckout>('/api/pagos/checkout', { planId: plan }),
         TOPE_PAGO_MS,
         'sin respuesta'
       )
@@ -189,7 +191,7 @@ export function PaywallScreen(): React.ReactElement {
     setError(null)
     try {
       const r = await conTope(
-        postJSON<RespuestaCheckout>('/api/stripe/portal', {}),
+        postJSON<RespuestaCheckout>('/api/pagos/portal', {}),
         TOPE_PAGO_MS,
         'sin respuesta'
       )
@@ -428,7 +430,8 @@ export function PaywallScreen(): React.ReactElement {
               style={styles.bloque}
             />
             <Txt variant="caption" color="fgSubtle" center style={styles.nota}>
-              El pago se procesa con Stripe en una ventana segura.
+              El pago se procesa en una ventana segura. Según tu país, pueden
+              sumarse impuestos locales.
             </Txt>
           </>
         ) : (

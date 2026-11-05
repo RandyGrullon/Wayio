@@ -134,7 +134,7 @@
 | Carpeta           | Qué es                                                                                                                                                                                                                                                                                   |
 | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `src/app`         | Web en **Next.js 16** (App Router): landing `/`, planificador `/planificar`, viaje guardado `/trip/[id]`, compartido `/viaje-compartido/[id]`, grupos `/group/[id]`, mis viajes `/viajes`, cuenta `/cuenta`, precios `/precios`, 47 guías SEO `/viaje/[destino]`, auth y panel `/admin`. |
-| `src/app/api`     | Backend: generación con IA (SSE), interpretación de texto libre, ajustes, reagendado, validación, video, viajes, grupos, Stripe, búsqueda y geocoding.                                                                                                                                   |
+| `src/app/api`     | Backend: generación con IA (SSE), interpretación de texto libre, ajustes, reagendado, validación, video, viajes, grupos, pagos (Creem o Stripe), búsqueda y geocoding.                                                                                                                   |
 | `src/lib/ai`      | Núcleo de IA: cliente Anthropic/Groq con salida estructurada, prompts, generación por bloques en paralelo, normalización y validación de lo que devuelve el modelo.                                                                                                                      |
 | `supabase`        | Esquema completo (`schema.sql`), migraciones, plantillas de correo y guía de auth.                                                                                                                                                                                                       |
 | `mobile`          | App **Expo** (React Native) con las mismas funciones y modo en vivo con GPS y geofencing.                                                                                                                                                                                                |
@@ -142,7 +142,7 @@
 | `docs/DISENO.md`  | Sistema de diseño «Cuaderno de Ruta» (tokens, componentes, pantallas, logo y animación de entrada).                                                                                                                                                                                      |
 | `docs/videos`     | Serie de videos de la app (global, seis funciones y tutorial), en horizontal y vertical.                                                                                                                                                                                                 |
 
-**Stack:** React 19, Tailwind CSS 4, framer-motion, MapLibre + OpenFreeMap, Supabase (Postgres + Auth + Realtime), Anthropic SDK, Stripe, PostHog, Sentry.
+**Stack:** React 19, Tailwind CSS 4, framer-motion, MapLibre + OpenFreeMap, Supabase (Postgres + Auth + Realtime), Anthropic SDK, Creem (pagos; Stripe como alternativa), PostHog, Sentry.
 
 <a id="arrancar"></a>
 

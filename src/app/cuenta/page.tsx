@@ -13,6 +13,7 @@ import { TEXTO_CUPO_GRATIS } from '@/components/trip/limitesIA'
 import { NOMBRE_PLAN } from '@/constants/planes'
 import { RECUPERAR_PATH } from '@/lib/auth/constants'
 import { modoLocalSinCuentas } from '@/lib/auth/irALogin'
+import { proveedorDeFila } from '@/lib/pagos/proveedor'
 import { tierEfectivo } from '@/lib/stripe/entitlements'
 import { createClient } from '@/lib/supabase/server'
 import { isSupabaseConfigured } from '@/lib/supabase/config'
@@ -20,6 +21,7 @@ import { formatFecha } from '@/lib/utils/formatters'
 import type { SubscriptionRow } from '@/types/database'
 import type { PlanTier } from '@/types/subscription'
 import { AvisoPago } from './AvisoPago'
+import { CancelarSuscripcion } from './CancelarSuscripcion'
 import { CerrarSesion } from './CerrarSesion'
 import { GestionarSuscripcion } from './GestionarSuscripcion'
 import { Referidos } from './Referidos'
@@ -201,6 +203,18 @@ export default async function CuentaPage({
   const frase = vigencia(sub)
   const tieneCliente = Boolean(sub?.stripe_customer_id)
   const esPago = tier !== 'free'
+  // Suscripción recurrente con acceso: se puede cancelar al final del
+  // periodo (o deshacer la baja) desde aquí, con cualquier proveedor.
+  const recurrente =
+    esPago &&
+    Boolean(sub?.stripe_subscription_id) &&
+    proveedorDeFila(sub) !== null &&
+    (sub?.status === 'active' ||
+      sub?.status === 'trialing' ||
+      sub?.status === 'past_due')
+  const finPeriodo = sub?.current_period_end
+    ? formatFecha(sub.current_period_end, { anio: true, diaSemana: false })
+    : null
 
   return (
     <>
@@ -267,7 +281,13 @@ export default async function CuentaPage({
                 {tieneCliente ? (
                   <GestionarSuscripcion
                     variant={esPago ? 'tinta' : 'outline'}
-                    label={esPago ? 'Gestionar suscripción' : 'Ver mis pagos'}
+                    label={esPago ? 'Gestionar pagos' : 'Ver mis pagos'}
+                  />
+                ) : null}
+                {recurrente ? (
+                  <CancelarSuscripcion
+                    cancelada={Boolean(sub?.cancel_at_period_end)}
+                    hasta={finPeriodo || null}
                   />
                 ) : null}
               </div>

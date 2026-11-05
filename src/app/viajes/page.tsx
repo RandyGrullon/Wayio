@@ -14,7 +14,7 @@ type Params = Record<string, string | string[] | undefined>
 
 /**
  * Mis viajes (docs/DISENO.md §6.11). La lista se carga en el cliente con
- * GET /api/trips (cookies de sesión); ?suscripcion=ok al volver de Stripe.
+ * GET /api/trips (cookies de sesión); ?suscripcion=ok al volver del pago.
  */
 export default async function ViajesPage({
   searchParams,

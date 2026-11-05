@@ -4,11 +4,14 @@ import { Badge } from '@/components/ui/Badge'
 import { Card } from '@/components/ui/Card'
 import { aiConfigured, aiProvider } from '@/lib/ai/config'
 import { topeDiarioUsd } from '@/lib/ai/presupuesto'
+import { creemModoPrueba } from '@/lib/pagos/creem/server'
 import {
-  isStripeConfigured,
-  isStripeWebhookConfigured,
-  reservasHabilitadas,
-} from '@/lib/stripe/server'
+  NOMBRE_PROVEEDOR,
+  proveedorActivo,
+  proveedorConfigurado,
+  webhookConfigurado,
+} from '@/lib/pagos/proveedor'
+import { reservasHabilitadas } from '@/lib/stripe/server'
 import { isSupabaseConfigured } from '@/lib/supabase/config'
 import { ETIQUETA_PROVEEDOR_IA, usd } from './etiquetas'
 
@@ -34,6 +37,7 @@ function filas(): Fila[] {
   const proveedor = aiProvider()
   // El tope no es secreto: se muestra el monto.
   const tope = topeDiarioUsd()
+  const pagos = proveedorActivo()
   return [
     {
       nombre: 'Base de datos',
@@ -60,18 +64,27 @@ function filas(): Fila[] {
     },
     {
       nombre: 'Pagos',
-      detalle: 'Suscripciones con Stripe',
-      estado: isStripeConfigured() ? 'ok' : 'falta',
+      detalle: `PAYMENTS_PROVIDER: ${NOMBRE_PROVEEDOR[pagos]}${
+        pagos === 'creem' && proveedorConfigurado('creem')
+          ? creemModoPrueba()
+            ? ' (modo test)'
+            : ' (producción)'
+          : ''
+      }`,
+      estado: proveedorConfigurado(pagos) ? 'ok' : 'falta',
     },
     {
       nombre: 'Webhook de pagos',
-      detalle: 'Mantiene las suscripciones al día',
-      estado: isStripeWebhookConfigured() ? 'ok' : 'falta',
+      detalle: `Mantiene las suscripciones al día (/api/${pagos}/webhook)`,
+      estado: webhookConfigurado(pagos) ? 'ok' : 'falta',
     },
     {
       nombre: 'Reservas con depósito',
-      detalle: 'Desactivadas a propósito hasta tener un proveedor real',
-      estado: reservasHabilitadas() ? 'ok' : 'apagado',
+      detalle:
+        pagos === 'stripe'
+          ? 'Desactivadas a propósito hasta tener un proveedor real'
+          : 'Solo existen con Stripe: con Creem no se ofrecen',
+      estado: reservasHabilitadas() && pagos === 'stripe' ? 'ok' : 'apagado',
     },
     {
       nombre: 'Recrear desde video',

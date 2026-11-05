@@ -1,3 +1,10 @@
+/**
+ * Planes de pago. Cada proveedor de cobro tiene su propio id por plan, que
+ * llega por variable de entorno (solo el NOMBRE de la variable vive aquí):
+ *   - Creem: id del producto (prod_…) en CREEM_PRODUCT_*.
+ *   - Stripe: id del precio (price_…) en STRIPE_PRICE_*.
+ * El proveedor activo lo elige PAYMENTS_PROVIDER (src/lib/pagos/proveedor.ts).
+ */
 export const PLANS = {
   pro_mensual: {
     id: 'pro_mensual',
@@ -5,6 +12,7 @@ export const PLANS = {
     precio: 6.99,
     periodo: 'mes',
     stripePriceEnv: 'STRIPE_PRICE_MONTHLY',
+    creemProductEnv: 'CREEM_PRODUCT_MONTHLY',
     ahorro: null,
     destacado: false,
   },
@@ -14,6 +22,7 @@ export const PLANS = {
     precio: 49.99,
     periodo: 'año',
     stripePriceEnv: 'STRIPE_PRICE_ANNUAL',
+    creemProductEnv: 'CREEM_PRODUCT_ANNUAL',
     ahorro: '40%',
     destacado: true,
   },
@@ -23,6 +32,7 @@ export const PLANS = {
     precio: 4.99,
     periodo: 'único',
     stripePriceEnv: 'STRIPE_PRICE_PER_TRIP',
+    creemProductEnv: 'CREEM_PRODUCT_PER_TRIP',
     ahorro: null,
     destacado: false,
   },
@@ -32,6 +42,7 @@ export const PLANS = {
     precio: 12.99,
     periodo: 'mes',
     stripePriceEnv: 'STRIPE_PRICE_GROUP',
+    creemProductEnv: 'CREEM_PRODUCT_GROUP',
     ahorro: null,
     destacado: false,
   },
