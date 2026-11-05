@@ -34,9 +34,10 @@ function mensajeCheckout(e: unknown): string {
 }
 
 /**
- * «Reservar con depósito (15 %)» (§6.5): POST /api/stripe/checkout con el
- * Bearer de la sesión → abre Stripe en el navegador seguro de la app. Solo se
- * muestra si las reservas están activas en esta build
+ * «Reservar con depósito (15 %)» (§6.5): POST /api/pagos/checkout con el
+ * Bearer de la sesión → abre el pago en el navegador seguro de la app (solo
+ * existe con Stripe; con Creem el servidor responde 403). Solo se muestra si
+ * las reservas están activas en esta build
  * (EXPO_PUBLIC_RESERVAS_ENABLED=true → `config.reservasActivas`).
  */
 export function ReserveButton({
@@ -54,7 +55,7 @@ export function ReserveButton({
     try {
       // Sin respuesta en 30 s se deja de esperar (mensaje amable abajo).
       const r = await conTope(
-        postJSON<RespuestaReserva>('/api/stripe/checkout', {
+        postJSON<RespuestaReserva>('/api/pagos/checkout', {
           mode: 'reservation',
           tripId,
         }),

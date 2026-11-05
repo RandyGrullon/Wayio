@@ -3,7 +3,7 @@
  *
  * - API_URL   → el backend web de Wayio (Next.js): endpoints de IA (generate,
  *               adjust, reschedule, validate, interpret, analyze-video…),
- *               búsquedas (hotels, activities, flights) y Stripe. TODAS las
+ *               búsquedas (hotels, activities, flights) y pagos. TODAS las
  *               llamadas llevan `Authorization: Bearer <access_token>` de la
  *               sesión de Supabase (lib/api/http.ts). En desarrollo apúntalo a
  *               la IP LAN de tu PC (p. ej. http://192.168.1.50:3000):
@@ -24,7 +24,7 @@ export const config = {
   supabaseUrl: process.env['EXPO_PUBLIC_SUPABASE_URL'] ?? '',
   supabaseAnonKey: process.env['EXPO_PUBLIC_SUPABASE_ANON_KEY'] ?? '',
   mapboxToken: process.env['EXPO_PUBLIC_MAPBOX_TOKEN'] ?? '',
-  /** Reservas con depósito (Stripe) activas en esta build. */
+  /** Reservas con depósito (solo con Stripe en el servidor) activas en esta build. */
   reservasActivas: process.env['EXPO_PUBLIC_RESERVAS_ENABLED'] === 'true',
   /** Créditos de Geoapify en el mapa (salvo que el backend use solo OSM). */
   creditosGeoapify: process.env['EXPO_PUBLIC_GEO_PROVEEDOR'] !== 'osm',

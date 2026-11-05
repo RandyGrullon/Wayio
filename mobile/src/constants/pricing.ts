@@ -5,7 +5,7 @@
  * nombre, hay que cambiarlo también aquí. Nunca pongas costos ni márgenes.
  */
 
-/** Planes de pago configurados en el cobro (Stripe). */
+/** Planes de pago configurados en el cobro (Creem o Stripe, en el servidor). */
 export type PlanId = 'pro_mensual' | 'pro_anual' | 'pro_por_viaje' | 'pro_grupo'
 
 /** Acciones de IA con cupo mensual en el plan Gratis. */
