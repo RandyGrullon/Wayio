@@ -81,14 +81,23 @@ export function nombrePlan(planId: string | null | undefined): string {
 
 /**
  * De dónde viene una suscripción: «Concedido» (a mano desde el panel, no
- * suma al MRR), «Stripe» (cobrada) o «Sistema» (alta gratuita).
+ * suma al MRR), «Stripe» (cobrada en la web), «App Store» / «Google Play»
+ * (compra integrada de la app; «· prueba» si es de sandbox) o «Sistema»
+ * (alta gratuita).
  */
 export function origenSuscripcion(sub: {
   source?: string | null | undefined
   stripe_subscription_id?: string | null | undefined
   plan_id: string
+  store_environment?: string | null | undefined
 }): { label: string; variant: 'laton' | 'brand' | 'default' } {
   if (sub.source === 'admin') return { label: 'Concedido', variant: 'laton' }
+  if (sub.source === 'app_store' || sub.source === 'play_store') {
+    const tienda = sub.source === 'app_store' ? 'App Store' : 'Google Play'
+    return sub.store_environment === 'SANDBOX'
+      ? { label: `${tienda} · prueba`, variant: 'default' }
+      : { label: tienda, variant: 'brand' }
+  }
   if (sub.source === 'stripe' || sub.stripe_subscription_id) {
     return { label: 'Stripe', variant: 'brand' }
   }

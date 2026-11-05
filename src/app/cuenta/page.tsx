@@ -13,7 +13,7 @@ import { TEXTO_CUPO_GRATIS } from '@/components/trip/limitesIA'
 import { NOMBRE_PLAN } from '@/constants/planes'
 import { RECUPERAR_PATH } from '@/lib/auth/constants'
 import { modoLocalSinCuentas } from '@/lib/auth/irALogin'
-import { tierEfectivo } from '@/lib/stripe/entitlements'
+import { esDeTienda, tierEfectivo } from '@/lib/stripe/entitlements'
 import { createClient } from '@/lib/supabase/server'
 import { isSupabaseConfigured } from '@/lib/supabase/config'
 import { formatFecha } from '@/lib/utils/formatters'
@@ -103,13 +103,22 @@ function vigencia(sub: SubscriptionRow | null): string | null {
     diaSemana: false,
   })
   if (!fecha) return null
-  if (sub.stripe_subscription_id) {
+  const recurrenteDeTienda =
+    esDeTienda(sub.source) && sub.plan_id !== 'pro_por_viaje'
+  if (sub.stripe_subscription_id || recurrenteDeTienda) {
     if (sub.status === 'canceled') return `Terminó el ${fecha}.`
     return sub.cancel_at_period_end
       ? `Cancelado: tienes acceso hasta el ${fecha}.`
       : `Se renueva el ${fecha}.`
   }
   return `Válido hasta el ${fecha}.`
+}
+
+/** «App Store» o «Google Play» si el plan se compró en la app. */
+function tiendaDe(sub: SubscriptionRow | null): string | null {
+  if (sub?.source === 'app_store') return 'App Store'
+  if (sub?.source === 'play_store') return 'Google Play'
+  return null
 }
 
 function Portada({ kicker, titulo }: { kicker: string; titulo: string }) {
@@ -201,6 +210,7 @@ export default async function CuentaPage({
   const frase = vigencia(sub)
   const tieneCliente = Boolean(sub?.stripe_customer_id)
   const esPago = tier !== 'free'
+  const tienda = tiendaDe(sub)
 
   return (
     <>
@@ -233,6 +243,12 @@ export default async function CuentaPage({
                   {sub?.source === 'admin' ? (
                     <p>Este plan te lo concedió el equipo de Wayio.</p>
                   ) : null}
+                  {tienda ? (
+                    <p>
+                      Lo compraste en la app con {tienda}: cámbialo o cancélalo
+                      desde las suscripciones de {tienda} en tu teléfono.
+                    </p>
+                  ) : null}
                 </div>
               ) : (
                 <p className="mt-3 max-w-[60ch] text-body-s text-fg-muted">
@@ -248,8 +264,9 @@ export default async function CuentaPage({
                   title="Hubo un problema con tu último pago"
                   className="mt-5"
                 >
-                  Actualiza tu tarjeta en el portal de pagos para no perder tu
-                  plan.
+                  {tienda
+                    ? `Revisa tu método de pago en ${tienda} para no perder tu plan.`
+                    : 'Actualiza tu tarjeta en el portal de pagos para no perder tu plan.'}
                 </Callout>
               ) : null}
 
@@ -266,8 +283,12 @@ export default async function CuentaPage({
                 )}
                 {tieneCliente ? (
                   <GestionarSuscripcion
-                    variant={esPago ? 'tinta' : 'outline'}
-                    label={esPago ? 'Gestionar suscripción' : 'Ver mis pagos'}
+                    variant={esPago && !tienda ? 'tinta' : 'outline'}
+                    label={
+                      esPago && !tienda
+                        ? 'Gestionar suscripción'
+                        : 'Ver mis pagos'
+                    }
                   />
                 ) : null}
               </div>
