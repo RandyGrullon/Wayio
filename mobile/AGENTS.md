@@ -13,5 +13,8 @@ https://docs.expo.dev/versions/v54.0.0/
   `src/lib/utils/formatters.ts` (sin `Intl`). Llamadas al backend solo con
   `src/lib/api/http.ts` (Bearer + tiempo límite).
 - `EXPO_PUBLIC_RESERVAS_ENABLED` (por defecto `false`) → `config.reservasActivas`.
+- `EXPO_PUBLIC_COMPRAS_TIENDA` (por defecto `false`) → compras integradas con
+  RevenueCat (`src/lib/compras/tienda.ts`, `react-native-purchases` 10.x: la
+  11.x aún no sirve en Expo). El plan lo decide siempre el servidor.
 - Comentarios y textos de la UI en español (es-DO); colores siempre desde el
   tema (`src/theme.ts`), nunca hex sueltos.

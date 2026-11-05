@@ -17,6 +17,16 @@
  *               el mapa muestra «Powered by Geoapify», que su plan Free exige
  *               donde se ven sus coordenadas. Pon 'osm' solo si el servidor no
  *               tiene GEOAPIFY_API_KEY.
+ * - COMPRAS_TIENDA → 'true' vende Pro con compras integradas (App Store y
+ *               Google Play vía RevenueCat) en vez del pago web. Por defecto
+ *               apagado (la app abre el pago web como hasta ahora). Necesita
+ *               un development build (no Expo Go) y las claves públicas de
+ *               RevenueCat de cada tienda: REVENUECAT_IOS_KEY (appl_…) y
+ *               REVENUECAT_ANDROID_KEY (goog_…). Sin la clave de la
+ *               plataforma, esa build sigue con el pago web.
+ * - CHECKOUT_WEB_EEUU → 'true' ofrece ADEMÁS el pago web cuando la cuenta de
+ *               la tienda es de EE. UU. (allí Apple y Google permiten enlazar
+ *               a un pago externo). Fuera de EE. UU. siempre se usa la tienda.
  */
 export const config = {
   apiUrl: (process.env['EXPO_PUBLIC_API_URL'] ?? '').replace(/\/$/, ''),
@@ -28,6 +38,14 @@ export const config = {
   reservasActivas: process.env['EXPO_PUBLIC_RESERVAS_ENABLED'] === 'true',
   /** Créditos de Geoapify en el mapa (salvo que el backend use solo OSM). */
   creditosGeoapify: process.env['EXPO_PUBLIC_GEO_PROVEEDOR'] !== 'osm',
+  /** Compras integradas (RevenueCat) en vez del pago web. */
+  comprasTienda: process.env['EXPO_PUBLIC_COMPRAS_TIENDA'] === 'true',
+  /** Clave pública de RevenueCat del App Store (appl_…). */
+  revenuecatIos: process.env['EXPO_PUBLIC_REVENUECAT_IOS_KEY'] ?? '',
+  /** Clave pública de RevenueCat de Google Play (goog_…). */
+  revenuecatAndroid: process.env['EXPO_PUBLIC_REVENUECAT_ANDROID_KEY'] ?? '',
+  /** Pago web también para cuentas de la tienda de EE. UU. */
+  checkoutWebEeuu: process.env['EXPO_PUBLIC_CHECKOUT_WEB_EEUU'] === 'true',
 } as const
 
 export function assertBackendConfigured(): void {
