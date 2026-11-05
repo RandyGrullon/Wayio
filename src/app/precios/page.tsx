@@ -42,7 +42,7 @@ const PREGUNTAS = [
   },
   {
     p: '¿Puedo cancelar cuando quiera?',
-    r: 'Sí. Pro mensual y Pro anual se gestionan desde Tu cuenta, en el portal de pagos: ahí cambias de plan, actualizas la tarjeta o cancelas. Si cancelas, sigues con Pro hasta el final del periodo que ya pagaste.',
+    r: 'Sí. Pro mensual y Pro anual se cancelan desde Tu cuenta, y sigues con Pro hasta el final del periodo que ya pagaste. En el portal de pagos actualizas la tarjeta y ves tus facturas.',
   },
   {
     p: '¿Quién procesa los pagos?',

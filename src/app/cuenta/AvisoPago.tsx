@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/Button'
 import { Callout } from '@/components/ui/Callout'
 
 /**
- * Vuelta de Stripe con ?pago=ok. El webhook puede tardar unos segundos en
+ * Vuelta del pago con ?pago=ok. El webhook puede tardar unos segundos en
  * activar el plan: si todavía sale «gratis», se ofrece volver a comprobar.
  */
 export function AvisoPago({ activo }: { activo: boolean }) {

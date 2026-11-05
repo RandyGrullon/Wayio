@@ -34,7 +34,8 @@ import { formatCurrency, formatPorcentaje } from '@/lib/utils/formatters'
  * Planes de Wayio (docs/DISENO.md §6, MON-05) a partir del catálogo público
  * (src/constants/planes.ts): Gratis con cuenta y cupos mensuales, Pro
  * (mensual o anual) y el Pase Pro de 30 días. Contrato de POST
- * /api/stripe/checkout { planId }:
+ * /api/pagos/checkout { planId } (mismo con Creem o Stripe, según
+ * PAYMENTS_PROVIDER en el servidor; la UI nunca nombra al procesador):
  *   200 { url } → pago · 200 { url, portal: true, mensaje } → portal (ya
  *   suscrito) · 401 → /login?redirect=… · 409 already_pro · 503
  *   checkout_unavailable { mensaje } · 400 plan_no_disponible · 429/400
@@ -146,7 +147,7 @@ export function PricingCards({
     setCargando(planId)
     setAviso(null)
     try {
-      const res = await fetch('/api/stripe/checkout', {
+      const res = await fetch('/api/pagos/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ planId }),
@@ -457,10 +458,10 @@ export function PricingCards({
       <div className="flex flex-col gap-1.5 text-caption text-fg-subtle">
         <p>{NOTA_USO_JUSTO}</p>
         <p>
-          Precios en dólares estadounidenses (USD). Los pagos se hacen con un
-          procesador de pagos seguro: Wayio no ve ni guarda los datos de tu
-          tarjeta. La ubicación en vivo y los avisos al llegar están en la app
-          móvil.
+          Precios en dólares estadounidenses (USD); según tu país, al pagar
+          pueden sumarse impuestos locales. Los pagos se hacen con un procesador
+          de pagos seguro: Wayio no ve ni guarda los datos de tu tarjeta. La
+          ubicación en vivo y los avisos al llegar están en la app móvil.
         </p>
       </div>
     </div>

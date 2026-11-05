@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
+import { NOMBRE_PROVEEDOR, proveedorActivo } from '@/lib/pagos/proveedor'
 import { getBaseUrl } from '@/lib/utils/baseUrl'
 import { PaginaLegal } from './PaginaLegal'
 
@@ -25,12 +26,15 @@ const SECCIONES = [
 
 /**
  * Política de privacidad (BORRADOR): describe lo que hace hoy el código de
- * Wayio (Supabase, Stripe, PostHog y Sentry si están activos, IA de
+ * Wayio (Supabase, el proveedor de cobro activo —Creem o Stripe, según
+ * PAYMENTS_PROVIDER—, PostHog y Sentry si están activos, IA de
  * terceros, Geoapify para lugares y rutas u OpenStreetMap si Geoapify no
  * está configurado, afiliados). La debe revisar un abogado antes de ser
  * definitiva.
  */
 export default function PrivacidadPage() {
+  const cobro = proveedorActivo()
+  const nombreCobro = NOMBRE_PROVEEDOR[cobro]
   return (
     <PaginaLegal
       kicker="Legal"
@@ -40,7 +44,7 @@ export default function PrivacidadPage() {
         </>
       }
       intro="Qué datos guarda Wayio, para qué los usa, con quién los comparte y cómo puedes pedir que los borremos."
-      actualizado="2026-10-17"
+      actualizado="2026-11-05"
       secciones={SECCIONES}
     >
       <h2 id="quienes">Quiénes somos</h2>
@@ -90,9 +94,13 @@ export default function PrivacidadPage() {
       <h3>Pagos</h3>
       <ul>
         <li>
-          Los pagos los procesa Stripe. Guardamos el estado de tu plan, sus
-          fechas y un identificador de cliente de Stripe. No vemos ni guardamos
-          los datos de tu tarjeta.
+          Los pagos los procesa {nombreCobro}
+          {cobro === 'creem'
+            ? ', que actúa como vendedor (merchant of record): figura en tu recibo y se encarga de los impuestos'
+            : ''}
+          . Guardamos el estado de tu plan, sus fechas y un identificador de
+          cliente de {nombreCobro}. No vemos ni guardamos los datos de tu
+          tarjeta.
         </li>
       </ul>
       <h3>Uso y errores</h3>
@@ -157,7 +165,10 @@ export default function PrivacidadPage() {
           tiempo real.
         </li>
         <li>
-          <strong>Stripe</strong>: cobros y portal de pagos.
+          <strong>{nombreCobro}</strong>:{' '}
+          {cobro === 'creem'
+            ? 'cobros, impuestos de la venta y portal de pagos.'
+            : 'cobros y portal de pagos.'}
         </li>
         <li>
           <strong>Anthropic o Groq</strong>: generación de itinerarios con IA.
