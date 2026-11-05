@@ -2,6 +2,7 @@ import 'server-only'
 import { z } from 'zod'
 import { CUPO_GRATIS } from '@/constants/planes'
 import { tarifaModelo } from '@/lib/ai/pricing'
+import { proveedorActivo } from '@/lib/pagos/proveedor'
 import {
   CANALES_COBRO,
   ESCENARIOS_IA,
@@ -43,8 +44,10 @@ const MIN_ACCIONES_REALES = 5
 // ─── Comisiones por canal (informe, «Sin Stripe en RD…», 17-oct-2026) ─────
 
 const COMISIONES: Record<CanalCobro, ComisionCanal> = {
-  // Creem: 3,9 % + 0,40, sin recargo internacional. Paga los días 1 y 15
-  // cobrando US$7 o el 1 % por pago, lo que sea mayor.
+  // Creem: 3,9 % + 0,40, sin recargo internacional ni cuota mensual
+  // (creem.io/pricing, verificado de nuevo el 5-nov-2026). Paga los días 1 y
+  // 15 cobrando US$7 o el 1 % por pago, lo que sea mayor (informe).
+  // Es el proveedor por defecto del cobro web (PAYMENTS_PROVIDER=creem).
   creem: {
     pct: 3.9,
     pctRecurrente: 0,
@@ -98,7 +101,7 @@ const COMISIONES: Record<CanalCobro, ComisionCanal> = {
 
 const NOTAS_CANAL: Record<CanalCobro, string> = {
   creem:
-    'MoR; 3.9 % + US$0.40 sin recargo internacional; retiros los días 1 y 15 (US$7 o 1 %).',
+    'MoR; 3.9 % + US$0.40 sin recargo internacional (verificado el 5-nov-2026); retiros los días 1 y 15 (US$7 o 1 %). Productos con impuestos aparte (tax mode exclusive) para que el precio de la calculadora sea lo que llega antes de comisión.',
   paddle:
     'MoR; 5 % + US$0.50 (pide tarifa para productos de menos de US$10); SWIFT US$15.',
   dodo: 'MoR; 4 % + US$0.40, +1.5 % internacional y +0.5 % en suscripciones; SWIFT US$25.',
@@ -275,7 +278,8 @@ export function supuestosPorDefecto(datos: DatosRentabilidad): Supuestos {
   const hayUsoReal = uso.porTier.pago.usuarios + uso.porTier.gratis.usuarios > 0
   return {
     version: 1,
-    canal: 'creem',
+    // El canal del cobro web que está activo (PAYMENTS_PROVIDER).
+    canal: proveedorActivo() === 'stripe' ? 'stripe_llc' : 'creem',
     comisiones: structuredClone(COMISIONES),
     comisionTiendaPct: COMISION_TIENDA_PCT,
     ventasTiendasPct: 0,

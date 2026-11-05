@@ -268,14 +268,14 @@ export default async function UserDetailPage({
             <Badge variant={origen.variant}>{origen.label}</Badge>
           </Dato>
         ) : null}
-        <Dato etiqueta="Cliente de Stripe">
+        <Dato etiqueta="Cliente en el cobro">
           {subscription.stripe_customer_id ? (
             <CopiarTexto valor={subscription.stripe_customer_id} />
           ) : (
             '—'
           )}
         </Dato>
-        <Dato etiqueta="Suscripción de Stripe">
+        <Dato etiqueta="Suscripción en el cobro">
           {subscription.stripe_subscription_id ? (
             <CopiarTexto valor={subscription.stripe_subscription_id} />
           ) : (

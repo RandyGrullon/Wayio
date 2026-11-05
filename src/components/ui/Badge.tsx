@@ -124,11 +124,12 @@ export const BADGE_VIAJE: Record<string, EstadoBadgeDef> = {
   cancelado: { variant: 'default', label: 'Cancelado' },
 }
 
-/** Estado de una suscripción (Stripe) → Badge. */
+/** Estado de una suscripción (cualquier proveedor de cobro) → Badge. */
 export const BADGE_SUSCRIPCION: Record<string, EstadoBadgeDef> = {
   active: { variant: 'success', label: 'Activa' },
   trialing: { variant: 'info', label: 'En prueba' },
   past_due: { variant: 'warning', label: 'Pago pendiente' },
+  paused: { variant: 'default', label: 'En pausa' },
   canceled: { variant: 'default', label: 'Cancelada' },
 }
 
