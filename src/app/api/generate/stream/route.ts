@@ -8,6 +8,7 @@ import {
   pideNoCache,
   reservarCupoGenerar,
 } from '../_lib/comun'
+import { respuestaMantenimiento } from '../_lib/mantenimiento'
 
 export const maxDuration = 300
 
@@ -23,6 +24,7 @@ export const maxDuration = 300
  *   { type: 'error', message, code }
  * Cada 15 s se envía un comentario ": ping" para que proxies no corten.
  *
+ * El modo mantenimiento (503 code 'mantenimiento') se comprueba lo primero.
  * Sesión, límites por cuenta (los de /api/generate), tope diario y cupo
  * mensual del plan Gratis se comprueban ANTES de abrir el stream, para
  * responder con su status real (401/429/402 'cupo_agotado') en JSON. Si el
@@ -31,6 +33,10 @@ export const maxDuration = 300
  * la generación falla, se cancela o sale de la caché o del modo demo.
  */
 export async function POST(request: Request): Promise<Response> {
+  // Mantenimiento: lo primero, antes de la sesión y de abrir el stream.
+  const mantenimiento = await respuestaMantenimiento()
+  if (mantenimiento) return mantenimiento
+
   const sesion = await exigirSesion(request)
   if (!sesion.ok) return sesion.response
 

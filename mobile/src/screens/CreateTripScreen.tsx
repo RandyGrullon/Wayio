@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { KeyboardAvoidingView, Platform, StyleSheet } from 'react-native'
-import { Pantalla, ScreenHeader } from '../components/ui'
+import { Callout, Pantalla, ScreenHeader } from '../components/ui'
 import { TripForm } from '../components/trip/TripForm'
 import { formatRangoFechas } from '../components/ui/formato'
 import { LoadingScreen } from './LoadingScreen'
@@ -18,6 +18,11 @@ import {
   datosDeLimite,
   mensajeDeLimite,
 } from '../lib/api/limites'
+import {
+  esMantenimiento,
+  marcarMantenimiento,
+  useMantenimiento,
+} from '../hooks/useConfigRemota'
 
 /**
  * Texto del error de trazado. Tope diario de IA → el del servidor; límite de
@@ -57,6 +62,11 @@ interface Trazado {
  * la pantalla «Trazando tu viaje» con las fases reales del SSE. Cancelar
  * aborta la petición y vuelve al formulario con los datos; un error de
  * validación del servidor se asigna a cada campo.
+ *
+ * Modo mantenimiento (/api/config): «Trazar» no llama a la IA y muestra el
+ * mensaje del admin sobre el formulario (con los datos intactos). Si el
+ * servidor responde 503 code 'mantenimiento' a mitad, se vuelve igual al
+ * formulario con su mensaje, sin reintentar.
  */
 export function CreateTripScreen({
   initialDestino,
@@ -70,7 +80,11 @@ export function CreateTripScreen({
   initialForm?: FormularioViaje
 } = {}): React.ReactElement {
   const { navigate } = useNavigation()
+  const mantenimiento = useMantenimiento()
+  const enMantenimiento = mantenimiento.activo
   const [trazado, setTrazado] = useState<Trazado | null>(null)
+  /** «Trazar» se topó con el mantenimiento: aviso sobre el formulario. */
+  const [avisoMantenimiento, setAvisoMantenimiento] = useState(false)
   const [ultimoForm, setUltimoForm] = useState<FormularioViaje | null>(
     initialForm ?? null
   )
@@ -83,11 +97,18 @@ export function CreateTripScreen({
   const trazar = useCallback(
     async (form: FormularioViaje): Promise<void> => {
       abortRef.current?.abort()
+      setUltimoForm(form)
+      setErroresServidor({})
+      // Mantenimiento: ni se intenta (el servidor respondería 503).
+      if (enMantenimiento) {
+        setTrazado(null)
+        setAvisoMantenimiento(true)
+        return
+      }
+      setAvisoMantenimiento(false)
       const control = new AbortController()
       abortRef.current = control
       const payload = aPayload(form)
-      setUltimoForm(form)
-      setErroresServidor({})
       setTrazado({
         form,
         fase: null,
@@ -119,6 +140,14 @@ export function CreateTripScreen({
           setTrazado(null)
           return
         }
+        // Mantenimiento activado después de la última lectura (503): de
+        // vuelta al formulario con el mensaje del servidor, sin reintentar.
+        if (e instanceof ErrorGeneracion && esMantenimiento(e.status, e.code)) {
+          marcarMantenimiento(e.message)
+          setAvisoMantenimiento(true)
+          setTrazado(null)
+          return
+        }
         // Cupo del mes agotado (402): el texto del servidor y «Ver planes».
         // generarViaje ya no lo repite ni cae a POST /api/generate.
         const cupo = cupoAgotadoDe(datosDeLimite(e))
@@ -133,7 +162,7 @@ export function CreateTripScreen({
         )
       }
     },
-    [navigate]
+    [navigate, enMantenimiento]
   )
 
   const cancelar = (): void => {
@@ -182,6 +211,16 @@ export function CreateTripScreen({
   return (
     <Pantalla edges={['top', 'left', 'right']}>
       <ScreenHeader title="Nuevo viaje" kicker="Planificar" />
+      {avisoMantenimiento && enMantenimiento ? (
+        <Callout
+          tone="warning"
+          title="No podemos trazar viajes ahora"
+          onDismiss={() => setAvisoMantenimiento(false)}
+          style={styles.aviso}
+        >
+          {`${mantenimiento.mensaje} Tus datos siguen aquí para cuando volvamos.`}
+        </Callout>
+      ) : null}
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -198,4 +237,7 @@ export function CreateTripScreen({
   )
 }
 
-const styles = StyleSheet.create({ flex: { flex: 1 } })
+const styles = StyleSheet.create({
+  flex: { flex: 1 },
+  aviso: { marginHorizontal: 16, marginBottom: 8 },
+})

@@ -137,12 +137,14 @@ export async function streamGenerate(
   if (!res.ok || !res.body) {
     // 4xx: el formulario no es válido, se agotó el cupo (402) o hay límite;
     // repetir en /api/generate no ayuda. Su cuerpo JSON trae los errores por
-    // campo, la espera o la fecha de renovación del cupo.
+    // campo, la espera o la fecha de renovación del cupo. El 503
+    // 'mantenimiento' también es definitivo: /api/generate respondería lo mismo.
     const es4xx = res.status >= 400 && res.status < 500
-    const detalle = es4xx ? await detalleDeRespuesta(res) : {}
+    const detalle: DetalleStreamError =
+      es4xx || res.status === 503 ? await detalleDeRespuesta(res) : {}
     throw new StreamGenerateError(
       `Stream no disponible (${res.status})`,
-      es4xx,
+      es4xx || detalle.code === 'mantenimiento',
       res.status,
       detalle
     )

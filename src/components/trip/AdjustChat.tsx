@@ -6,6 +6,7 @@ import type { Trip } from '@/types/trip'
 import { Button, ButtonLink, Spinner } from '@/components/ui/Button'
 import { Chip } from '@/components/ui/Chip'
 import { Textarea } from '@/components/ui/Textarea'
+import { useFlag } from '@/hooks/useFlag'
 import { esAuthRequired, hayLogin, urlLogin } from '@/lib/auth/irALogin'
 import { cn } from '@/lib/utils/cn'
 import {
@@ -93,6 +94,8 @@ export function AdjustChat({
 }: AdjustChatProps) {
   const [texto, setTexto] = useState('')
   const [cargando, setCargando] = useState(false)
+  // Flag 'paywall' del admin: apagado, el cupo agotado no ofrece «Ver planes».
+  const conPlanes = useFlag('paywall')
   const [historialLocal, setHistorialLocal] = useState<MensajeAjuste[]>([])
   const historial = historialExterno ?? historialLocal
   const finRef = useRef<HTMLDivElement | null>(null)
@@ -258,9 +261,9 @@ export function AdjustChat({
                     {m.texto}
                   </span>
                 </p>
-                {m.planes || (m.manual && onEditarManual) ? (
+                {(m.planes && conPlanes) || (m.manual && onEditarManual) ? (
                   <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1">
-                    {m.planes ? (
+                    {m.planes && conPlanes ? (
                       <ButtonLink
                         href={RUTA_PLANES}
                         variant="link"

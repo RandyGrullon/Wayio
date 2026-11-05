@@ -31,6 +31,10 @@ import {
 import { enfocarCampo } from '@/components/trip/TripForm'
 import { ResultView } from '@/components/trip/ResultView'
 import { useBackgroundGeocode } from '@/hooks/useBackgroundGeocode'
+import {
+  MENSAJE_MANTENIMIENTO,
+  useMantenimiento,
+} from '@/hooks/useConfigRemota'
 import { useUser } from '@/hooks/useUser'
 import type { GenerateResult, ProgressEvent } from '@/lib/ai/generateTrips'
 import { StreamGenerateError, streamGenerate } from '@/lib/ai/streamClient'
@@ -211,6 +215,10 @@ function mensajeDeError(err: unknown): string {
     }
     // Tope diario de Wayio (429 antes del stream o evento SSE a mitad).
     if (esTopeDiario(err.code)) return err.mensaje ?? MENSAJE_TOPE_DIARIO
+    // Mantenimiento activado desde el admin (503 antes del stream).
+    if (err.code === 'mantenimiento') {
+      return err.mensaje ?? MENSAJE_MANTENIMIENTO
+    }
     if (err.status === 429) return mensajeLimite(err.retryAfter)
     if (err.status !== null && err.status >= 500) {
       return 'El servicio está ocupado ahora mismo. Inténtalo de nuevo en un momento.'
@@ -270,6 +278,12 @@ function Flujo() {
   const params = useSearchParams()
   const { user, loading: cargandoUsuario } = useUser()
   const { success, error: toastError, toast } = useToast()
+  // Mantenimiento activado desde el admin: se avisa sin llamar a la IA.
+  const mantenimiento = useMantenimiento()
+  const mantenimientoRef = useRef(mantenimiento)
+  useEffect(() => {
+    mantenimientoRef.current = mantenimiento
+  }, [mantenimiento])
 
   // ¿Esta visita es la vuelta del login que pidió «Trazar»? (ver
   // PARAM_REANUDAR). Se lee al montar: la URL cambia en cuanto se traza.
@@ -605,6 +619,22 @@ function Flujo() {
       })
       ir('trazado', desdeTrazado ? 'replace' : 'push')
 
+      if (mantenimientoRef.current.activo) {
+        abortRef.current = null
+        setGen((g) =>
+          g
+            ? {
+                ...g,
+                estado: 'error',
+                error:
+                  mantenimientoRef.current.mensaje || MENSAJE_MANTENIMIENTO,
+                motivo: 'mantenimiento',
+              }
+            : g
+        )
+        return
+      }
+
       let rapido = false
       let desdeCache = false
       const onProgress = (p: ProgressEvent) => {
@@ -755,11 +785,14 @@ function Flujo() {
           if (!trasLogin) irALoginTrazarRef.current(form, noCache)
           return
         }
+        const codigo = codigoDeError(err)
         const motivo = esErrorDeCupo(err)
           ? ('cupo_agotado' as const)
-          : esTopeDiario(codigoDeError(err))
+          : esTopeDiario(codigo)
             ? ('tope_diario' as const)
-            : null
+            : codigo === 'mantenimiento'
+              ? ('mantenimiento' as const)
+              : null
         setGen((g) =>
           g
             ? {

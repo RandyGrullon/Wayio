@@ -6,6 +6,7 @@ import { MotionProvider } from '@/components/providers/MotionProvider'
 import { ToastProvider } from '@/components/ui/Toast'
 import { AnnouncementBanner } from '@/components/admin/AnnouncementBanner'
 import { SkipLink } from '@/components/layout/SkipLink'
+import { AvisoMantenimiento } from '@/components/layout/AvisoMantenimiento'
 import OfflineRegister from '@/components/OfflineRegister'
 import { getBaseUrl } from '@/lib/utils/baseUrl'
 import './globals.css'
@@ -124,12 +125,14 @@ export default function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: bootScript }} />
       </head>
       <body className="flex min-h-full flex-col bg-bg text-fg">
-        {/* Primer elemento enfocable de toda la app (antes del banner de
-            anuncios y del header). Va a #contenido o, si no existe, al <main>. */}
+        {/* Primer elemento enfocable de toda la app (antes de los avisos de
+            mantenimiento y anuncios y del header). Va a #contenido o, si no
+            existe, al <main>. */}
         <SkipLink />
         <PostHogProvider>
           <MotionProvider>
             <ToastProvider>
+              <AvisoMantenimiento />
               <AnnouncementBanner />
               {children}
               <OfflineRegister />

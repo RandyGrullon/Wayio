@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 import { isSupabaseConfigured } from '@/lib/supabase/config'
+import { normalizarMantenimiento } from '@/app/api/generate/_lib/mantenimiento'
 
 /**
  * Remote config para web y mobile. Devuelve feature flags, anuncios activos y
@@ -10,15 +11,15 @@ import { isSupabaseConfigured } from '@/lib/supabase/config'
  * defecto. Caché corta en CDN porque es igual para todos.
  *
  * Ejemplo (mobile): GET /api/config?platform=mobile
+ *
+ * Lo consumen useConfigRemota / useMantenimiento / useFlag (src/hooks en la
+ * web y mobile/src/hooks en la app). `maintenance` es el mismo valor que
+ * comprueban /api/generate, /api/generate/stream y /api/adjust (503 code
+ * 'mantenimiento'); ver src/app/api/generate/_lib/mantenimiento.ts.
  */
 
 const PLATAFORMAS = new Set(['all', 'web', 'mobile'])
 const CACHE = 'public, max-age=30, s-maxage=30, stale-while-revalidate=60'
-
-interface Mantenimiento {
-  enabled: boolean
-  message?: string
-}
 
 function porDefecto(): Response {
   return Response.json(
@@ -83,15 +84,9 @@ export async function GET(request: Request): Promise<Response> {
     .filter((a) => a.starts_at <= nowIso && (!a.ends_at || a.ends_at >= nowIso))
     .map(({ id, title, body, level }) => ({ id, title, body, level }))
 
-  const valor = (settingsRes.data as { value: unknown } | null)?.value
-  const crudo =
-    typeof valor === 'object' && valor !== null
-      ? (valor as Record<string, unknown>)
-      : {}
-  const maintenance: Mantenimiento = { enabled: crudo['enabled'] === true }
-  if (typeof crudo['message'] === 'string') {
-    maintenance.message = crudo['message'].slice(0, 500)
-  }
+  const maintenance = normalizarMantenimiento(
+    (settingsRes.data as { value: unknown } | null)?.value
+  )
 
   return Response.json(
     { flags, announcements, maintenance },

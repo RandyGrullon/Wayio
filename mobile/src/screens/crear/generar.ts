@@ -4,8 +4,10 @@
  * el respaldo.
  *
  * Igual que la web: si el stream ya había empezado (`started`), NO se repite
- * la generación; solo si ni siquiera arrancó se cae a POST /api/generate.
+ * la generación; solo si ni siquiera arrancó se cae a POST /api/generate
+ * (salvo con el 503 code 'mantenimiento', que se muestra tal cual).
  */
+import { esMantenimiento } from '../../hooks/useConfigRemota'
 import { BackendError } from '../../lib/api/http'
 import { generateTrip } from '../../lib/api/backend'
 import {
@@ -40,6 +42,9 @@ export async function generarViaje(
     if (!(err instanceof ErrorGeneracion) || err.started || err.cancelado) {
       throw err
     }
+    // 503 de mantenimiento: POST /api/generate respondería lo mismo; se
+    // muestra el mensaje sin reintentar.
+    if (esMantenimiento(err.status, err.code)) throw err
     onProgress({ fase: 'ia', label: 'La IA arma 3 versiones de tu viaje' })
     try {
       const r = await generateTrip(form)

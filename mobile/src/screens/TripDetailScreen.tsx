@@ -61,6 +61,8 @@ import {
 } from '../components/ui/formato'
 import { useNavigation } from '../navigation/NavigationContext'
 import { useAuth } from '../context/AuthContext'
+import { useMantenimiento } from '../hooks/useConfigRemota'
+import { useFlag } from '../hooks/useFlag'
 import {
   deleteTrip,
   getTrip,
@@ -194,6 +196,11 @@ export function TripDetailScreen({
   const { colors, days } = useTheme()
   const styles = useEstilos(crearEstilos)
   const insets = useSafeAreaInsets()
+  // «Ajustar con IA»: en mantenimiento no se intenta (aviso + editar a
+  // mano) y sin el flag 'paywall' no se ofrece «Ver planes» al agotar el
+  // cupo (queda el texto del servidor).
+  const mantenimiento = useMantenimiento()
+  const conMuroDePago = useFlag('paywall')
 
   const [row, setRow] = useState<TripRow | null>(null)
   const [trip, setTrip] = useState<PlanningTrip | null>(null)
@@ -945,26 +952,46 @@ export function TripDetailScreen({
         title="Ajustar con IA"
         description="Dile a Wayio qué cambiar y reescribe tu itinerario."
       >
-        <AdjustChat
-          trip={trip}
-          onAdjusted={handleAdjusted}
-          {...(anterior
-            ? {
-                onUndo: () => {
-                  setSheet(null)
-                  restaurar(anterior)
-                },
-              }
-            : {})}
-          onEditarAMano={() => {
-            setSheet(null)
-            startEditing()
-          }}
-          onVerPlanes={() => {
-            setSheet(null)
-            navigate({ name: 'paywall' })
-          }}
-        />
+        {mantenimiento.activo ? (
+          <Callout
+            tone="warning"
+            title="El ajuste con IA está en pausa"
+            action={{
+              label: 'Editar a mano',
+              onPress: () => {
+                setSheet(null)
+                startEditing()
+              },
+            }}
+          >
+            {mantenimiento.mensaje}
+          </Callout>
+        ) : (
+          <AdjustChat
+            trip={trip}
+            onAdjusted={handleAdjusted}
+            {...(anterior
+              ? {
+                  onUndo: () => {
+                    setSheet(null)
+                    restaurar(anterior)
+                  },
+                }
+              : {})}
+            onEditarAMano={() => {
+              setSheet(null)
+              startEditing()
+            }}
+            {...(conMuroDePago
+              ? {
+                  onVerPlanes: () => {
+                    setSheet(null)
+                    navigate({ name: 'paywall' })
+                  },
+                }
+              : {})}
+          />
+        )}
       </Sheet>
 
       {/* Compartir */}

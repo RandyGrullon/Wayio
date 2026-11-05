@@ -20,6 +20,7 @@ import { JoinGroupScreen } from '../screens/JoinGroupScreen'
 import { PaywallScreen } from '../screens/PaywallScreen'
 import { useTheme } from '../theme'
 import { useReduceMotion } from '../components/ui/useReduceMotion'
+import { AvisoMantenimiento } from '../components/AvisoMantenimiento'
 
 // Lazy-loaded so the native Mapbox module (`@rnmapbox/maps`, pulled in via
 // MapScreen) is only evaluated when the live-tracking screen is actually opened.
@@ -169,21 +170,29 @@ export function RootNavigator(): React.ReactElement {
     uidPrevio.current = uid
   }, [uid, reset])
 
-  if (loading) return <Cargando />
-  if (!user) return <AuthScreen />
-
+  // Aviso de mantenimiento arriba de todo (también en el login); ocupa el
+  // área segura de arriba y la pantalla queda debajo.
   return (
     <View style={[styles.flex, { backgroundColor: colors.bg }]}>
-      {stack.map((e: Entrada, i) => (
-        <Escena
-          key={e.key}
-          activa={i === stack.length - 1}
-          direccion={direccion}
-          primera={i === 0}
-        >
-          {pantalla(e.route)}
-        </Escena>
-      ))}
+      <AvisoMantenimiento />
+      <View style={styles.flex}>
+        {loading ? (
+          <Cargando />
+        ) : !user ? (
+          <AuthScreen />
+        ) : (
+          stack.map((e: Entrada, i) => (
+            <Escena
+              key={e.key}
+              activa={i === stack.length - 1}
+              direccion={direccion}
+              primera={i === 0}
+            >
+              {pantalla(e.route)}
+            </Escena>
+          ))
+        )}
+      </View>
     </View>
   )
 }

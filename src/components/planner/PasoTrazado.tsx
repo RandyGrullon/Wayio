@@ -34,9 +34,10 @@ export interface EstadoGeneracion {
    * Por qué falló, cuando no es un error cualquiera: «sesion» (la sesión se
    * cerró: se ofrece iniciar sesión), «tope_diario» (Wayio llegó a su límite
    * de IA de hoy: reintentar no sirve) o «cupo_agotado» (el plan Gratis gastó
-   * sus viajes del mes: se ofrece «Ver planes», nunca reintentar).
+   * sus viajes del mes: se ofrece «Ver planes», nunca reintentar) o
+   * «mantenimiento» (el admin pausó la IA: reintentar tampoco sirve).
    */
-  motivo?: 'sesion' | 'tope_diario' | 'cupo_agotado'
+  motivo?: 'sesion' | 'tope_diario' | 'cupo_agotado' | 'mantenimiento'
 }
 
 const CONSEJOS: readonly (readonly string[])[] = [
@@ -87,6 +88,7 @@ export function PasoTrazado({
   const sinSesion = error && gen.motivo === 'sesion'
   const topeDiario = error && gen.motivo === 'tope_diario'
   const cupoAgotado = error && gen.motivo === 'cupo_agotado'
+  const mantenimiento = error && gen.motivo === 'mantenimiento'
 
   return (
     <div className="reticula min-h-dvh">
@@ -191,6 +193,24 @@ export function PasoTrazado({
           >
             {gen.error ??
               'Wayio llegó a su límite de IA por hoy. Vuelve a intentarlo mañana.'}
+          </Callout>
+        ) : mantenimiento ? (
+          <Callout
+            tone="warning"
+            title="Wayio está en mantenimiento"
+            className="mt-6"
+            action={
+              <Button
+                variant="outline"
+                icon={<Pencil />}
+                onClick={onEditar}
+                size="sm"
+              >
+                Editar datos
+              </Button>
+            }
+          >
+            {gen.error ?? 'Estamos en mantenimiento, volvemos pronto.'}
           </Callout>
         ) : error ? (
           <Callout

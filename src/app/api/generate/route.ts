@@ -9,6 +9,7 @@ import {
   pideNoCache,
   reservarCupoGenerar,
 } from './_lib/comun'
+import { respuestaMantenimiento } from './_lib/mantenimiento'
 
 // Los viajes largos se generan en bloques paralelos; aun así dejamos margen
 // (con Fluid Compute de Vercel el máximo en Hobby es 300 s).
@@ -21,6 +22,9 @@ export type { GenerateResult } from '@/lib/ai/generateTrips'
 /**
  * POST /api/generate — genera el itinerario (versión sin streaming).
  *
+ * Con el modo mantenimiento activo responde 503 code 'mantenimiento' antes
+ * de todo lo demás (ver ./_lib/mantenimiento.ts).
+ *
  * Exige sesión (cookie o Bearer), con límites por cuenta por hora y por día
  * (compartidos con /api/generate/stream), el tope global de gasto diario y el
  * cupo mensual del plan Gratis (402 code 'cupo_agotado', ver
@@ -28,6 +32,10 @@ export type { GenerateResult } from '@/lib/ai/generateTrips'
  * se cancela no gasta cupo.
  */
 export async function POST(request: Request): Promise<Response> {
+  // Mantenimiento: lo primero, antes de la sesión y de gastar IA.
+  const mantenimiento = await respuestaMantenimiento()
+  if (mantenimiento) return mantenimiento
+
   const sesion = await exigirSesion(request)
   if (!sesion.ok) return sesion.response
 

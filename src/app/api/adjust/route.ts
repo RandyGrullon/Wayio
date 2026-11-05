@@ -25,6 +25,7 @@ import {
   textoSeguro,
 } from '@/lib/ai/routeKit'
 import { exigirCupo } from '@/lib/planes/cupo'
+import { respuestaMantenimiento } from '@/app/api/generate/_lib/mantenimiento'
 import { LIMITES_AJUSTAR } from '@/lib/security/aiGuard'
 import { MAX_DIAS_VIAJE, MONEDAS } from '@/lib/validations/tripForm'
 import type { Activity } from '@/types/activity'
@@ -40,6 +41,9 @@ import type { Day, Trip } from '@/types/trip'
  * La IA devuelve el contenido; el servidor fusiona por id con el viaje
  * original para conservar estado, reservas pagadas, datos de crucero y
  * coordenadas verificadas, y mantiene fechas, personas, moneda y paquete.
+ *
+ * Con el modo mantenimiento activo responde 503 code 'mantenimiento' antes
+ * de todo lo demás (src/app/api/generate/_lib/mantenimiento.ts).
  *
  * Exige sesión, tiene límites por cuenta (hora y día) y respeta el tope
  * global de gasto diario: agotado, responde 503 ia_no_disponible con
@@ -439,6 +443,10 @@ const respuestaTopeAjuste = (): Response =>
   })
 
 export async function POST(request: Request): Promise<Response> {
+  // Mantenimiento: lo primero, antes de la sesión y de gastar IA.
+  const mantenimiento = await respuestaMantenimiento()
+  if (mantenimiento) return mantenimiento
+
   if (!aiConfigured()) {
     return jsonError(
       503,
