@@ -107,10 +107,20 @@ export type SubscriptionStatus =
   | 'paused'
 
 /**
- * De dónde viene el plan: alta gratuita, pago con un proveedor de cobro
- * (Stripe o Creem) o concedido a mano.
+ * De dónde viene el plan: alta gratuita, pago web con un proveedor de cobro
+ * (Stripe o Creem), concedido a mano o compra integrada de la app (App Store
+ * / Google Play vía RevenueCat).
  */
-export type SubscriptionSource = 'system' | 'stripe' | 'creem' | 'admin'
+export type SubscriptionSource =
+  | 'system'
+  | 'stripe'
+  | 'creem'
+  | 'admin'
+  | 'app_store'
+  | 'play_store'
+
+/** Entorno de la tienda de una compra integrada (SANDBOX = pruebas). */
+export type StoreEnvironment = 'SANDBOX' | 'PRODUCTION'
 
 export interface SubscriptionRow {
   id: string
@@ -129,6 +139,11 @@ export interface SubscriptionRow {
   current_period_end: string | null
   cancel_at_period_end: boolean
   source?: SubscriptionSource
+  /** Compras integradas: producto de la tienda (migración 20261105130000). */
+  store_product_id?: string | null
+  /** Compras integradas: transacción original (igual en cada renovación). */
+  store_transaction_id?: string | null
+  store_environment?: StoreEnvironment | null
   created_at: string
 }
 

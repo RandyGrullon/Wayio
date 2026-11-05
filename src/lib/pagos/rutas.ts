@@ -33,7 +33,7 @@ import {
   portalStripe,
 } from '@/lib/pagos/stripe/cobro'
 import { rateLimit, tooManyRequests } from '@/lib/security/rateLimit'
-import { tierEfectivo } from '@/lib/stripe/entitlements'
+import { esDeTienda, tierEfectivo } from '@/lib/stripe/entitlements'
 import { esPagoUnico, esPlanKey } from '@/lib/stripe/plans'
 import { getStripe, reservasHabilitadas } from '@/lib/stripe/server'
 import {
@@ -217,6 +217,17 @@ async function checkoutPlan(
     return errorJson(
       409,
       'Ya tienes Wayio Pro activo en tu cuenta.',
+      'already_pro'
+    )
+  }
+
+  // Ya paga Pro con la tienda de la app (App Store / Google Play): no se le
+  // cobra dos veces; se gestiona desde la tienda.
+  if (esDeTienda(sub?.source) && tierEfectivo(sub) !== 'free') {
+    const tienda = sub?.source === 'app_store' ? 'App Store' : 'Google Play'
+    return errorJson(
+      409,
+      `Ya tienes Wayio Pro con tu suscripción de ${tienda}. Gestiónala desde ${tienda} en tu teléfono.`,
       'already_pro'
     )
   }

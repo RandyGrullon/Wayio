@@ -164,6 +164,7 @@ interface SubParaMrr {
   status: string
   source?: string | null
   stripe_subscription_id?: string | null
+  store_environment?: string | null
 }
 
 /**
@@ -173,12 +174,16 @@ interface SubParaMrr {
  * (MON-13).
  */
 function esIngresoRecurrente(s: SubParaMrr): boolean {
-  return (
-    s.status === 'active' &&
-    s.plan_id !== 'free' &&
-    s.source !== 'admin' &&
-    Boolean(s.stripe_subscription_id)
-  )
+  if (s.status !== 'active' || s.plan_id === 'free' || s.source === 'admin') {
+    return false
+  }
+  // Compras integradas de la app: solo las reales (no las de sandbox). El MRR
+  // es el precio de lista: la tienda se queda su comisión (15 % en el
+  // programa para pequeños desarrolladores).
+  if (s.source === 'app_store' || s.source === 'play_store') {
+    return s.plan_id !== 'pro_por_viaje' && s.store_environment !== 'SANDBOX'
+  }
+  return Boolean(s.stripe_subscription_id)
 }
 
 /** ¿Plan de pago concedido a mano desde el panel? */

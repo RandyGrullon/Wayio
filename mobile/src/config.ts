@@ -20,6 +20,21 @@
  * - Afiliados  → los mismos IDs que NEXT_PUBLIC_* de la web, para los enlaces
  *               de respaldo (cuando el backend no responde) y para la eSIM y
  *               el seguro. Sin ID se omite el parámetro (sin comisión).
+ * - REVENUECAT_IOS_KEY / REVENUECAT_ANDROID_KEY → claves PÚBLICAS de
+ *               RevenueCat de cada tienda (Project settings → API keys). Con
+ *               la clave de la plataforma, la app vende Pro con compras
+ *               integradas (App Store / Google Play) en vez del pago web; sin
+ *               ella, esa build sigue con el pago web. Necesita un development
+ *               build (no Expo Go).
+ * - COMPRAS_TIENDA → 'false' fuerza el pago web aunque haya clave. Por defecto
+ *               (vacío) las compras integradas se activan solas con la clave.
+ * - REVENUECAT_ENTITLEMENT (por defecto 'pro'), REVENUECAT_OFERTA (vacío = la
+ *               oferta marcada como actual en RevenueCat) y
+ *               REVENUECAT_PAQUETE_PASE (por defecto 'pase_30_dias'): solo si
+ *               en RevenueCat usas otros identificadores.
+ * - CHECKOUT_WEB_EEUU → 'true' ofrece ADEMÁS el pago web en iOS cuando la
+ *               cuenta del App Store es de EE. UU. (allí Apple lo permite).
+ *               Fuera de EE. UU. y en Android siempre se usa la tienda.
  */
 
 /** ID de afiliado limpio, o undefined si falta o es un marcador de ejemplo. */
@@ -56,6 +71,27 @@ export const config = {
     airaloRef: idAfiliado(process.env['EXPO_PUBLIC_AIRALO_REF']),
     iatiRef: idAfiliado(process.env['EXPO_PUBLIC_IATI_REF']),
   },
+  /** Compras integradas (RevenueCat) si hay clave; 'false' las apaga. */
+  comprasTienda: !['false', '0', 'no'].includes(
+    (process.env['EXPO_PUBLIC_COMPRAS_TIENDA'] ?? '').trim().toLowerCase()
+  ),
+  /** Clave pública de RevenueCat del App Store (appl_…). */
+  revenuecatIos: (process.env['EXPO_PUBLIC_REVENUECAT_IOS_KEY'] ?? '').trim(),
+  /** Clave pública de RevenueCat de Google Play (goog_…). */
+  revenuecatAndroid: (
+    process.env['EXPO_PUBLIC_REVENUECAT_ANDROID_KEY'] ?? ''
+  ).trim(),
+  /** Entitlement de RevenueCat que da Pro. */
+  revenuecatEntitlement:
+    process.env['EXPO_PUBLIC_REVENUECAT_ENTITLEMENT']?.trim() || 'pro',
+  /** Oferta de RevenueCat a mostrar ('' = la actual). */
+  revenuecatOferta: process.env['EXPO_PUBLIC_REVENUECAT_OFERTA']?.trim() || '',
+  /** Paquete a medida del Pase Pro de 30 días en la oferta. */
+  revenuecatPaquetePase:
+    process.env['EXPO_PUBLIC_REVENUECAT_PAQUETE_PASE']?.trim() ||
+    'pase_30_dias',
+  /** Pago web también para cuentas de la tienda de EE. UU. */
+  checkoutWebEeuu: process.env['EXPO_PUBLIC_CHECKOUT_WEB_EEUU'] === 'true',
 } as const
 
 export function assertBackendConfigured(): void {

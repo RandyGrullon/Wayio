@@ -1,6 +1,6 @@
 # Wayio — estado y pasos para terminar
 
-> Actualizado el 2026-11-05 (cobro web con Creem, integraciones que solo piden la clave y pendientes cerrados); el 2026-10-20 (planes Gratis y Pro aplicados en el servidor); el 2026-10-17 (freno al gasto de IA, y geocodificación y rutas con Geoapify); antes, el 2026-10-09, tras el análisis completo, la reconstrucción de la IA, los arreglos de seguridad, el rediseño y la integración final. Los detalles de cada servicio están en [API-KEYS-GUIA.md](API-KEYS-GUIA.md).
+> Actualizado el 2026-11-05 (cobro web con Creem, compras dentro de la app con RevenueCat, integraciones que solo piden la clave y pendientes cerrados); el 2026-10-20 (planes Gratis y Pro aplicados en el servidor); el 2026-10-17 (freno al gasto de IA, y geocodificación y rutas con Geoapify); antes, el 2026-10-09, tras el análisis completo, la reconstrucción de la IA, los arreglos de seguridad, el rediseño y la integración final. Los detalles de cada servicio están en [API-KEYS-GUIA.md](API-KEYS-GUIA.md).
 
 ## ✅ Integraciones por clave y pendientes cerrados (rama `feat/integraciones-pendientes`, 2026-11-05)
 
@@ -22,6 +22,29 @@ Todo lo de esta sección funciona **con solo poner la clave o el ID** (detalles 
 - **Admin**: origen «Creem», proveedor en «Estado del entorno», «Revocar plan» cancela también en Creem; la calculadora toma por defecto el canal del proveedor activo (tarifa de Creem verificada el 5-nov-2026: 3,9 % + US$0,40, sin cambios).
 - Migración `20261105120000_cobros_creem.sql` (CHECK de `source` con `'creem'`, comentarios de columnas y tabla `payment_events`), replicada en `supabase/schema.sql` y comprobada por `npm run verificar` («Migración 6», con la comprobación de los productos de Creem).
 - **Probado** contra un simulador local (`npm run creem:mock`, sin cuenta de Creem): checkout, los 3 webhooks del alta, firma inválida, eventos repetidos, portal, baja y reanudación, renovación, pago fallido, baja, pase ligado a viaje, reembolso, alias móviles, base sin la migración y el cambio a `PAYMENTS_PROVIDER=stripe`. **Falta** probarlo contra el modo test real de Creem (sección 6.4 de la guía) y, si algún día se usa, contra Stripe.
+
+## ✅ Compras dentro de la app móvil (rama `feat/compras-integradas`, 2026-11-05)
+
+- **Por qué**: fuera de EE. UU., Apple (3.1.1) y Google Play no dejan vender Pro en la app abriendo el pago web. Hay que usar sus compras integradas (15 % de comisión con el programa para pequeños desarrolladores de Apple y en las suscripciones de Google). Se hace con **RevenueCat**, gratis hasta US$2.500 de ingresos al mes. Investigación, pasos y fuentes: sección 6b de [API-KEYS-GUIA.md](API-KEYS-GUIA.md).
+- **Basta con poner las claves**: la clave pública de RevenueCat de cada plataforma en `mobile/.env` y `REVENUECAT_WEBHOOK_AUTH` en el servidor. Los ids de producto, el entitlement, la oferta y el paquete del pase tienen valores por defecto y se pueden cambiar por variables. Un producto con otro id se deduce del evento.
+- **App** (`mobile/`): `react-native-purchases` 10.16 (la 11.x aún no sirve en Expo). Se activa sola con la clave de la plataforma; `EXPO_PUBLIC_COMPRAS_TIENDA=false` la apaga. Sin clave, la build cobra con el pago web igual que antes.
+  - Con la clave, la pantalla de planes usa la oferta de la tienda con sus precios locales. Reconoce los planes por el tipo de paquete y de producto, no por sus ids.
+  - Tiene «Restaurar compras», la gestión de la suscripción de la tienda, el aviso de renovación y los enlaces a Términos y Privacidad.
+  - Tras pagar, relee el plan del servidor cada 2,5 s durante 30 s; si no llega, avisa y sugiere restaurar.
+  - En iOS con cuenta de EE. UU., `EXPO_PUBLIC_CHECKOUT_WEB_EEUU=true` ofrece además el pago web. En Android no, porque Google exige inscribirse en su programa.
+  - RevenueCat usa el id de Supabase de la cuenta y comprar exige sesión.
+- **Servidor**: `POST /api/revenuecat/webhook` comprueba la cabecera `Authorization` contra `REVENUECAT_WEBHOOK_AUTH` (en tiempo constante; sin la variable responde 503). Cada `event.id` se procesa una sola vez (`revenuecat_events`), y si la BD falla responde 500 para que RevenueCat reintente. Escribe en `subscriptions` con `source` `app_store` o `play_store`:
+  - compra, renovación y reactivación dan Pro hasta la caducidad de la tienda;
+  - la cancelación deja el acceso hasta el fin del periodo; el reembolso lo quita al momento;
+  - la caducidad devuelve a Gratis;
+  - un problema de cobro pone `past_due` y conserva el acceso;
+  - el pase da 30 días desde la compra;
+  - `TRANSFER` mueve la compra a la cuenta que restaura;
+  - los eventos viejos o de otra compra no pisan la vigente, y nunca se pisa una suscripción de Stripe activa.
+- **Plan efectivo**: `my_effective_tier`, `tierEfectivo` (lo usan `/api/cupo`, el cupo y las funciones Pro) y la app dan acceso a los planes de la tienda hasta `current_period_end` + 3 h, por la demora de las renovaciones y los reintentos del webhook.
+- **Web**: el checkout web (Creem o Stripe, `src/lib/pagos/rutas.ts`) responde 409 `already_pro` a quien ya paga en la tienda, y `/cuenta` le explica que lo gestiona en App Store o Google Play. El admin etiqueta «App Store», «Google Play» o «· prueba» (sandbox), y cuenta en el MRR y en la calculadora solo las suscripciones reales de la tienda, a precio de lista.
+- Migración `20261105130000_compras_en_tienda.sql` (va después de la de Creem, `20261105120000`): amplía `source` con un CHECK aditivo, que conserva los valores existentes como `creem`, añade `store_product_id`, `store_transaction_id` y `store_environment`, crea la tabla `revenuecat_events` (solo service role) y la nueva `my_effective_tier`. Está replicada en `supabase/schema.sql` y comprobada por `npm run verificar` («Migración 7»). Se probó en Postgres (PGlite): la migración dos veces seguidas, `schema.sql` completo dos veces y 17 casos de `my_effective_tier` y de los CHECK.
+- **Prueba del webhook**: `npm run probar:revenuecat` levanta un Supabase simulado y `next dev` y pasa 37 comprobaciones (37/37 el 2026-11-05). **Falta probarlo en un teléfono con el sandbox de cada tienda**: no había cuentas de Apple ni de Google para hacerlo.
 
 ## ✅ Planes Gratis y Pro en el servidor (rama `feat/planes-rentabilidad`, 2026-10-20)
 
@@ -111,7 +134,7 @@ Todo lo de esta sección funciona **con solo poner la clave o el ID** (detalles 
 1. **IA**: pon `ANTHROPIC_API_KEY` en `.env.local`, arranca `npm run dev` y ejecuta `npm run eval:ia -- --base http://localhost:3000 --interpret`. Todos los casos deberían salir sin errores (ver el informe en `scripts/eval-ia/resultados/`). Generar exige sesión: con Supabase configurado, pon `EVAL_IA_BEARER` con el access_token de una cuenta de pruebas.
 2. **Supabase**:
    - restaura el proyecto si está pausado;
-   - en el SQL Editor, pega y ejecuta `supabase/migrations/20261008120000_seguridad_y_flujos.sql`, después `supabase/migrations/20261017120000_ai_gasto_diario.sql` (RPC del tope diario de IA; sin ella el tope queda abierto) después `supabase/migrations/20261017130000_cupos_y_rentabilidad.sql` (cupos del plan Gratis y ajustes privados del admin; sin ella los cupos quedan abiertos y la calculadora del admin no puede guardar), después `supabase/migrations/20261105120000_cobros_creem.sql` (origen 'creem' y eventos de pago) y por último `supabase/migrations/20261105140000_gastos_pagador_y_reparto.sql` (gastos del grupo con «Pagó» y «Entre quiénes»);
+   - en el SQL Editor, pega y ejecuta `supabase/migrations/20261008120000_seguridad_y_flujos.sql`, después `supabase/migrations/20261017120000_ai_gasto_diario.sql` (RPC del tope diario de IA; sin ella el tope queda abierto) después `supabase/migrations/20261017130000_cupos_y_rentabilidad.sql` (cupos del plan Gratis y ajustes privados del admin; sin ella los cupos quedan abiertos y la calculadora del admin no puede guardar), después `supabase/migrations/20261105120000_cobros_creem.sql` (origen 'creem' y eventos de pago), después `supabase/migrations/20261105130000_compras_en_tienda.sql` (compras de App Store y Google Play) y por último `supabase/migrations/20261105140000_gastos_pagador_y_reparto.sql` (gastos del grupo con «Pagó» y «Entre quiénes»);
    - revisa los admins y comprueba realtime;
    - configura Auth (URLs, plantillas de correo, SMTP y Google), guía en `supabase/CONFIGURACION-AUTH.md`.
 3. **Upstash Redis** (gratis): `UPSTASH_REDIS_REST_URL` y `UPSTASH_REDIS_REST_TOKEN`, para que los límites de uso protejan tu factura de IA en producción (sin Upstash cada instancia cuenta por su lado).
@@ -131,12 +154,30 @@ Todo lo de esta sección funciona **con solo poner la clave o el ID** (detalles 
    - decide el _tax mode_ de los productos (exclusive: el impuesto se suma al pagar y la calculadora cuadra; inclusive: el cliente paga justo el precio y el impuesto sale de tu parte);
    - prueba el flujo con la tarjeta 4111 1111 1111 1111 (`creem listen --forward-to http://localhost:3000/api/creem/webhook` en local) y `npm run verificar`;
    - para cobrar de verdad: revisión de la cuenta (dominio propio, privacidad y términos visibles, email de soporte), productos, clave y webhook de **producción**, `CREEM_TEST_MODE=false` en Vercel y una compra real pequeña reembolsada.
+   - en la **app móvil** se cobra con las compras de cada tienda (ver el punto 10).
 8. **PostHog y Sentry** (opcional): las claves de la guía.
 9. **App móvil**:
    - `cd mobile && npx expo install expo-dev-client expo-system-ui`;
    - crea `mobile/.env` con las `EXPO_PUBLIC_*`;
-   - genera un _development build_ con `npx expo run:android` o `eas build --profile development`. Expo Go ya no sirve para este proyecto.
-10. **Pruebas finales con 2 y 3 cuentas** (checklist):
+   - genera un _development build_ con `npx expo run:android` o `eas build --profile development`. Expo Go ya no sirve para este proyecto. Vuelve a generarlo tras unir las compras integradas: `react-native-purchases` es código nativo.
+10. **Compras dentro de la app** (solo si vas a vender Pro en las tiendas). Los pasos detallados están en la sección 6b de [API-KEYS-GUIA.md](API-KEYS-GUIA.md):
+    - **Google Play, lo primero (es lo que más tarda)**: si tu cuenta de desarrollador es personal y se creó después del 13-nov-2023, necesitas una **prueba cerrada con al menos 12 testers inscritos de forma continua durante 14 días** antes de poder pedir producción. Sube un AAB a una pista cerrada e invita a los testers cuanto antes;
+    - **App Store Connect**:
+      - firma el Paid Apps Agreement con datos fiscales y bancarios (sin él no funciona ni el sandbox) e inscríbete en el Small Business Program;
+      - crea el grupo «Wayio Pro» con `wayio_pro_mensual` y `wayio_pro_anual`, y la suscripción no renovable `wayio_pase_30_dias`;
+      - genera la In-App Purchase Key (.p8) con su Issuer ID, configura las notificaciones V2 hacia RevenueCat y crea los testers de sandbox;
+    - **Google Play Console**:
+      - perfil de pagos;
+      - suscripción `wayio_pro` con los planes base `mensual` y `anual`, y el producto único `wayio_pase_30_dias`;
+      - cuenta de servicio con su JSON (tarda hasta 36 h), notificaciones en tiempo real (Pub/Sub) y testers de licencia;
+    - **RevenueCat**:
+      - proyecto con las dos apps y el entitlement `pro`, adjunto **solo** a las suscripciones (el pase no);
+      - oferta `default` con `$rc_monthly`, `$rc_annual` y `pase_30_dias`;
+      - webhook a `https://<tu-dominio>/api/revenuecat/webhook` con un «Authorization header value» secreto;
+    - **Vercel**: `REVENUECAT_WEBHOOK_AUTH` con ese mismo secreto (`openssl rand -hex 32`). Después, «Send test event» en RevenueCat debe dar 200 y `npm run verificar` debe sacar OK en la migración 7;
+    - **`mobile/.env`**: solo `EXPO_PUBLIC_REVENUECAT_IOS_KEY` y `EXPO_PUBLIC_REVENUECAT_ANDROID_KEY`. Con ellas la app vende con la tienda. Haz un development build nuevo;
+    - **prueba en sandbox** con una cuenta de Wayio: compra mensual, renovación acelerada, caducidad, pase de 30 días, «Restaurar compras» tras reinstalar y restaurar con otra cuenta (la compra se mueve). En Supabase comprueba la fila de `subscriptions` (`source`, `store_environment = SANDBOX`, `current_period_end`).
+11. **Pruebas finales con 2 y 3 cuentas** (checklist):
     - B no puede hacerse admin;
     - B no ve el grupo de A hasta abrir el enlace, y después el chat llega en vivo;
     - un visitante sin sesión ve `/viaje-compartido/<id>` solo si A lo hizo público;
@@ -160,14 +201,20 @@ Todo lo de esta sección funciona **con solo poner la clave o el ID** (detalles 
 - **Flags**: si `/api/config` falla, `useFlag` devuelve activo para no esconder funciones. Hoy solo `paywall` se usa (el «Ver planes» del chat de ajustes en web y móvil).
 - **Geocoding y rutas**: la migración a Geoapify está hecha en código; falta poner `GEOAPIFY_API_KEY` en Vercel (ver arriba). Vigila los créditos diarios en su panel y pasa al plan API 10 (US$59/mes) si te acercas de forma sostenida a los 3000 del plan Free (y entonces sube `GEOAPIFY_CREDITOS_DIA`, que por defecto corta en 3000).
 - **Gastos del grupo**: cualquier miembro puede apuntar que pagó otro (queda «Lo apuntó X»); falta el botón y el endpoint para borrar un gasto (la RLS ya lo permite al que lo apuntó o al pagador). Los gastos antiguos se reparten entre los miembros que había al aplicar la migración.
-- **Páginas legales** (`/privacidad`, `/terminos`): son un borrador (edad mínima, conservación de datos, nombre del responsable); revísalas con un abogado.
+- **Páginas legales** (`/privacidad`, `/terminos`): son un borrador (edad mínima, conservación de datos, nombre del responsable); revísalas con un abogado. Con las compras en la app, Apple exige enlazarlas desde la pantalla de planes (ya está) y desde los metadatos de la tienda; los términos deben cubrir la renovación automática y la cancelación desde la tienda.
+- **Pase de 30 días en la tienda**: si alguien compra otro pase con uno vigente, hoy no se suman los días: queda la fecha más lejana, igual que en la web. La app solo lo ofrece a quien está en Gratis, así que casi nunca pasará. Si prefieres sumar 30 días, se cambia en `activarPase` (`src/lib/revenuecat/eventos.ts`).
+- **Pago web en iOS para EE. UU.** (`EXPO_PUBLIC_CHECKOUT_WEB_EEUU`): ahorra la comisión de Apple a quien tiene cuenta del App Store de EE. UU. La comisión que Apple podrá cobrar por esos enlaces sigue en los tribunales; decide si lo activas. En Android exigiría el programa de ofertas externas de Google y no está hecho.
+- **Precios por país en las tiendas**: Apple y Google convierten los US$6.99, 49.99 y 4.99 a cada moneda. Revisa en sus paneles los precios de RD y LatAm (la app muestra siempre el precio de la tienda del cliente).
 
 ## 🧹 Deuda técnica conocida
+
+- **Webhook de RevenueCat**: usa el contenido de cada evento. RevenueCat recomienda además pedir `GET /subscribers` tras cada evento (haría falta la clave secreta `sk_…`). Hoy, si un evento se pierde tras sus 5 reintentos, «Restaurar compras» no lo recupera en el servidor salvo que haya transferencia de cuenta; el siguiente evento de renovación lo corrige. Mejora posible: `POST /api/revenuecat/sync`, que lea el cliente de RevenueCat y reescriba la fila.
+- **Pase de 30 días en RevenueCat**: no va adjunto al entitlement `pro`, así que el panel de RevenueCat no lo muestra como Pro. Solo cuenta el plan del servidor. Si algún día la app necesita verlo en `customerInfo`, el webhook podría concederlo con `grant_entitlement` de la API v2.
+- **MRR de la tienda**: el admin lo cuenta a precio de lista, sin restar el 15 % de la tienda ni los impuestos.
 
 - Quitar los alias `TEMPORAL` de colores de `globals.css` cuando ninguna pantalla los use (spec §2.2).
 - Probar en dispositivo (no había emulador): la intro móvil, los hápticos, el teclado sobre las hojas en Android y el modo en vivo en segundo plano.
 - Revisar en un Android de gama baja la intro y el mapa.
 - `saldos.ts` está duplicado en web (`src/lib/grupo/`) y móvil (`mobile/src/components/group/`): hay que mantenerlos iguales. `useGastosGrupo` podría fundirse en `useGroup`.
-- La numeración de migraciones en `scripts/verificar-servicios.mjs` («Migración 8 · gastos») supone que las ramas de cobro con Creem y de compras integradas añaden la 6 y la 7: renumera al unir las ramas.
 - `docs/DISENO.md` §7.4 habla de «dasharray» para el trazo del mapa; la técnica final es una geometría que crece.
 - En `next dev`, mientras el servidor recompila, la consola puede mostrar un «SyntaxError: Invalid or unexpected token» de un hot-update; no ocurre en producción (verificado con `next build` + `next start`).

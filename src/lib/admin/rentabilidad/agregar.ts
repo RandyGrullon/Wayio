@@ -89,7 +89,7 @@ export type SubRentabilidad = Pick<
   | 'status'
   | 'stripe_subscription_id'
   | 'current_period_end'
-> & { source?: string | null }
+> & { source?: string | null; store_environment?: string | null }
 
 export interface FilaContador {
   user_id: string
@@ -494,7 +494,12 @@ function clasificarSuscripciones(
       if (vigente) concedidos += 1
       continue
     }
-    if (!s.stripe_subscription_id) {
+    // Compras de la app (App Store / Google Play): las de sandbox son
+    // pruebas; las suscripciones reales cuentan como las de Stripe.
+    const deTienda = s.source === 'app_store' || s.source === 'play_store'
+    if (deTienda && s.store_environment === 'SANDBOX') continue
+    const recurrenteDeTienda = deTienda && s.plan_id !== 'pro_por_viaje'
+    if (!s.stripe_subscription_id && !recurrenteDeTienda) {
       if (s.plan_id === 'pro_por_viaje' && vigente) pasesVigentes += 1
       continue
     }

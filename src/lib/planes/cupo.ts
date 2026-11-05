@@ -9,9 +9,8 @@ import {
 } from '@/constants/planes'
 import { diaRD } from '@/lib/admin/horaRD'
 import { modoLocalSinCuentas, type Llamante } from '@/lib/ai/routeKit'
-import { tierEfectivo } from '@/lib/stripe/entitlements'
+import { tierEfectivo, type FilaPlan } from '@/lib/stripe/entitlements'
 import { createAdminClientSafe } from '@/lib/supabase/admin'
-import type { SubscriptionRow } from '@/types/database'
 import type { PlanTier } from '@/types/subscription'
 
 /**
@@ -137,19 +136,16 @@ export async function leerTier(userId: string): Promise<PlanTier | null> {
     return null
   }
   try {
+    // '*': incluye `source` (planes de la tienda) sin fallar si falta
+    // alguna migración.
     const { data, error } = await admin
       .from('subscriptions')
-      .select('tier, status, stripe_subscription_id, current_period_end')
+      .select('*')
       .eq('user_id', userId)
       .abortSignal(AbortSignal.timeout(CONSULTA_TIMEOUT_MS))
       .maybeSingle()
     if (error) throw new Error(`subscriptions: ${error.message}`)
-    const tier = tierEfectivo(
-      (data as Pick<
-        SubscriptionRow,
-        'tier' | 'status' | 'stripe_subscription_id' | 'current_period_end'
-      > | null) ?? null
-    )
+    const tier = tierEfectivo((data as FilaPlan | null) ?? null)
     return Object.prototype.hasOwnProperty.call(RANGO, tier) ? tier : 'free'
   } catch (err) {
     avisar('no se pudo leer el plan', err)

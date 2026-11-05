@@ -10,6 +10,7 @@ import type { ReactNode } from 'react'
 import { Linking } from 'react-native'
 import type { EmailOtpType, Session, User } from '@supabase/supabase-js'
 import { config } from '../config'
+import { sincronizarUsuarioTienda } from '../lib/compras/tienda'
 import { getSupabase } from '../lib/supabase/client'
 import { limpiarModoEnVivo } from '../tasks/limpiar'
 import type { PlanTier } from '../types/planning'
@@ -80,8 +81,8 @@ interface AuthContextValue {
   ) => Promise<AuthActionResult>
   /** "Olvidé mi contraseña": respuesta siempre genérica (no revela si existe). */
   resetPassword: (email: string) => Promise<AuthActionResult>
-  /** Vuelve a leer el plan (p. ej. al volver del pago). */
-  refreshTier: () => Promise<void>
+  /** Vuelve a leer el plan (p. ej. al volver del pago) y lo devuelve. */
+  refreshTier: () => Promise<PlanTier>
   signOut: () => Promise<void>
 }
 
@@ -172,14 +173,20 @@ interface FilaSuscripcion {
   status: unknown
   stripe_subscription_id: unknown
   current_period_end: unknown
+  source?: unknown
 }
+
+/** Margen tras el fin del periodo en las compras de la tienda (3 h). */
+const GRACIA_TIENDA_MS = 3 * 3_600_000
 
 /**
  * Misma regla que la RPC my_effective_tier (y `tierEfectivo` de la web):
- * - suscripción recurrente (con stripe_subscription_id, que guarda el id del
- *   proveedor de cobro: Creem o Stripe): manda el estado del proveedor;
- *   active, trialing y past_due (gracia mientras reintenta el cobro) dan
+ * - active, trialing y past_due (gracia mientras se reintenta el cobro) dan
  *   acceso;
+ * - compra de la tienda (source app_store / play_store): hasta
+ *   current_period_end + 3 h (lo escribe el webhook de RevenueCat);
+ * - suscripción recurrente web (con stripe_subscription_id, que guarda el id
+ *   del proveedor de cobro: Creem o Stripe): manda el proveedor;
  * - pago único («Pase Pro de 30 días») o concedido a mano: además caduca al
  *   llegar current_period_end.
  */
@@ -190,6 +197,15 @@ function tierDeFila(fila: FilaSuscripcion | null): PlanTier {
     fila.status === 'trialing' ||
     fila.status === 'past_due'
   if (!conAcceso) return 'free'
+  if (fila.source === 'app_store' || fila.source === 'play_store') {
+    const fin =
+      typeof fila.current_period_end === 'string'
+        ? Date.parse(fila.current_period_end)
+        : Number.NaN
+    return Number.isFinite(fin) && fin + GRACIA_TIENDA_MS > Date.now()
+      ? fila.tier
+      : 'free'
+  }
   if (fila.stripe_subscription_id) return fila.tier
   if (typeof fila.current_period_end !== 'string') return fila.tier
   const fin = Date.parse(fila.current_period_end)
@@ -214,7 +230,7 @@ async function leerTier(uid: string): Promise<PlanTier | null> {
   try {
     const { data, error } = await supabase
       .from('subscriptions')
-      .select('tier, status, stripe_subscription_id, current_period_end')
+      .select('*')
       .eq('user_id', uid)
       .maybeSingle()
     if (error) return null
@@ -243,25 +259,29 @@ export function AuthProvider({
   const lecturaTier = useRef(0)
 
   const loadTier = useCallback(
-    async (uid: string | null) => {
+    async (uid: string | null): Promise<PlanTier> => {
       const lectura = ++lecturaTier.current
       if (!uid || !configured) {
         tierConocido.current = null
         setTier('free')
-        return
+        return 'free'
       }
       const leido = await leerTier(uid)
-      if (lectura !== lecturaTier.current) return
+      if (lectura !== lecturaTier.current) {
+        return leido ?? tierConocido.current?.tier ?? 'free'
+      }
       if (leido !== null) {
         tierConocido.current = { uid, tier: leido }
         setTier(leido)
-        return
+        return leido
       }
       // No se pudo leer (sin red…): se conserva el último plan conocido de
       // ESTE usuario para no quitarle Pro a quien paga por un fallo pasajero;
       // si no hay ninguno, Gratis. El servidor decide igual en cada llamada.
       const previo = tierConocido.current
-      setTier(previo && previo.uid === uid ? previo.tier : 'free')
+      const respaldo = previo && previo.uid === uid ? previo.tier : 'free'
+      setTier(respaldo)
+      return respaldo
     },
     [configured]
   )
@@ -430,6 +450,14 @@ export function AuthProvider({
     () => loadTier(user?.id ?? null),
     [loadTier, user]
   )
+
+  // Compras integradas: RevenueCat usa el id de la cuenta de Wayio (el
+  // webhook del servidor le da Pro a esa cuenta). No hace nada si la build
+  // no tiene compras en la tienda.
+  const uid = user?.id ?? null
+  useEffect(() => {
+    void sincronizarUsuarioTienda(uid)
+  }, [uid])
 
   const signOut = useCallback(async () => {
     setAuthLinkError(null)

@@ -10,7 +10,8 @@
 --
 -- Incluye:
 --   1. Tablas de la app (perfiles, viajes, grupos, suscripciones, referidos,
---      reservas, estados de actividad, cupos mensuales, caché)
+--      reservas, estados de actividad, cupos mensuales, caché, eventos de
+--      Stripe y de RevenueCat)
 --   2. Tablas del panel de administración (logs de IA, feature flags,
 --      anuncios, tokens de push, auditoría, settings públicos y privados)
 --   3. Funciones y RPC (membresía, unirse por link, vista pública, referidos,
@@ -309,14 +310,24 @@ create table if not exists public.subscriptions (
   status                 text not null default 'active',
   current_period_end     timestamptz,
   cancel_at_period_end   boolean not null default false,
-  -- 'system' = free del alta, 'stripe'/'creem' = pagado con ese proveedor,
-  -- 'admin' = concedido a mano
+  -- 'system' = free del alta, 'stripe'/'creem' = pagado en la web con ese
+  -- proveedor, 'admin' = concedido a mano, 'app_store' / 'play_store' =
+  -- compra integrada de la app (RevenueCat)
   source                 text not null default 'system',
+  -- Compras integradas: producto, transacción ORIGINAL (la misma en cada
+  -- renovación) y entorno de la tienda (SANDBOX = pruebas, no es dinero real)
+  store_product_id       text,
+  store_transaction_id   text,
+  store_environment      text,
   created_at             timestamptz not null default now()
 );
 
 alter table public.subscriptions
   add column if not exists source text not null default 'system';
+alter table public.subscriptions
+  add column if not exists store_product_id text,
+  add column if not exists store_transaction_id text,
+  add column if not exists store_environment text;
 
 -- Estados: el webhook mapea a los 5 clásicos, pero se admiten también los
 -- nuevos de Stripe para que una escritura directa no falle en silencio.
@@ -326,30 +337,40 @@ alter table public.subscriptions add constraint subscriptions_status_check
     'active', 'canceled', 'past_due', 'trialing', 'incomplete',
     'incomplete_expired', 'unpaid', 'paused'
   ));
--- El CHECK se reescribe SUMANDO a los valores que ya admita (p. ej. los de
--- otra migración del mismo día, como los orígenes de las tiendas de apps), no
--- sustituyéndolos: así el orden en que se apliquen las migraciones da igual.
+-- source: CHECK ADITIVO. Parte de la lista base (cobro web con Stripe o Creem,
+-- concedido a mano y compras integradas), conserva los valores que ya admita
+-- el CHECK actual (otra migración puede haber añadido alguno) y los suma. Así
+-- el orden en que se apliquen las migraciones da igual y se puede volver a
+-- correr sobre una base con datos sin que falle por filas de un origen nuevo.
 do $$
 declare
-  valores text[];
+  permitidos text[] := array['system', 'stripe', 'creem', 'admin', 'app_store', 'play_store'];
+  definicion text;
 begin
-  select coalesce(array_agg(m[1]), '{}')
-    into valores
-    from pg_constraint c,
-         regexp_matches(pg_get_constraintdef(c.oid), '''([^'']+)''', 'g') as m
-   where c.conname = 'subscriptions_source_check'
-     and c.conrelid = 'public.subscriptions'::regclass;
-  valores := array(
-    select distinct v
-      from unnest(valores || array['system', 'stripe', 'creem', 'admin']) as v
-     order by v
+  select pg_get_constraintdef(c.oid)
+    into definicion
+    from pg_constraint c
+   where c.conrelid = 'public.subscriptions'::regclass
+     and c.conname = 'subscriptions_source_check';
+  if definicion is not null then
+    permitidos := permitidos || array(
+      select btrim(trozo, ' {}"')
+        from regexp_matches(definicion, '''([^'']+)''', 'g') as m,
+             unnest(string_to_array(m[1], ',')) as trozo
+    );
+  end if;
+  permitidos := array(
+    select distinct v from unnest(permitidos) as v where v <> '' order by v
   );
   alter table public.subscriptions drop constraint if exists subscriptions_source_check;
   execute format(
     'alter table public.subscriptions add constraint subscriptions_source_check check (source in (%s))',
-    (select string_agg(quote_literal(v), ', ') from unnest(valores) as v)
+    (select string_agg(quote_literal(v), ', ') from unnest(permitidos) as v)
   );
 end $$;
+alter table public.subscriptions drop constraint if exists subscriptions_store_environment_check;
+alter table public.subscriptions add constraint subscriptions_store_environment_check
+  check (store_environment is null or store_environment in ('SANDBOX', 'PRODUCTION'));
 
 -- Filas del webhook de Creem escritas sin source (antes de admitir 'creem');
 -- va primero para que el backfill de Stripe de abajo no se las quede
@@ -372,7 +393,7 @@ update public.subscriptions
    and stripe_customer_id is null;
 
 comment on column public.subscriptions.source is
-  'Origen del plan: system (alta gratuita), stripe o creem (pagado con ese proveedor), admin (concedido a mano).';
+  'Origen del plan: system (alta gratuita), stripe o creem (pagado en la web con ese proveedor), admin (concedido a mano), app_store o play_store (compra integrada de la app vía RevenueCat).';
 comment on column public.subscriptions.stripe_customer_id is
   'Id del cliente en el proveedor de cobro de source (Stripe cus_…, Creem cust_…).';
 comment on column public.subscriptions.stripe_subscription_id is
@@ -432,6 +453,16 @@ create table if not exists public.payment_events (
   type         text not null,
   processed_at timestamptz not null default now(),
   primary key (provider, id)
+);
+
+-- Idempotencia del webhook de RevenueCat (compras integradas de la app):
+-- cada event.id se procesa una vez
+create table if not exists public.revenuecat_events (
+  id           text primary key,
+  type         text not null,
+  app_user_id  text,
+  environment  text,
+  processed_at timestamptz not null default now()
 );
 
 -- Uso mensual de las acciones de IA con cupo (plan Gratis), por usuario y mes
@@ -564,6 +595,7 @@ create index if not exists idx_subs_status           on public.subscriptions (st
 create index if not exists idx_subs_tier             on public.subscriptions (tier);
 create index if not exists idx_subs_stripe_subscription on public.subscriptions (stripe_subscription_id);
 create index if not exists idx_subs_stripe_customer  on public.subscriptions (stripe_customer_id);
+create index if not exists idx_subs_store_transaction on public.subscriptions (store_transaction_id);
 create index if not exists idx_redemptions_referrer  on public.referral_redemptions (referrer_id);
 create index if not exists idx_reservations_user     on public.reservations (user_id);
 create index if not exists idx_reservations_trip     on public.reservations (trip_id);
@@ -903,10 +935,13 @@ begin
 end;
 $$;
 
--- RPC my_effective_tier: plan efectivo del usuario actual. Las suscripciones
--- recurrentes confían en el estado de Stripe (past_due conserva el acceso
--- mientras Stripe reintenta el cobro); los planes de pago único y los
--- concedidos con fecha caducan al llegar current_period_end.
+-- RPC my_effective_tier: plan efectivo del usuario actual.
+-- - Compras de la tienda (app_store, play_store): acceso hasta
+--   current_period_end + 3 h (demora de la renovación y reintentos del
+--   webhook de RevenueCat); el fin lo escribe siempre el webhook.
+-- - Stripe recurrente: manda el estado de Stripe (past_due conserva el acceso
+--   mientras Stripe reintenta el cobro).
+-- - Pago único o concedido con fecha: caduca al llegar current_period_end.
 create or replace function public.my_effective_tier()
 returns text
 language sql
@@ -916,10 +951,18 @@ stable
 as $$
   select coalesce((
     select case
-             when s.status in ('active', 'trialing', 'past_due')
-              and (s.stripe_subscription_id is not null
-                   or s.current_period_end is null
-                   or s.current_period_end > now())
+             when s.status not in ('active', 'trialing', 'past_due')
+             then 'free'
+             when s.source in ('app_store', 'play_store')
+             then case
+                    when s.current_period_end is not null
+                     and s.current_period_end + interval '3 hours' > now()
+                    then s.tier
+                    else 'free'
+                  end
+             when s.stripe_subscription_id is not null
+               or s.current_period_end is null
+               or s.current_period_end > now()
              then s.tier
              else 'free'
            end
@@ -1066,9 +1109,11 @@ revoke all on table public.reservations from anon;
 revoke insert, update, delete on table public.reservations from authenticated;
 grant select on table public.reservations to authenticated;
 
--- stripe_events, payment_events y admin_private_settings: solo service role
+-- stripe_events, payment_events, revenuecat_events y admin_private_settings:
+-- solo service role
 revoke all on table public.stripe_events from anon, authenticated;
 revoke all on table public.payment_events from anon, authenticated;
+revoke all on table public.revenuecat_events from anon, authenticated;
 revoke all on table public.admin_private_settings from anon, authenticated;
 
 -- usage_counters: el usuario solo LEE sus filas (las escriben las RPC de
@@ -1154,6 +1199,7 @@ alter table public.referral_redemptions enable row level security;
 alter table public.reservations         enable row level security;
 alter table public.stripe_events        enable row level security;
 alter table public.payment_events       enable row level security;
+alter table public.revenuecat_events    enable row level security;
 alter table public.ai_logs              enable row level security;
 alter table public.feature_flags        enable row level security;
 alter table public.announcements        enable row level security;
@@ -1356,6 +1402,7 @@ create policy "usage_counters_select_own" on public.usage_counters
   for select using (user_id = (select auth.uid()));
 
 -- ai_logs, admin_audit_log, trip_cache, stripe_events, payment_events,
+-- revenuecat_events,
 -- admin_private_settings: SIN políticas → solo accesibles vía service role (RLS habilitado + sin
 -- policy = denegado)
 

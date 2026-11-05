@@ -6,17 +6,18 @@
 
 ## Orden recomendado
 
-| #   | Servicio                                         | Para qué                                                                                  | ¿Obligatorio?                 | Coste                   |
-| --- | ------------------------------------------------ | ----------------------------------------------------------------------------------------- | ----------------------------- | ----------------------- |
-| 1   | **Anthropic (Claude)**                           | Generar itinerarios, interpretar la descripción libre, ajustes por chat, reagendar, video | Sí, para la IA real           | Pago por uso            |
-| 2   | **Supabase**                                     | Login, guardar/compartir viajes, grupos, panel admin, caché                               | Sí, para cuentas              | Plan Free               |
-| 3   | **Upstash Redis**                                | Límites de uso globales (protege tu factura de IA)                                        | Muy recomendado en producción | Plan Free               |
-| 4   | **Geoapify**                                     | Ubicar lugares y rutas por calles en el mapa con uso comercial                            | Muy recomendado si cobras     | Plan Free (o US$59/mes) |
-| 5   | OpenWeather                                      | Pronóstico real si el viaje empieza en ≤ 5 días                                           | Opcional                      | Gratis                  |
-| 6   | Precios, afiliados y worker de video (sección 5) | Precios reales de vuelos y hoteles, comisión por reservas y viajes desde video            | Opcional                      | Gratis (worker ~US$5)   |
-| 7   | Creem (o Stripe como alternativa)                | Suscripciones Pro y Pase Pro de 30 días                                                   | Solo si vas a cobrar          | 3,9 % + US$0,40 / venta |
-| 8   | PostHog / Sentry                                 | Analítica / errores                                                                       | Opcional                      | Planes gratis           |
-| 9   | Mapbox + Expo/EAS                                | App móvil (mapa y builds)                                                                 | Solo móvil                    | Free / pago de tiendas  |
+| #   | Servicio                                         | Para qué                                                                                  | ¿Obligatorio?                 | Coste                                                   |
+| --- | ------------------------------------------------ | ----------------------------------------------------------------------------------------- | ----------------------------- | ------------------------------------------------------- |
+| 1   | **Anthropic (Claude)**                           | Generar itinerarios, interpretar la descripción libre, ajustes por chat, reagendar, video | Sí, para la IA real           | Pago por uso                                            |
+| 2   | **Supabase**                                     | Login, guardar/compartir viajes, grupos, panel admin, caché                               | Sí, para cuentas              | Plan Free                                               |
+| 3   | **Upstash Redis**                                | Límites de uso globales (protege tu factura de IA)                                        | Muy recomendado en producción | Plan Free                                               |
+| 4   | **Geoapify**                                     | Ubicar lugares y rutas por calles en el mapa con uso comercial                            | Muy recomendado si cobras     | Plan Free (o US$59/mes)                                 |
+| 5   | OpenWeather                                      | Pronóstico real si el viaje empieza en ≤ 5 días                                           | Opcional                      | Gratis                                                  |
+| 6   | Precios, afiliados y worker de video (sección 5) | Precios reales de vuelos y hoteles, comisión por reservas y viajes desde video            | Opcional                      | Gratis (worker ~US$5)                                   |
+| 7   | Creem (o Stripe como alternativa)                | Suscripciones Pro y Pase Pro de 30 días                                                   | Solo si vas a cobrar          | 3,9 % + US$0,40 / venta                                 |
+| 7b  | RevenueCat + App Store / Google Play             | Vender Pro dentro de la app móvil (compras integradas)                                    | Solo si cobras en la app      | 15 % de la tienda; RevenueCat gratis hasta US$2.500/mes |
+| 8   | PostHog / Sentry                                 | Analítica / errores                                                                       | Opcional                      | Planes gratis                                           |
+| 9   | Mapbox + Expo/EAS                                | App móvil (mapa y builds)                                                                 | Solo móvil                    | Free / pago de tiendas                                  |
 
 ---
 
@@ -250,6 +251,91 @@ Developers → Webhooks → endpoint `https://<tu-dominio>/api/creem/webhook`. E
 4. Settings → Billing → Customer portal: activa cancelar, cambiar método de pago y cambiar de plan; enlace de retorno `https://<tu-dominio>/cuenta`; **Save**.
 5. El «depósito de reserva» queda **desactivado** (`NEXT_PUBLIC_RESERVAS_ENABLED=false`): hoy no hay un proveedor real de reservas detrás y cobrar un depósito sin reservar nada es un riesgo legal. Actívalo solo cuando lo haya. **Solo existe con Stripe**: un MoR como Creem vende software, no depósitos de viajes de terceros, así que con `PAYMENTS_PROVIDER=creem` el checkout de reservas responde 403.
 
+## 6b. Compras dentro de la app (RevenueCat, App Store y Google Play)
+
+> Investigado en la documentación oficial el **2026-11-05** (fuentes al final de esta sección). Si lo retomas meses después, vuelve a mirar las reglas: cambian a menudo.
+
+**Por qué.** Fuera de EE. UU., Apple (App Review Guidelines 3.1.1) y Google Play (política de pagos) obligan a vender las suscripciones digitales con sus compras integradas; la app no puede abrir el pago web ni enlazarlo. Wayio Pro no entra en ninguna excepción de la 3.1.3 (no es una app «Reader» ni un servicio que se consuma fuera de la app). La 3.1.3(b) sí permite que quien pagó Pro en la web lo use en la app, siempre que la app también lo venda con compras integradas. Comisión: **15 %** en Apple con el Small Business Program (ingresos ≤ US$1 M al año) y **15 %** en las suscripciones de Google Play. RevenueCat es gratis hasta US$2.500 de ingresos al mes; por encima cobra el 1 % de **todo** lo facturado.
+
+**Cómo está hecho en el código.**
+
+- **Basta con poner las claves**: en la app, la clave pública de RevenueCat de cada plataforma; en el servidor, `REVENUECAT_WEBHOOK_AUTH`. Lo demás tiene valores por defecto y solo se toca si usas otros identificadores.
+- App (`mobile/src/lib/compras/tienda.ts` y `PaywallScreen.tsx`): con la clave de la plataforma (`EXPO_PUBLIC_REVENUECAT_IOS_KEY` o `_ANDROID_KEY`), los planes y precios salen de la oferta de RevenueCat y se pagan con la hoja de la tienda; `EXPO_PUBLIC_COMPRAS_TIENDA=false` lo apaga. Hay botón «Restaurar compras», aviso de renovación y enlaces a Términos y Privacidad (los exige Apple). Los planes se reconocen por el tipo de paquete ($rc_monthly, $rc_annual) y de producto (no renovable = pase), no por sus ids. El app_user_id de RevenueCat es el id de Supabase de la cuenta, así que comprar exige sesión. Sin clave, la app sigue con el pago web como antes.
+- Servidor: `POST /api/revenuecat/webhook` comprueba la cabecera `Authorization` (`REVENUECAT_WEBHOOK_AUTH`), procesa cada `event.id` una sola vez (tabla `revenuecat_events`) y escribe en `subscriptions` con `source` `app_store` o `play_store`. El plan efectivo (RPC `my_effective_tier`, `/api/cupo` y el resto del servidor) da acceso hasta `current_period_end` más 3 horas, para cubrir la demora de las renovaciones y los reintentos del webhook (5 reintentos en unos 80 minutos).
+- El **Pase Pro de 30 días** no se renueva. En el App Store es una **suscripción no renovable** y en Google Play un **producto único consumible**: se puede volver a comprar para otro viaje. Un «no consumible» solo se podría comprar una vez en la vida. El servidor le da 30 días desde la compra al recibir `NON_RENEWING_PURCHASE`. **No lo adjuntes al entitlement `pro`**: RevenueCat lo daría para siempre.
+- Prueba local del webhook sin Supabase ni RevenueCat: `npm run probar:revenuecat`. Levanta un Supabase simulado y `next dev`, y comprueba 37 casos: compra, renovación, orden, cancelación, caducidad, reembolso, pase, transferencia, ids propios, reintentos y `/api/cupo`.
+
+**Identificadores recomendados.** Con estos no hay que configurar nada. Si usas otros, ponlos en `REVENUECAT_PRODUCTOS_MENSUAL`, `_ANUAL` y `_PASE` (listas separadas por comas) o déjalos: el servidor deduce el plan del evento y lo avisa en el registro. El entitlement (`REVENUECAT_ENTITLEMENT` y `EXPO_PUBLIC_REVENUECAT_ENTITLEMENT`), la oferta (`EXPO_PUBLIC_REVENUECAT_OFERTA`) y el paquete del pase (`EXPO_PUBLIC_REVENUECAT_PAQUETE_PASE`) también se pueden cambiar.
+
+| Plan                 | App Store                                           | Google Play                                                     | Paquete en la oferta de RevenueCat |
+| -------------------- | --------------------------------------------------- | --------------------------------------------------------------- | ---------------------------------- |
+| Pro mensual 6.99     | `wayio_pro_mensual` (renovable, 1 mes)              | suscripción `wayio_pro`, plan base `mensual` (renovable, 1 mes) | `$rc_monthly`                      |
+| Pro anual 49.99      | `wayio_pro_anual` (renovable, 1 año)                | suscripción `wayio_pro`, plan base `anual` (renovable, 1 año)   | `$rc_annual`                       |
+| Pase de 30 días 4.99 | `wayio_pase_30_dias` (suscripción **no renovable**) | producto único `wayio_pase_30_dias` (**consumible**)            | a medida: `pase_30_dias`           |
+
+### App Store Connect (Apple)
+
+1. Programa de desarrolladores de Apple (99 USD/año) y la app `com.wayio.app` creada en App Store Connect.
+2. **Business → Paid Apps Agreement**, firmado por el titular de la cuenta, con datos **fiscales y bancarios**. Sin él no funcionan ni las compras de prueba (sandbox).
+3. Inscríbete en el **App Store Small Business Program** para pagar el 15 % en vez del 30 %.
+4. **Monetization → Subscriptions**: crea el grupo «Wayio Pro» con `wayio_pro_mensual` (1 mes, 6.99) y `wayio_pro_anual` (1 año, 49.99). Ponles nombre, descripción y una captura de la pantalla de planes para la revisión.
+5. **Monetization → In-App Purchases**: crea `wayio_pase_30_dias` como **Non-Renewing Subscription** (4.99).
+6. **Users and Access → Integrations → In-App Purchase**: genera una **In-App Purchase Key** (.p8) y apunta el **Issuer ID**. Súbelos a RevenueCat; con el SDK actual son obligatorios, sin ellos las compras no se registran. El «App-Specific Shared Secret» ya es legado.
+7. **App Information → App Store Server Notifications**: versión 2, con la URL que te da RevenueCat, en Production y en Sandbox. El botón «Apply in App Store Connect» de RevenueCat lo hace solo.
+8. **Users and Access → Sandbox Testers**: crea testers de prueba. En el iPhone (iOS 18+), entra en Ajustes → Desarrollador → Sandbox Apple Account. En sandbox, 1 mes dura 5 minutos y 1 año dura 1 hora.
+9. Metadatos: pon el enlace a los **Términos de uso** (`https://<tu-dominio>/terminos`, o la EULA estándar de Apple) en la descripción o en el campo EULA, y la **Política de privacidad** (`/privacidad`).
+10. Las primeras compras integradas se envían a revisión **junto con una versión nueva de la app**. En las notas para la revisión, da una cuenta de prueba de Wayio: comprar exige sesión. Los revisores compran en sandbox y el webhook acepta esos eventos, que el admin marca como «App Store · prueba» y no suman al MRR.
+11. En la tienda de **EE. UU.**, Apple ya permite además un botón hacia el pago web. En la app se activa con `EXPO_PUBLIC_CHECKOUT_WEB_EEUU=true` (solo iOS). Fuera de EE. UU. está prohibido sin un permiso especial de la 3.1.1(a), que hoy existe para la UE, Japón y Brasil.
+
+### Google Play Console
+
+1. Cuenta de desarrollador (25 USD) y **perfil de pagos** de comerciante vinculado.
+2. **Cuenta personal creada después del 13-nov-2023**: antes de pedir acceso a producción necesitas una **prueba cerrada con al menos 12 testers inscritos de forma continua durante 14 días**. Si alguien sale y vuelve a entrar, su cuenta de 14 días empieza de cero. Empieza pronto: es lo que más tarda.
+3. Sube un primer AAB (`com.wayio.app`) a una pista de prueba: sin él no se pueden crear productos.
+4. **Monetize with Play → Products → Subscriptions**: suscripción `wayio_pro` con los planes base `mensual` (renovación automática, 1 mes, 6.99) y `anual` (1 año, 49.99). Los ids de los planes base no se pueden reutilizar.
+5. **Monetize with Play → Products → One-time products**: `wayio_pase_30_dias` (4.99). En RevenueCat déjalo como **consumible** (el valor por defecto).
+6. Credenciales para RevenueCat. Tardan **hasta 36 h** en funcionar:
+   - en Google Cloud, activa «Google Play Android Developer API» y «Google Play Developer Reporting API»;
+   - crea una cuenta de servicio con los roles **Pub/Sub Editor** y **Monitoring Viewer**, y genera su clave JSON;
+   - en Play Console → Users and permissions, invítala con permiso para ver la información de la app y los informes masivos, ver los datos financieros, gestionar pedidos y suscripciones, y gestionar la presencia en la tienda;
+   - sube el JSON a RevenueCat.
+7. **Notificaciones en tiempo real (RTDN)**: en RevenueCat pulsa «Connect to Google», que crea el topic de Pub/Sub. Pega su id en **Monetize with Play → Monetization setup**, marca suscripciones, compras anuladas y todos los productos únicos, y usa «Send test notification».
+8. **License testing**: añade los correos de los testers (tarjetas de prueba; 1 mes dura 5 minutos y como mucho se renueva 6 veces).
+9. Requisito técnico: las apps nuevas y las actualizaciones necesitan **Play Billing Library 8 o superior** desde el 1-nov-2026. `react-native-purchases` 10.16 trae la 8.3.
+10. En EE. UU., el EEE y el Reino Unido, Google permite desde el 30-jun-2026 ofrecer otro pago junto a Play Billing. Exige inscribirse en su programa y pagar su tarifa, así que la app **no** lo ofrece en Android.
+
+### RevenueCat
+
+1. Crea el proyecto «Wayio» en app.revenuecat.com con dos apps: App Store (`com.wayio.app`, con la clave .p8 y el Issuer ID) y Play Store (`com.wayio.app`, con el JSON de la cuenta de servicio).
+2. **Product catalog → Products**: importa los productos de las dos tiendas. En Google las suscripciones aparecen como `wayio_pro:mensual` y `wayio_pro:anual`.
+3. **Entitlements**: crea `pro` y adjúntale **solo** las suscripciones (`wayio_pro_mensual`, `wayio_pro_anual`, `wayio_pro:mensual`, `wayio_pro:anual`). El pase **no** se adjunta.
+4. **Offerings**: crea `default`, márcala como actual («current») y añade los paquetes `$rc_monthly` (los dos mensuales), `$rc_annual` (los dos anuales) y uno a medida, `pase_30_dias` (los dos pases).
+5. **Project settings → API keys**: copia la clave pública de cada app en `mobile/.env` (`EXPO_PUBLIC_REVENUECAT_IOS_KEY` y `EXPO_PUBLIC_REVENUECAT_ANDROID_KEY`). Las claves secretas (`sk_…`) nunca van en la app.
+6. **Integrations → Webhooks**: URL `https://<tu-dominio>/api/revenuecat/webhook`, con «Authorization header value» igual a `REVENUECAT_WEBHOOK_AUTH` (con o sin `Bearer `) y eventos de producción y sandbox. Pulsa «Send test event»: debe responder 200.
+7. **Project settings → Restore behavior**: deja «Transfer to new App User ID» (el valor por defecto). El webhook mueve la compra a la cuenta que restaura (evento `TRANSFER`).
+8. «Test Store» de RevenueCat: sirve solo en builds de depuración (en TestFlight y en las pistas de prueba de Play el SDK se cuelga a propósito) y no admite suscripciones no renovables. Además, el webhook ignora sus eventos: prueba con el sandbox de cada tienda.
+
+### App y servidor
+
+- Vercel: `REVENUECAT_WEBHOOK_AUTH` (un secreto largo, `openssl rand -hex 32`) y la migración `supabase/migrations/20261105130000_compras_en_tienda.sql` aplicada. Su CHECK de `source` es aditivo: conserva los valores que ya existan (por ejemplo, `creem`) y suma los de la tienda. `npm run verificar` lo comprueba («Migración 7» y «REVENUECAT_WEBHOOK_AUTH»).
+- `mobile/.env`: las dos claves públicas, y nada más. `EXPO_PUBLIC_CHECKOUT_WEB_EEUU=true` solo si quieres el pago web en EE. UU. (iOS).
+- `react-native-purchases` va fijado en la **10.x**: la 11.0 pide a las apps Expo quedarse en la 10.x mientras no salga su pod en CocoaPods. Es código nativo: haz un _development build_ nuevo (`npx expo run:ios` o `npx expo run:android`, o `eas build --profile development`). En Expo Go el SDK entra en «Preview API Mode»: se ve la pantalla, pero no se compra de verdad.
+- Si compilas iOS con **Xcode 27**, RevenueCat avisa de que Expo SDK ≤ 56 necesita un ajuste `post_install` en el Podfile. Revisa qué Xcode usa la imagen de EAS antes de la primera build.
+- Prueba en sandbox, de punta a punta:
+  1. compra mensual: en Supabase, `subscriptions` pasa a `source = app_store` (o `play_store`), `store_environment = SANDBOX` y `current_period_end` unos minutos después;
+  2. deja que renueve y caduque: la fila vuelve a Gratis tras el último periodo, más 3 h;
+  3. compra el pase: 30 días desde la compra;
+  4. borra la app, vuelve a entrar con la misma cuenta y toca «Restaurar compras»;
+  5. entra con otra cuenta de Wayio en el mismo teléfono y restaura: la compra pasa a esa cuenta.
+
+**Fuentes (consultadas el 2026-11-05):**
+
+- Apple: [App Review Guidelines](https://developer.apple.com/app-store/review/guidelines/) (última actualización: 16-oct-2026) · [Suscripciones](https://developer.apple.com/app-store/subscriptions/) · [Small Business Program](https://developer.apple.com/app-store/small-business-program/) · [Configurar compras integradas](https://developer.apple.com/help/app-store-connect/configure-in-app-purchase-settings/overview-for-configuring-in-app-purchases) · [StoreKit External Purchase](https://developer.apple.com/documentation/storekit/external-purchase).
+- Google Play: [Política de pagos](https://support.google.com/googleplay/android-developer/answer/9858738) · [Comisiones](https://support.google.com/googleplay/android-developer/answer/112622) · [Cambios de facturación (blog, 24-jun-2026)](https://android-developers.googleblog.com/2026/06/play-expanded-billing.html) · [Requisito de prueba para cuentas personales nuevas](https://support.google.com/googleplay/android-developer/answer/14151465) · [Plazos de Play Billing Library](https://developer.android.com/google/play/billing/deprecation-faq) · [Productos únicos](https://developer.android.com/google/play/billing/one-time-products) · [Pruebas](https://developer.android.com/google/play/billing/test).
+- RevenueCat: [Instalación en Expo](https://www.revenuecat.com/docs/getting-started/installation/expo) · [Identificar clientes](https://www.revenuecat.com/docs/customers/identifying-customers) · [Restaurar compras](https://www.revenuecat.com/docs/getting-started/restoring-purchases) · [Comportamiento de restauración](https://www.revenuecat.com/docs/projects/restore-behavior) · [Webhooks](https://www.revenuecat.com/docs/integrations/webhooks) · [Tipos de evento y campos](https://www.revenuecat.com/docs/integrations/webhooks/event-types-and-fields) · [Clave In-App Purchase de Apple](https://www.revenuecat.com/docs/service-credentials/itunesconnect-app-specific-shared-secret/in-app-purchase-key-configuration) · [Credenciales de Play](https://www.revenuecat.com/docs/service-credentials/creating-play-service-credentials) · [Notificaciones de Google](https://www.revenuecat.com/docs/platform-resources/server-notifications/google-server-notifications) · [Test Store](https://www.revenuecat.com/docs/test-and-launch/sandbox/test-store) · [Precios](https://www.revenuecat.com/pricing/) · [Notas de la versión 11.0.0 del SDK](https://github.com/RevenueCat/react-native-purchases/releases/tag/11.0.0).
+- Expo: [Compras integradas](https://docs.expo.dev/guides/in-app-purchases/) (última actualización: 25-sep-2026) · [Development builds](https://docs.expo.dev/develop/development-builds/introduction/) (última actualización: 2-nov-2026).
+- Notas completas de la investigación, con lo no verificado marcado como tal: `investigacion-compras-integradas.md` en la carpeta de notas de la sesión. No está en el repo.
+
 ## 7. Analítica y errores
 
 - PostHog: <https://posthog.com> → Project API Key → `NEXT_PUBLIC_POSTHOG_KEY` y `NEXT_PUBLIC_POSTHOG_HOST` (`https://us.i.posthog.com` o `https://eu.i.posthog.com`). Sin clave no se envía nada.
@@ -268,4 +354,4 @@ EXPO_PUBLIC_MAPBOX_TOKEN=pk....          # account.mapbox.com (token público)
 ```
 
 - **Expo Go ya no abre este proyecto** (Expo Go va por un SDK más nuevo que el 54 del proyecto, y el mapa, la ubicación en segundo plano y los enlaces `wayio://` necesitan código nativo). Haz un _development build_: `cd mobile && npx expo install expo-dev-client expo-system-ui && npx expo run:android` (Android Studio) o `eas build --profile development`.
-- Publicar en tiendas: Apple Developer (99 USD/año) y Google Play (25 USD, pago único). Para vender suscripciones dentro de la app revisa las reglas de pagos in-app de cada tienda.
+- Publicar en tiendas: Apple Developer (99 USD/año) y Google Play (25 USD, pago único). Para vender Pro dentro de la app: sección 6b (RevenueCat, compras integradas y prueba cerrada de Google Play).
