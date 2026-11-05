@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import {
+  CalendarDays,
   Clock,
   ExternalLink,
   Hotel,
@@ -29,6 +30,7 @@ import {
   formatCurrency,
   formatDuracion,
   formatNumero,
+  formatRangoFechas,
 } from '@/lib/utils/formatters'
 import { cn } from '@/lib/utils/cn'
 
@@ -63,6 +65,8 @@ const VACIO_POR_DEFECTO: Record<Pestana, string> = {
 
 const PROVEEDOR_LABEL: Record<SearchResult['provider'], string> = {
   viator: 'Viator',
+  travelpayouts: 'Aviasales',
+  liteapi: 'Alojamiento',
 }
 
 async function buscar(url: string): Promise<Seccion> {
@@ -158,12 +162,15 @@ export function RealSearch({
     (p: Pestana): string => {
       const q = (o: Record<string, string>) => new URLSearchParams(o).toString()
       const gente = String(Math.min(20, Math.max(1, Math.round(personas || 1))))
+      // Hoteles y vuelos cotizan en USD o EUR (el servidor pasa DOP a USD).
+      const monedaPrecios = moneda === 'EUR' ? 'EUR' : 'USD'
       if (p === 'hoteles') {
         return `/api/hotels?${q({
           destination: destino,
           checkIn: fechaInicio,
           checkOut: fechaFin,
           guests: gente,
+          currency: monedaPrecios,
         })}`
       }
       if (p === 'actividades') {
@@ -181,6 +188,7 @@ export function RealSearch({
         date: fechaInicio,
         returnDate: fechaFin,
         adults: gente,
+        currency: monedaPrecios,
       })}`
     },
     [destino, fechaInicio, fechaFin, personas, moneda, iataOrigen, iataDestino]
@@ -450,80 +458,107 @@ function Resultados({
   }
 
   return (
-    <ul className="grid gap-3 sm:grid-cols-2">
-      {data.results.map((r) => (
-        <li key={r.id}>
-          <Card className="flex h-full flex-col gap-3 p-4 md:p-5">
-            <div className="min-w-0">
-              <p className="kicker">{PROVEEDOR_LABEL[r.provider] ?? 'Socio'}</p>
-              <p className="mt-1.5 line-clamp-2 text-title text-fg">
-                {r.title}
-              </p>
-              {r.subtitle ? (
-                <p className="mt-1 line-clamp-2 text-caption text-fg-muted">
-                  {r.subtitle}
+    <>
+      <ul className="grid gap-3 sm:grid-cols-2">
+        {data.results.map((r) => (
+          <li key={r.id}>
+            <Card className="flex h-full flex-col gap-3 p-4 md:p-5">
+              <div className="min-w-0">
+                <p className="kicker">
+                  {PROVEEDOR_LABEL[r.provider] ?? 'Socio'}
                 </p>
-              ) : null}
-            </div>
-            <ul className="flex flex-wrap items-center gap-x-4 gap-y-1 text-caption text-fg-muted">
-              {typeof r.rating === 'number' && r.rating > 0 ? (
-                <li className="inline-flex items-center gap-1 tnum">
-                  <Star
-                    aria-hidden="true"
-                    strokeWidth={1.75}
-                    className="size-4 fill-current text-brass"
-                  />
-                  <span className="sr-only">Valoración: </span>
-                  {formatNumero(r.rating, 1)}
-                  {r.reviews ? (
-                    <span>({formatNumero(r.reviews)} reseñas)</span>
-                  ) : null}
-                </li>
-              ) : null}
-              {r.durationMinutes ? (
-                <li className="inline-flex items-center gap-1 tnum">
-                  <Clock
-                    aria-hidden="true"
-                    strokeWidth={1.75}
-                    className="size-4"
-                  />
-                  <span className="sr-only">Duración: </span>
-                  {formatDuracion(r.durationMinutes)}
-                </li>
-              ) : null}
-            </ul>
-            <div className="mt-auto flex items-end justify-between gap-3">
-              {typeof r.price === 'number' && r.price > 0 ? (
-                <p className="text-body-s text-fg-muted">
-                  desde{' '}
-                  <span className="text-[18px] font-semibold text-fg tnum">
-                    {formatCurrency(r.price, r.currency ?? moneda)}
-                  </span>
+                <p className="mt-1.5 line-clamp-2 text-title text-fg">
+                  {r.title}
                 </p>
-              ) : (
-                <span />
-              )}
-              {r.url ? (
-                <ButtonLink
-                  href={r.url}
-                  target="_blank"
-                  rel={AFFILIATE_REL}
-                  variant="outline"
-                  size="sm"
-                  iconEnd={<ExternalLink />}
-                  onClick={() => onClic(r.url ?? '')}
-                >
-                  Ver opción
-                  <span className="sr-only">
-                    : {r.title} (enlace patrocinado, se abre en otra pestaña)
-                  </span>
-                </ButtonLink>
-              ) : null}
-            </div>
-          </Card>
-        </li>
-      ))}
-    </ul>
+                {r.subtitle ? (
+                  <p className="mt-1 line-clamp-2 text-caption text-fg-muted">
+                    {r.subtitle}
+                  </p>
+                ) : null}
+              </div>
+              <ul className="flex flex-wrap items-center gap-x-4 gap-y-1 text-caption text-fg-muted">
+                {r.startDate ? (
+                  <li className="inline-flex items-center gap-1 tnum">
+                    <CalendarDays
+                      aria-hidden="true"
+                      strokeWidth={1.75}
+                      className="size-4"
+                    />
+                    <span className="sr-only">Fechas: </span>
+                    {formatRangoFechas(r.startDate, r.endDate)}
+                  </li>
+                ) : null}
+                {typeof r.rating === 'number' && r.rating > 0 ? (
+                  <li className="inline-flex items-center gap-1 tnum">
+                    <Star
+                      aria-hidden="true"
+                      strokeWidth={1.75}
+                      className="size-4 fill-current text-brass"
+                    />
+                    <span className="sr-only">Valoración: </span>
+                    {formatNumero(r.rating, 1)}
+                    {r.reviews ? (
+                      <span>({formatNumero(r.reviews)} reseñas)</span>
+                    ) : null}
+                  </li>
+                ) : null}
+                {r.durationMinutes ? (
+                  <li className="inline-flex items-center gap-1 tnum">
+                    <Clock
+                      aria-hidden="true"
+                      strokeWidth={1.75}
+                      className="size-4"
+                    />
+                    <span className="sr-only">Duración: </span>
+                    {formatDuracion(r.durationMinutes)}
+                  </li>
+                ) : null}
+              </ul>
+              <div className="mt-auto flex items-end justify-between gap-3">
+                {typeof r.price === 'number' && r.price > 0 ? (
+                  <div className="min-w-0">
+                    <p className="text-body-s text-fg-muted">
+                      desde{' '}
+                      <span className="text-[18px] font-semibold text-fg tnum">
+                        {formatCurrency(r.price, r.currency ?? moneda)}
+                      </span>
+                    </p>
+                    {r.priceNote ? (
+                      <p className="text-caption text-fg-muted">
+                        {r.priceNote}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : (
+                  <span />
+                )}
+                {r.url ? (
+                  <ButtonLink
+                    href={r.url}
+                    target="_blank"
+                    rel={AFFILIATE_REL}
+                    variant="outline"
+                    size="sm"
+                    iconEnd={<ExternalLink />}
+                    onClick={() => onClic(r.url ?? '')}
+                  >
+                    Ver opción
+                    <span className="sr-only">
+                      : {r.title} (enlace patrocinado, se abre en otra pestaña)
+                    </span>
+                  </ButtonLink>
+                ) : null}
+              </div>
+            </Card>
+          </li>
+        ))}
+      </ul>
+      {data.aviso ? (
+        <p className="mt-3 max-w-[70ch] text-caption text-fg-muted">
+          {data.aviso}
+        </p>
+      ) : null}
+    </>
   )
 }
 

@@ -15,8 +15,20 @@ import { EmptyState } from '../ui/EmptyState'
 import { Input } from '../ui/Input'
 import { Tabs } from '../ui/Tabs'
 import { Txt } from '../ui/Txt'
-import { ExternalLink, PlaneTakeoff, MapPin, Search, Star } from '../ui/iconos'
-import { formatCurrency, formatDuracion, formatNumero } from '../ui/formato'
+import {
+  CalendarDays,
+  ExternalLink,
+  PlaneTakeoff,
+  MapPin,
+  Search,
+  Star,
+} from '../ui/iconos'
+import {
+  formatCurrency,
+  formatDuracion,
+  formatNumero,
+  formatRangoFechas,
+} from '../ui/formato'
 import type { Moneda } from '../../types/planning'
 
 interface Props {
@@ -48,6 +60,8 @@ const NOMBRE_SITIO: Record<Pestana, string> = {
 /** Nombre visible del proveedor de cada resultado (nunca uno fijo). */
 const NOMBRE_PROVEEDOR: Record<string, string> = {
   viator: 'Viator',
+  travelpayouts: 'Aviasales',
+  liteapi: 'Alojamiento',
 }
 
 function abrir(url: string): void {
@@ -73,6 +87,19 @@ function ResultadoFila({ r }: { r: SearchResult }): React.ReactElement {
         </Txt>
       ) : null}
       <View style={styles.meta}>
+        {r.startDate ? (
+          <View style={styles.metaItem}>
+            <CalendarDays
+              size={14}
+              color={colors.fgMuted}
+              strokeWidth={1.5}
+              accessible={false}
+            />
+            <Txt variant="caption" color="fgMuted" tnum>
+              {formatRangoFechas(r.startDate, r.endDate)}
+            </Txt>
+          </View>
+        ) : null}
         {typeof r.rating === 'number' ? (
           <View style={styles.metaItem}>
             <Star
@@ -101,9 +128,19 @@ function ResultadoFila({ r }: { r: SearchResult }): React.ReactElement {
       </View>
       <View style={styles.pie}>
         {precio ? (
-          <Txt variant="title" tnum>
-            {precio}
-          </Txt>
+          <View style={styles.precio}>
+            <Txt variant="caption" color="fgMuted">
+              desde
+            </Txt>
+            <Txt variant="title" tnum>
+              {precio}
+            </Txt>
+            {r.priceNote ? (
+              <Txt variant="caption" color="fgMuted" numberOfLines={2}>
+                {r.priceNote}
+              </Txt>
+            ) : null}
+          </View>
         ) : (
           <View />
         )}
@@ -154,7 +191,9 @@ export function RealSearch({
       }))
       try {
         const data = await (p === 'hoteles'
-          ? searchHotels(destino, fechaInicio, fechaFin, personas)
+          ? searchHotels(destino, fechaInicio, fechaFin, personas, {
+              currency: moneda,
+            })
           : p === 'actividades'
             ? searchActivities(destino, fechaInicio, {
                 returnDate: fechaFin,
@@ -284,6 +323,11 @@ export function RealSearch({
               {resultados.map((r) => (
                 <ResultadoFila key={r.id} r={r} />
               ))}
+              {sec.data?.aviso ? (
+                <Txt variant="caption" color="fgMuted" style={styles.aviso}>
+                  {sec.data.aviso}
+                </Txt>
+              ) : null}
               <Button
                 title="Buscar de nuevo"
                 variant="ghost"
@@ -359,6 +403,8 @@ const crearEstilos = (_t: Tema) =>
       gap: 8,
       marginTop: 12,
     },
+    precio: { flexShrink: 1 },
+    aviso: { marginBottom: 8 },
     vacio: { paddingVertical: 16 },
     centrado: { alignSelf: 'center' },
   })

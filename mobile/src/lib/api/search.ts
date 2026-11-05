@@ -6,21 +6,42 @@
  * `{ configured: false, reason, mensaje, enlace }` en vez de fallar. Los
  * errores HTTP (400/429) llegan como `BackendError` con el `mensaje` del
  * servidor y el cuerpo completo en `error.data`.
+ *
+ * Proveedores: actividades con Viator, vuelos con Travelpayouts (precios de
+ * Aviasales) y hoteles con LiteAPI, cada uno solo si su clave está en el
+ * servidor.
  */
 import type { Moneda } from '../../types/planning'
 import { getJSON } from './http'
 
 export { BackendError } from './http'
 
-/** Proveedor que devolvió el resultado (hoy solo Viator, en actividades). */
-export type SearchProvider = 'viator'
+/**
+ * Proveedor que devolvió el resultado: 'viator' (actividades),
+ * 'travelpayouts' (vuelos, datos de Aviasales) y 'liteapi' (hoteles).
+ */
+export type SearchProvider = 'viator' | 'travelpayouts' | 'liteapi'
 
 export interface SearchResult {
   id: string
+  /** Actividad, aerolínea o nombre del hotel. */
   title: string
   subtitle?: string
+  /** Precio «desde» (ver `priceNote` para saber a qué corresponde). */
   price?: number
   currency?: string
+  /**
+   * A qué corresponde el precio, listo para mostrar junto a él: «por persona,
+   * ida y vuelta», «total de 3 noches, 2 huéspedes»…
+   */
+  priceNote?: string
+  /**
+   * Fechas 'YYYY-MM-DD' a las que corresponde el precio (ida y vuelta, o
+   * entrada y salida). Pueden no ser las pedidas: en vuelos, si no hay precios
+   * para el día exacto, llegan los más baratos del mes.
+   */
+  startDate?: string
+  endDate?: string
   /** Enlace https al producto (con la atribución de afiliado del proveedor). */
   url?: string
   /** Miniatura https, si el proveedor la da. */
@@ -35,7 +56,8 @@ export interface SearchResult {
 /**
  * Por qué no hay resultados reales:
  * - 'sin-proveedor': ese tipo de búsqueda no tiene proveedor activo (vuelos y
- *   hoteles por ahora); se ofrece `enlace` para buscar en el sitio del socio.
+ *   hoteles sin su clave en el servidor); se ofrece `enlace` para buscar en
+ *   el sitio del socio.
  * - 'no-configurado': hay proveedor, pero falta su clave en el servidor.
  * - 'parametros-invalidos': la petición no pasó la validación (400).
  * - 'limite': demasiadas búsquedas seguidas (429).
@@ -56,6 +78,11 @@ export interface SearchResponse {
   reason?: SearchReason
   /** Mensaje en español apto para mostrar cuando no hay resultados. */
   mensaje?: string
+  /**
+   * Nota para mostrar JUNTO A los resultados (no en lugar de ellos): precios
+   * orientativos que pueden cambiar al reservar, fechas cercanas…
+   */
+  aviso?: string
   /** Enlace de búsqueda en el sitio del socio (afiliado) como alternativa. */
   enlace?: string
 }
@@ -67,17 +94,25 @@ function viajeros(n: number): string {
   return String(Math.min(Math.max(Math.round(n) || 1, 1), 20))
 }
 
-/** Hoteles para un destino y rango de fechas (enlace de Booking). */
+/**
+ * Hoteles para un destino y rango de fechas. Con LiteAPI en el servidor llegan
+ * hoteles con precio «desde» (total de la estancia) en `currency` (USD o EUR;
+ * DOP pasa a USD); sin ella, `reason: 'sin-proveedor'` con el enlace de
+ * Booking.
+ */
 export function searchHotels(
   destination: string,
   checkIn: string,
   checkOut: string,
-  guests: number
+  guests: number,
+  { currency }: { currency?: Moneda } = {}
 ): Promise<SearchResponse> {
   return getJSON(
     `/api/hotels?destination=${enc(destination)}&checkIn=${enc(
       checkIn
-    )}&checkOut=${enc(checkOut)}&guests=${enc(viajeros(guests))}`
+    )}&checkOut=${enc(checkOut)}&guests=${enc(viajeros(guests))}${
+      currency ? `&currency=${enc(currency)}` : ''
+    }`
   )
 }
 
@@ -100,10 +135,10 @@ export function searchActivities(
 
 /**
  * Vuelos de ida (`date`) y vuelta (`returnDate`, opcional). `origin` y
- * `destination` aceptan códigos IATA o nombres de ciudad. Hoy no hay
- * proveedor de precios: el backend responde `reason: 'sin-proveedor'` con el
- * `enlace` del buscador del socio. `currency` se envía por simetría con
- * actividades (hoy /api/flights la ignora).
+ * `destination` aceptan códigos IATA o nombres de ciudad. Con Travelpayouts
+ * en el servidor llegan precios «desde» por persona (de búsquedas recientes en
+ * Aviasales, orientativos) en `currency` (USD o EUR; DOP pasa a USD); sin él,
+ * `reason: 'sin-proveedor'` con el `enlace` del buscador del socio.
  */
 export function searchFlights(
   origin: string,
