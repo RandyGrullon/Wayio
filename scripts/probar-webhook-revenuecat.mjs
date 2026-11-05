@@ -6,7 +6,7 @@
  *
  *  1. Levanta un Supabase SIMULADO en memoria (PostgREST para subscriptions,
  *     revenuecat_events y usage_counters, con la FK a profiles y los CHECK de
- *     la migración 20261105120000; y /auth/v1/user para el Bearer).
+ *     la migración 20261105130000; y /auth/v1/user para el Bearer).
  *  2. Arranca `next dev` en un puerto libre apuntando a ese mock, con un
  *     REVENUECAT_WEBHOOK_AUTH de prueba.
  *  3. Manda eventos con la forma del webhook de RevenueCat y comprueba la
@@ -33,6 +33,7 @@ const U = {
   carla: '00000000-0000-4000-8000-00000000000c',
   dario: '00000000-0000-4000-8000-00000000000d',
   eva: '00000000-0000-4000-8000-00000000000e',
+  fer: '00000000-0000-4000-8000-0000000000f0',
 }
 const SIN_PERFIL = '00000000-0000-4000-8000-0000000000ff'
 const PERFILES = new Set(Object.values(U))
@@ -581,6 +582,73 @@ async function escenarios() {
     fa?.tier === 'free' && fa.store_transaction_id === null
   )
 
+  console.log('\nIds de producto propios (solo con las claves)')
+  const deFer = (campos) =>
+    evento('INITIAL_PURCHASE', {
+      app_user_id: U.fer,
+      original_app_user_id: U.fer,
+      aliases: [U.fer],
+      transaction_id: `tx-fer-${randomUUID()}`,
+      ...campos,
+    })
+  const conTx = (e) => ({
+    ...e,
+    event: { ...e.event, original_transaction_id: e.event.transaction_id },
+  })
+  r = await webhook(
+    conTx(
+      deFer({
+        product_id: 'com.otro.suscripcion.mes',
+        entitlement_ids: null,
+        expiration_at_ms: Date.now() + 31 * DIA,
+      })
+    )
+  )
+  comprobar(
+    'id desconocido de 1 mes → Pro mensual (deducido)',
+    fila(U.fer)?.plan_id === 'pro_mensual',
+    JSON.stringify(r.datos)
+  )
+  r = await webhook(
+    conTx(
+      deFer({
+        product_id: 'com.otro.suscripcion.año',
+        entitlement_ids: ['pro'],
+        expiration_at_ms: Date.now() + 365 * DIA,
+      })
+    )
+  )
+  comprobar(
+    'id desconocido de 1 año → Pro anual (deducido)',
+    fila(U.fer)?.plan_id === 'pro_anual'
+  )
+  r = await webhook(
+    conTx(
+      deFer({
+        product_id: 'mi_anual_propio',
+        expiration_at_ms: Date.now() + 20 * DIA,
+      })
+    )
+  )
+  comprobar(
+    'id de REVENUECAT_PRODUCTOS_ANUAL manda sobre la duración',
+    fila(U.fer)?.plan_id === 'pro_anual' &&
+      fila(U.fer)?.store_product_id === 'mi_anual_propio'
+  )
+  const antes = fila(U.fer)?.store_product_id
+  r = await webhook(
+    conTx(
+      deFer({
+        product_id: 'otra_app_monedas',
+        entitlement_ids: ['monedas'],
+      })
+    )
+  )
+  comprobar(
+    'producto de otro entitlement → ignorado',
+    r.datos?.estado === 'ignorado' && fila(U.fer)?.store_product_id === antes
+  )
+
   console.log('\nReintentos')
   mock.fallarEscrituras = true
   const fallido = evento('INITIAL_PURCHASE', {
@@ -648,6 +716,8 @@ async function main() {
         NEXT_PUBLIC_SUPABASE_ANON_KEY: 'anon-key-de-prueba-0123456789',
         SUPABASE_SERVICE_ROLE_KEY: 'service-role-de-prueba',
         REVENUECAT_WEBHOOK_AUTH: SECRETO,
+        REVENUECAT_PRODUCTOS_ANUAL:
+          'wayio_pro_anual,wayio_pro:anual,mi_anual_propio',
         NEXT_PUBLIC_POSTHOG_KEY: '',
         NEXT_PUBLIC_SENTRY_DSN: '',
         UPSTASH_REDIS_REST_URL: '',

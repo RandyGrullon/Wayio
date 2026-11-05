@@ -12,7 +12,7 @@ import type {
   SubscriptionRow,
   SubscriptionSource,
 } from '@/types/database'
-import { DIAS_PASE_TIENDA, ENTITLEMENT_PRO, planDeProducto } from './productos'
+import { DIAS_PASE_TIENDA, entitlementPro, planDeProducto } from './productos'
 
 /**
  * Eventos del webhook de RevenueCat → fila de subscriptions del usuario.
@@ -186,18 +186,26 @@ async function actualizar(
 // ---------------------------------------------------------------------------
 
 /**
- * Plan por el producto; si no está en el catálogo pero da el entitlement
- * «pro», se deduce (y se avisa para añadirlo a PRODUCTOS_TIENDA).
+ * Plan por el producto (REVENUECAT_PRODUCTOS_*). Si no está en el catálogo,
+ * se deduce del evento para que funcione con cualquier id de las tiendas:
+ * compra no renovable o plan prepago = pase; si no, por la duración (más de
+ * 100 días = anual). Se avisa para añadirlo a la variable. Un producto con
+ * entitlements que no incluyen el de Pro no es de Wayio Pro: se ignora.
  */
 function planDelEvento(ev: EventoRevenueCat): PlanKey | null {
   const plan = planDeProducto(ev.product_id ?? null)
   if (plan) return plan
-  if (!(ev.entitlement_ids ?? []).includes(ENTITLEMENT_PRO)) return null
+  const entitlements = ev.entitlement_ids ?? []
+  if (entitlements.length > 0 && !entitlements.includes(entitlementPro())) {
+    return null
+  }
   registrarError(
     'revenuecat.webhook',
-    `producto ${ev.product_id ?? '-'} sin plan conocido: añádelo a PRODUCTOS_TIENDA`
+    `producto ${ev.product_id ?? '-'} sin plan configurado: se deduce del evento (añádelo a REVENUECAT_PRODUCTOS_*)`
   )
-  if (ev.type === 'NON_RENEWING_PURCHASE') return 'pro_por_viaje'
+  if (ev.type === 'NON_RENEWING_PURCHASE' || ev.period_type === 'PREPAID') {
+    return 'pro_por_viaje'
+  }
   const duracion =
     (ev.expiration_at_ms ?? 0) - (ev.purchased_at_ms ?? Date.now())
   return duracion > 100 * DIA_MS ? 'pro_anual' : 'pro_mensual'

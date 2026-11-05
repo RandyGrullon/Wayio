@@ -2,6 +2,8 @@ import { Linking, Platform } from 'react-native'
 import Purchases, {
   LOG_LEVEL,
   PACKAGE_TYPE,
+  PRODUCT_CATEGORY,
+  PRODUCT_TYPE,
   PURCHASES_ERROR_CODE,
   type CustomerInfo,
   type PurchasesError,
@@ -13,9 +15,10 @@ import type { PlanId } from '../../constants/pricing'
 /**
  * Compras integradas (App Store y Google Play) con RevenueCat.
  *
- * - Solo si la build lo activa: EXPO_PUBLIC_COMPRAS_TIENDA=true y la clave
- *   pública de RevenueCat de la plataforma. Si no, la app sigue con el pago
- *   web (`comprasTiendaActivas()` es false y nada de aquí toca el SDK).
+ * - Se activa sola con la clave pública de RevenueCat de la plataforma
+ *   (EXPO_PUBLIC_REVENUECAT_IOS_KEY / _ANDROID_KEY);
+ *   EXPO_PUBLIC_COMPRAS_TIENDA=false la apaga. Sin clave, la app sigue con el
+ *   pago web (`comprasTiendaActivas()` es false y nada de aquí toca el SDK).
  * - El app_user_id de RevenueCat es el id de Supabase de la cuenta
  *   (`sincronizarUsuarioTienda`): así el webhook del servidor sabe a quién
  *   darle Pro. Sin sesión no se configura y no se vende nada.
@@ -24,24 +27,13 @@ import type { PlanId } from '../../constants/pricing'
  *   pantalla vuelve a leer el plan (`refreshTier`).
  *
  * Productos y ofertas: API-KEYS-GUIA.md, sección 6b. La oferta actual
- * («default») lleva los paquetes $rc_monthly, $rc_annual y uno a medida
- * `pase_30_dias`, todos con el entitlement `pro`.
+ * lleva los paquetes $rc_monthly, $rc_annual y uno a medida para el pase
+ * (`pase_30_dias`). Los planes se reconocen por el TIPO de paquete y de
+ * producto, no por sus ids: funcionan con los ids que elijas en las tiendas.
  */
 
-/** Entitlement de RevenueCat que da Wayio Pro. */
-export const ENTITLEMENT_PRO = 'pro'
-
-/** Paquete a medida del Pase Pro de 30 días en la oferta de RevenueCat. */
-const PAQUETE_PASE = 'pase_30_dias'
-
-/** Productos de las tiendas (mismos ids que el servidor, productos.ts). */
-const PLAN_DE_PRODUCTO: Readonly<Record<string, PlanId>> = {
-  wayio_pro_mensual: 'pro_mensual',
-  wayio_pro_anual: 'pro_anual',
-  wayio_pase_30_dias: 'pro_por_viaje',
-  'wayio_pro:mensual': 'pro_mensual',
-  'wayio_pro:anual': 'pro_anual',
-}
+/** Entitlement de RevenueCat que da Wayio Pro (solo las suscripciones). */
+export const ENTITLEMENT_PRO = config.revenuecatEntitlement
 
 function claveDeLaPlataforma(): string {
   if (Platform.OS === 'ios') return config.revenuecatIos
@@ -113,18 +105,42 @@ export interface OfertaTienda {
   precio: string
 }
 
+/** Productos que no se renuevan (el pase), sea cual sea su id. */
+const TIPOS_SIN_RENOVACION: readonly PRODUCT_TYPE[] = [
+  PRODUCT_TYPE.NON_RENEWABLE_SUBSCRIPTION,
+  PRODUCT_TYPE.CONSUMABLE,
+  PRODUCT_TYPE.NON_CONSUMABLE,
+  PRODUCT_TYPE.PREPAID_SUBSCRIPTION,
+]
+
+/**
+ * Plan de un paquete: por el tipo de paquete ($rc_monthly, $rc_annual), por
+ * el id del paquete del pase y, si no, por el tipo y periodo del producto.
+ */
 function planDePaquete(p: PurchasesPackage): PlanId | null {
   if (p.packageType === PACKAGE_TYPE.MONTHLY) return 'pro_mensual'
   if (p.packageType === PACKAGE_TYPE.ANNUAL) return 'pro_anual'
-  if (p.identifier === PAQUETE_PASE) return 'pro_por_viaje'
-  return PLAN_DE_PRODUCTO[p.product.identifier] ?? null
+  if (p.identifier === config.revenuecatPaquetePase) return 'pro_por_viaje'
+  const producto = p.product
+  if (
+    producto.productCategory === PRODUCT_CATEGORY.NON_SUBSCRIPTION ||
+    TIPOS_SIN_RENOVACION.includes(producto.productType)
+  ) {
+    return 'pro_por_viaje'
+  }
+  if (producto.subscriptionPeriod === 'P1M') return 'pro_mensual'
+  if (producto.subscriptionPeriod === 'P1Y') return 'pro_anual'
+  return null
 }
 
 /** Paquetes de la oferta actual que corresponden a planes a la venta. */
 export async function obtenerOfertas(uid: string): Promise<OfertaTienda[]> {
   if (!(await listoPara(uid))) throw new Error('tienda no disponible')
   const ofertas = await Purchases.getOfferings()
-  const paquetes = ofertas.current?.availablePackages ?? []
+  const oferta = config.revenuecatOferta
+    ? (ofertas.all[config.revenuecatOferta] ?? null)
+    : ofertas.current
+  const paquetes = oferta?.availablePackages ?? []
   const vistas = new Set<PlanId>()
   const lista: OfertaTienda[] = []
   for (const paquete of paquetes) {
