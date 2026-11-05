@@ -24,9 +24,30 @@
 -- 'admin' = concedido a mano desde el panel (no cuenta en el MRR).
 alter table public.subscriptions
   add column if not exists source text not null default 'system';
-alter table public.subscriptions drop constraint if exists subscriptions_source_check;
-alter table public.subscriptions add constraint subscriptions_source_check
-  check (source in ('system', 'stripe', 'creem', 'admin'));
+-- El CHECK se reescribe SUMANDO a los valores que ya admita (p. ej. los de
+-- otra migración del mismo día, como los orígenes de las tiendas de apps), no
+-- sustituyéndolos: así el orden en que se apliquen las migraciones da igual.
+do $$
+declare
+  valores text[];
+begin
+  select coalesce(array_agg(m[1]), '{}')
+    into valores
+    from pg_constraint c,
+         regexp_matches(pg_get_constraintdef(c.oid), '''([^'']+)''', 'g') as m
+   where c.conname = 'subscriptions_source_check'
+     and c.conrelid = 'public.subscriptions'::regclass;
+  valores := array(
+    select distinct v
+      from unnest(valores || array['system', 'stripe', 'creem', 'admin']) as v
+     order by v
+  );
+  alter table public.subscriptions drop constraint if exists subscriptions_source_check;
+  execute format(
+    'alter table public.subscriptions add constraint subscriptions_source_check check (source in (%s))',
+    (select string_agg(quote_literal(v), ', ') from unnest(valores) as v)
+  );
+end $$;
 
 -- Filas que el webhook de Creem escribió antes de esta migración (sin poder
 -- poner source): se reconocen por el prefijo del cliente de Creem.

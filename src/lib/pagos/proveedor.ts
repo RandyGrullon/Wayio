@@ -55,10 +55,11 @@ export function pagosConfigurados(): boolean {
 }
 
 /**
- * Proveedor que cobró la suscripción de una fila, o null si no viene de un
- * cobro (alta gratuita o plan concedido a mano). Las filas anteriores a la
- * columna `source` o con source 'system' se reconocen por el prefijo del
- * cliente: Creem usa cust_… y Stripe cus_….
+ * Proveedor web que cobró la suscripción de una fila, o null si no viene de
+ * uno (alta gratuita, plan concedido a mano o cualquier otro origen, como una
+ * compra en las tiendas de apps). Las filas anteriores a la columna `source`
+ * o con source 'system' se reconocen por el prefijo del cliente: Creem usa
+ * cust_… y Stripe cus_….
  */
 export function proveedorDeFila(
   sub: Pick<
@@ -68,7 +69,8 @@ export function proveedorDeFila(
 ): ProveedorPago | null {
   if (!sub) return null
   if (sub.source === 'creem' || sub.source === 'stripe') return sub.source
-  if (sub.source === 'admin') return null
+  // 'admin' y orígenes que no son de este cobro web: nunca se tocan aquí.
+  if (sub.source !== undefined && sub.source !== 'system') return null
   const cliente = sub.stripe_customer_id ?? ''
   if (cliente.startsWith('cust_')) return 'creem'
   if (cliente.startsWith('cus_')) return 'stripe'

@@ -211,11 +211,11 @@ export async function revokePlan(userId: string): Promise<ActionResult> {
   const subId = fila?.stripe_subscription_id ?? null
   // Un plan concedido (source 'admin') puede conservar la suscripción que
   // pagaba antes: su proveedor se deduce del id del cliente.
-  const proveedor = fila
-    ? (proveedorDeFila(fila) ??
-      proveedorDeFila({ ...fila, source: 'system' }) ??
-      'stripe')
-    : null
+  const proveedor = !fila
+    ? null
+    : fila.source === 'admin'
+      ? proveedorDeFila({ ...fila, source: 'system' })
+      : proveedorDeFila(fila)
   let canceladaEnProveedor = false
   if (subId && proveedor) {
     const nombre = NOMBRE_PROVEEDOR[proveedor]

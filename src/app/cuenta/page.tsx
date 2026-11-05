@@ -13,6 +13,7 @@ import { TEXTO_CUPO_GRATIS } from '@/components/trip/limitesIA'
 import { NOMBRE_PLAN } from '@/constants/planes'
 import { RECUPERAR_PATH } from '@/lib/auth/constants'
 import { modoLocalSinCuentas } from '@/lib/auth/irALogin'
+import { proveedorDeFila } from '@/lib/pagos/proveedor'
 import { tierEfectivo } from '@/lib/stripe/entitlements'
 import { createClient } from '@/lib/supabase/server'
 import { isSupabaseConfigured } from '@/lib/supabase/config'
@@ -207,7 +208,7 @@ export default async function CuentaPage({
   const recurrente =
     esPago &&
     Boolean(sub?.stripe_subscription_id) &&
-    sub?.source !== 'admin' &&
+    proveedorDeFila(sub) !== null &&
     (sub?.status === 'active' ||
       sub?.status === 'trialing' ||
       sub?.status === 'past_due')
