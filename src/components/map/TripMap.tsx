@@ -62,6 +62,8 @@ import { haversineKm } from '@/lib/ai/normalize'
  *   (corrige el XSS API-04). Enlaces externos con rel="noopener noreferrer".
  * - Punto GPS con halo de 3 ciclos tras cada actualización y círculo de
  *   precisión; tramo «en vivo» hasta la siguiente parada.
+ * - Al elegir un día, su ruta se traza en 600 ms (§7.4) salvo con movimiento
+ *   reducido (§7.5).
  */
 
 export interface TripMapProps {
@@ -210,13 +212,28 @@ const FUENTE_RUTAS = 'wy-rutas'
 const FUENTE_GPS = 'wy-gps'
 const FUENTE_TRAMO = 'wy-tramo'
 const FUENTE_GEOCERCA = 'wy-geocerca'
-const CAPAS_RUTAS = [
+/** Copia de la ruta del día recién elegido mientras se traza (§7.4). */
+const FUENTE_TRAZO = 'wy-trazo'
+/** Líneas de las rutas: se atenúan en el día activo mientras se traza. */
+const CAPAS_LINEAS_RUTAS = [
   'wy-rutas-casing',
   'wy-rutas-normal',
   'wy-rutas-traslado',
   'wy-rutas-crucero',
-  'wy-rutas-sentido',
 ] as const
+const CAPAS_RUTAS = [
+  ...CAPAS_LINEAS_RUTAS,
+  'wy-rutas-sentido',
+  'wy-trazo-casing',
+  'wy-trazo-normal',
+  'wy-trazo-traslado',
+  'wy-trazo-crucero',
+] as const
+
+/** Duración del trazo de la ruta al elegir un día (§7.4). */
+const TRAZO_MS = 600
+/** Opacidad del día activo bajo el trazo (la misma de los demás días). */
+const OPACIDAD_GUIA = 0.3
 
 const VACIO: GeoJSON.FeatureCollection = {
   type: 'FeatureCollection',
@@ -381,6 +398,48 @@ function capasPropias(
         'line-opacity': ['get', 'opacidad'],
       },
     },
+    // Trazo del día recién elegido: mismos estilos que su ruta (día activo),
+    // encima de todas. Vacío salvo durante los 600 ms de la animación.
+    {
+      id: 'wy-trazo-casing',
+      type: 'line',
+      source: FUENTE_TRAZO,
+      filter: ['==', ['get', 'tipo'], 'normal'],
+      layout: { 'line-cap': 'round', 'line-join': 'round', visibility },
+      paint: { 'line-color': pal.casing, 'line-width': 7.5 },
+    },
+    {
+      id: 'wy-trazo-normal',
+      type: 'line',
+      source: FUENTE_TRAZO,
+      filter: ['==', ['get', 'tipo'], 'normal'],
+      layout: { 'line-cap': 'round', 'line-join': 'round', visibility },
+      paint: { 'line-color': ['get', 'color'], 'line-width': 4.5 },
+    },
+    {
+      id: 'wy-trazo-traslado',
+      type: 'line',
+      source: FUENTE_TRAZO,
+      filter: ['==', ['get', 'tipo'], 'traslado'],
+      layout: { 'line-cap': 'round', 'line-join': 'round', visibility },
+      paint: {
+        'line-color': ['get', 'color'],
+        'line-width': 3.5,
+        'line-dasharray': [0.1, 2],
+      },
+    },
+    {
+      id: 'wy-trazo-crucero',
+      type: 'line',
+      source: FUENTE_TRAZO,
+      filter: ['==', ['get', 'tipo'], 'crucero'],
+      layout: { 'line-cap': 'round', 'line-join': 'round', visibility },
+      paint: {
+        'line-color': ['get', 'color'],
+        'line-width': 2.5,
+        'line-dasharray': [2, 2],
+      },
+    },
     {
       id: 'wy-tramo',
       type: 'line',
@@ -413,6 +472,7 @@ function fuentesPropias(d: Datos): Record<string, SourceSpecification> {
     [FUENTE_GPS]: { type: 'geojson', data: d.gps },
     [FUENTE_TRAMO]: { type: 'geojson', data: d.tramo },
     [FUENTE_GEOCERCA]: { type: 'geojson', data: d.geocerca },
+    [FUENTE_TRAZO]: { type: 'geojson', data: VACIO },
   }
 }
 
@@ -524,6 +584,92 @@ function featuresRutas(
     }
   })
   return { type: 'FeatureCollection', features }
+}
+
+// ── Trazo del día (§7.4) ────────────────────────────────────────────────────
+
+/** Distancia aproximada en grados (longitud escalada por la latitud). */
+function distanciaPlana(a: GeoJSON.Position, b: GeoJSON.Position): number {
+  const [x1 = 0, y1 = 0] = a
+  const [x2 = 0, y2 = 0] = b
+  const k = Math.cos((((y1 + y2) / 2) * Math.PI) / 180)
+  return Math.hypot((x2 - x1) * k, y2 - y1)
+}
+
+function largoLinea(coords: GeoJSON.Position[]): number {
+  let total = 0
+  for (let i = 1; i < coords.length; i++) {
+    const a = coords[i - 1]
+    const b = coords[i]
+    if (a && b) total += distanciaPlana(a, b)
+  }
+  return total
+}
+
+/** El principio de la línea hasta `largo` (corta el último segmento). */
+function cortarLinea(
+  coords: GeoJSON.Position[],
+  largo: number
+): GeoJSON.Position[] {
+  const primero = coords[0]
+  if (!primero) return []
+  const salida: GeoJSON.Position[] = [primero]
+  let resto = largo
+  for (let i = 1; i < coords.length; i++) {
+    const a = coords[i - 1]
+    const b = coords[i]
+    if (!a || !b) continue
+    const d = distanciaPlana(a, b)
+    if (d >= resto) {
+      const f = d > 0 ? resto / d : 0
+      const [x1 = 0, y1 = 0] = a
+      const [x2 = 0, y2 = 0] = b
+      salida.push([x1 + (x2 - x1) * f, y1 + (y2 - y1) * f])
+      return salida
+    }
+    salida.push(b)
+    resto -= d
+  }
+  return salida
+}
+
+/**
+ * Tramos del día activo recortados a la fracción `t` (0..1) de su recorrido,
+ * en el orden de las paradas: el trazo avanza de la primera a la última.
+ */
+function trazoParcial(
+  rutas: GeoJSON.FeatureCollection,
+  t: number
+): GeoJSON.FeatureCollection {
+  const tramos = rutas.features.filter(
+    (f): f is GeoJSON.Feature<GeoJSON.LineString> =>
+      f.properties?.['activo'] === true && f.geometry.type === 'LineString'
+  )
+  const largos = tramos.map((f) => largoLinea(f.geometry.coordinates))
+  const total = largos.reduce((suma, l) => suma + l, 0)
+  let resto = total * Math.min(1, Math.max(0, t))
+  const features: GeoJSON.Feature[] = []
+  for (let i = 0; i < tramos.length && resto > 0; i++) {
+    const tramo = tramos[i]
+    const largo = largos[i] ?? 0
+    if (!tramo) continue
+    if (largo <= resto) {
+      features.push(tramo)
+      resto -= largo
+      continue
+    }
+    const coordinates = cortarLinea(tramo.geometry.coordinates, resto)
+    if (coordinates.length >= 2) {
+      features.push({ ...tramo, geometry: { type: 'LineString', coordinates } })
+    }
+    break
+  }
+  return { type: 'FeatureCollection', features }
+}
+
+/** Curva ease-tinta, cubic-bezier(.65, 0, .35, 1) (§7.1): trazos A→B. */
+function easeTinta(t: number): number {
+  return t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2
 }
 
 function puntosDe(dias: Day[], dia: number | null): [number, number][] {
@@ -1001,6 +1147,90 @@ export function TripMap({
       }
     }
   }, [rutasVisibles, estado])
+
+  // ── Trazo de la ruta al elegir un día (§7.4): 600 ms con ease-tinta ───────
+  // La ruta del día queda atenuada (como los demás días) y encima crece una
+  // copia de sus tramos con los mismos estilos, de la primera parada a la
+  // última; al acabar se vacía la copia y la ruta vuelve a su opacidad. Solo
+  // al CAMBIAR a un día (no al cargar ni al volver a «Todos»), con las rutas
+  // visibles, con la pestaña a la vista y nunca con movimiento reducido
+  // (§7.5). Sin peticiones: usa la geometría ya cargada (datosRef) en cada
+  // fotograma.
+  const diaTrazadoRef = useRef<number | null | undefined>(undefined)
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || estado !== 'listo') return
+    const previo = diaTrazadoRef.current
+    diaTrazadoRef.current = enfocado
+    if (
+      previo === undefined ||
+      enfocado === null ||
+      enfocado === previo ||
+      !rutasRef.current ||
+      document.visibilityState === 'hidden' ||
+      prefiereMenosMovimiento()
+    ) {
+      return
+    }
+
+    const fijarTrazo = (data: GeoJSON.FeatureCollection) => {
+      try {
+        const fuente = map.getSource(FUENTE_TRAZO) as GeoJSONSource | undefined
+        fuente?.setData(data)
+      } catch {
+        // Estilo cambiando (tema): el trazo es decorativo.
+      }
+    }
+    const atenuarDiaActivo = (atenuar: boolean) => {
+      const opacidad = atenuar
+        ? [
+            'case',
+            ['==', ['get', 'activo'], true],
+            OPACIDAD_GUIA,
+            ['get', 'opacidad'],
+          ]
+        : ['get', 'opacidad']
+      try {
+        for (const id of CAPAS_LINEAS_RUTAS) {
+          if (map.getLayer(id))
+            map.setPaintProperty(id, 'line-opacity', opacidad)
+        }
+        if (map.getLayer('wy-rutas-sentido')) {
+          map.setPaintProperty('wy-rutas-sentido', 'icon-opacity', opacidad)
+        }
+      } catch {
+        // Estilo cambiando (tema): el nuevo estilo ya trae las opacidades.
+      }
+    }
+
+    let raf = 0
+    let inicio: number | null = null
+    let terminado = false
+    const terminar = () => {
+      if (terminado) return
+      terminado = true
+      atenuarDiaActivo(false)
+      fijarTrazo(VACIO)
+    }
+    const fotograma = (ahora: number) => {
+      if (terminado) return
+      inicio ??= ahora
+      const t = Math.min(1, (ahora - inicio) / TRAZO_MS)
+      fijarTrazo(trazoParcial(datosRef.current.rutas, easeTinta(t)))
+      if (t < 1) raf = window.requestAnimationFrame(fotograma)
+      else terminar()
+    }
+    atenuarDiaActivo(true)
+    raf = window.requestAnimationFrame(fotograma)
+    // Red de seguridad: si los fotogramas se pausan (pestaña oculta a mitad),
+    // la ruta no se queda atenuada.
+    const seguro = window.setTimeout(terminar, TRAZO_MS + 400)
+    return () => {
+      window.cancelAnimationFrame(raf)
+      window.clearTimeout(seguro)
+      if (mapRef.current === map) terminar()
+    }
+  }, [enfocado, estado])
 
   // ── Marcadores (reutilizados por actividad) ───────────────────────────────
   useEffect(() => {
