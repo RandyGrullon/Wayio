@@ -6,8 +6,9 @@ import type { SubscriptionRow } from '@/types/database'
 /**
  * Plan efectivo de un usuario, calculado en el SERVIDOR (no confiar en el
  * cliente). Misma regla que la RPC my_effective_tier de la BD:
- *  - Suscripción recurrente (tiene stripe_subscription_id): manda el estado
- *    de Stripe; active, trialing y past_due (gracia) dan acceso.
+ *  - Suscripción recurrente (tiene stripe_subscription_id, que guarda el id
+ *    del proveedor: Stripe o Creem): manda el estado del proveedor; active,
+ *    trialing y past_due (gracia) dan acceso.
  *  - Pago único ("Pro por viaje") o concedido a mano: además caduca al
  *    llegar current_period_end (si lo tiene).
  */

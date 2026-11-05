@@ -6,7 +6,7 @@
 -- proyecto vacío como en uno que ya tenía una versión anterior del esquema.
 --
 -- Es la fuente completa: equivale a aplicar, en orden, todas las migraciones
--- de supabase/migrations (la última: 20261017130000_cupos_y_rentabilidad.sql).
+-- de supabase/migrations (la última: 20261105120000_cobros_creem.sql).
 --
 -- Incluye:
 --   1. Tablas de la app (perfiles, viajes, grupos, suscripciones, referidos,
@@ -280,13 +280,16 @@ create table if not exists public.subscriptions (
   user_id                uuid not null unique references public.profiles(id) on delete cascade,
   plan_id                text not null default 'free',
   tier                   text not null default 'free' check (tier in ('free', 'pro', 'grupo')),
+  -- Ids en el proveedor de cobro que indica source (nombre histórico: con
+  -- Creem guardan cust_…, sub_… y prod_…; ver la migración 20261105120000)
   stripe_customer_id     text,
   stripe_subscription_id text,
   stripe_price_id        text,
   status                 text not null default 'active',
   current_period_end     timestamptz,
   cancel_at_period_end   boolean not null default false,
-  -- 'system' = free del alta, 'stripe' = pagado, 'admin' = concedido a mano
+  -- 'system' = free del alta, 'stripe'/'creem' = pagado con ese proveedor,
+  -- 'admin' = concedido a mano
   source                 text not null default 'system',
   created_at             timestamptz not null default now()
 );
@@ -304,7 +307,14 @@ alter table public.subscriptions add constraint subscriptions_status_check
   ));
 alter table public.subscriptions drop constraint if exists subscriptions_source_check;
 alter table public.subscriptions add constraint subscriptions_source_check
-  check (source in ('system', 'stripe', 'admin'));
+  check (source in ('system', 'stripe', 'creem', 'admin'));
+
+-- Filas del webhook de Creem escritas sin source (antes de admitir 'creem');
+-- va primero para que el backfill de Stripe de abajo no se las quede
+update public.subscriptions
+   set source = 'creem'
+ where source = 'system'
+   and stripe_customer_id like 'cust\_%';
 
 -- Backfill de source para filas creadas antes de existir la columna
 update public.subscriptions
@@ -318,6 +328,15 @@ update public.subscriptions
    and plan_id <> 'free'
    and stripe_subscription_id is null
    and stripe_customer_id is null;
+
+comment on column public.subscriptions.source is
+  'Origen del plan: system (alta gratuita), stripe o creem (pagado con ese proveedor), admin (concedido a mano).';
+comment on column public.subscriptions.stripe_customer_id is
+  'Id del cliente en el proveedor de cobro de source (Stripe cus_…, Creem cust_…).';
+comment on column public.subscriptions.stripe_subscription_id is
+  'Id de la suscripción recurrente en el proveedor de cobro (null en pases de pago único y planes concedidos).';
+comment on column public.subscriptions.stripe_price_id is
+  'Precio (Stripe price_…) o producto (Creem prod_…) cobrado.';
 
 create table if not exists public.referrals (
   id          uuid primary key default gen_random_uuid(),
@@ -361,6 +380,16 @@ create table if not exists public.stripe_events (
   id           text primary key,
   type         text not null,
   processed_at timestamptz not null default now()
+);
+
+-- Idempotencia de los webhooks de cualquier proveedor (hoy, Creem): cada
+-- (provider, id del evento) se procesa una vez
+create table if not exists public.payment_events (
+  provider     text not null check (provider in ('stripe', 'creem')),
+  id           text not null,
+  type         text not null,
+  processed_at timestamptz not null default now(),
+  primary key (provider, id)
 );
 
 -- Uso mensual de las acciones de IA con cupo (plan Gratis), por usuario y mes
@@ -912,8 +941,9 @@ revoke all on table public.reservations from anon;
 revoke insert, update, delete on table public.reservations from authenticated;
 grant select on table public.reservations to authenticated;
 
--- stripe_events y admin_private_settings: solo service role
+-- stripe_events, payment_events y admin_private_settings: solo service role
 revoke all on table public.stripe_events from anon, authenticated;
+revoke all on table public.payment_events from anon, authenticated;
 revoke all on table public.admin_private_settings from anon, authenticated;
 
 -- usage_counters: el usuario solo LEE sus filas (las escriben las RPC de
@@ -998,6 +1028,7 @@ alter table public.referrals            enable row level security;
 alter table public.referral_redemptions enable row level security;
 alter table public.reservations         enable row level security;
 alter table public.stripe_events        enable row level security;
+alter table public.payment_events       enable row level security;
 alter table public.ai_logs              enable row level security;
 alter table public.feature_flags        enable row level security;
 alter table public.announcements        enable row level security;
@@ -1194,8 +1225,8 @@ drop policy if exists "usage_counters_select_own" on public.usage_counters;
 create policy "usage_counters_select_own" on public.usage_counters
   for select using (user_id = (select auth.uid()));
 
--- ai_logs, admin_audit_log, trip_cache, stripe_events, admin_private_settings:
--- SIN políticas → solo accesibles vía service role (RLS habilitado + sin
+-- ai_logs, admin_audit_log, trip_cache, stripe_events, payment_events,
+-- admin_private_settings: SIN políticas → solo accesibles vía service role (RLS habilitado + sin
 -- policy = denegado)
 
 -- Cierre de is_admin(uuid) (DA-24): ya ninguna política la usa (todas usan

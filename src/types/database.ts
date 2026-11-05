@@ -106,14 +106,22 @@ export type SubscriptionStatus =
   | 'unpaid'
   | 'paused'
 
-/** De dónde viene el plan: alta gratuita, pago en Stripe o concedido a mano. */
-export type SubscriptionSource = 'system' | 'stripe' | 'admin'
+/**
+ * De dónde viene el plan: alta gratuita, pago con un proveedor de cobro
+ * (Stripe o Creem) o concedido a mano.
+ */
+export type SubscriptionSource = 'system' | 'stripe' | 'creem' | 'admin'
 
 export interface SubscriptionRow {
   id: string
   user_id: string
   plan_id: PlanId
   tier: PlanTier
+  /**
+   * Ids en el proveedor de cobro que indica `source` (nombre histórico: con
+   * Creem guardan cust_…, sub_… y prod_…). La RPC my_effective_tier y la app
+   * móvil leen stripe_subscription_id para saber si el plan es recurrente.
+   */
   stripe_customer_id: string | null
   stripe_subscription_id: string | null
   stripe_price_id: string | null

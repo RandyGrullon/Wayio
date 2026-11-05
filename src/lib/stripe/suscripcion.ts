@@ -21,7 +21,10 @@ export async function leerSuscripcion(
   return (data as SubscriptionRow | null) ?? null
 }
 
-/** ¿Tiene una suscripción RECURRENTE de Stripe que todavía da acceso? */
+/**
+ * ¿Tiene una suscripción RECURRENTE (de Creem o de Stripe: el id va en
+ * stripe_subscription_id) que todavía da acceso?
+ */
 export function tieneRecurrenteActiva(sub: SubscriptionRow | null): boolean {
   return Boolean(
     sub?.stripe_subscription_id &&
