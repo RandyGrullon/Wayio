@@ -14,7 +14,7 @@
 | 4   | **Geoapify**                                                  | Ubicar lugares y rutas por calles en el mapa con uso comercial                            | Muy recomendado si cobras     | Plan Free (o US$59/mes) |
 | 5   | OpenWeather                                                   | Pronóstico real si el viaje empieza en ≤ 5 días                                           | Opcional                      | Gratis                  |
 | 6   | Afiliados (Viator, Booking, Skyscanner/Travelpayouts, Airalo) | Ganar comisión con los enlaces                                                            | Opcional                      | Gratis                  |
-| 7   | Stripe                                                        | Suscripciones Pro                                                                         | Solo si vas a cobrar          | Comisión por venta      |
+| 7   | Creem (o Stripe como alternativa)                             | Suscripciones Pro y Pase Pro de 30 días                                                   | Solo si vas a cobrar          | 3,9 % + US$0,40 / venta |
 | 8   | PostHog / Sentry                                              | Analítica / errores                                                                       | Opcional                      | Planes gratis           |
 | 9   | Mapbox + Expo/EAS                                             | App móvil (mapa y builds)                                                                 | Solo móvil                    | Free / pago de tiendas  |
 
@@ -149,9 +149,65 @@ Cómo funciona:
 
 IDs de afiliado (públicos; si faltan, los enlaces funcionan sin comisión): `NEXT_PUBLIC_BOOKING_AID` (Booking vía Awin/CJ), `NEXT_PUBLIC_SKYSCANNER_ASSOCIATE_ID` (Impact), `NEXT_PUBLIC_TP_MARKER` (Travelpayouts/Aviasales), `NEXT_PUBLIC_AIRALO_REF`. Tras desplegar, haz un clic de prueba en cada panel de afiliado para confirmar la atribución.
 
-## 6. Stripe (solo si vas a cobrar)
+## 6. Pagos — Creem (principal) o Stripe (alternativa)
 
-> Stripe no abre cuentas de comercio con sede en República Dominicana (verifícalo en stripe.com/global). Opciones: empresa en EE. UU. (Stripe Atlas), un _merchant of record_ (Paddle, Lemon Squeezy) o una pasarela local.
+Stripe no abre cuentas a residentes de República Dominicana, así que el cobro web va por **Creem**, un _merchant of record_ (MoR): Creem es el vendedor legal, calcula y paga los impuestos de cada país, aparece en el recibo del cliente y te paga a tu banco de RD (o en USDC) los días 1 y 15. Comisión: 3,9 % + US$0,40 por venta, sin cuota mensual ni recargo internacional. El código de Stripe sigue ahí como alternativa.
+
+- `PAYMENTS_PROVIDER=creem` (por defecto) o `stripe` decide dónde se abren los pagos **nuevos**. Quien ya paga con un proveedor sigue atendido por ese (portal, bajas y webhook), aunque cambies la variable.
+- La web y la app móvil llaman a `/api/pagos/checkout`, `/api/pagos/portal` y `/api/pagos/suscripcion` (cancelar o reanudar al final del periodo desde **Tu cuenta**). `/api/stripe/checkout` y `/api/stripe/portal` siguen vivos como alias para las versiones ya publicadas de la app. Ningún texto al cliente nombra al procesador; la política de privacidad sí, la del proveedor activo.
+- Base de datos: ejecuta [`supabase/migrations/20261105120000_cobros_creem.sql`](supabase/migrations/20261105120000_cobros_creem.sql) en Supabase → SQL Editor (admite `source = 'creem'` y crea `payment_events`). Sin ella los pagos activan el plan igual, pero no quedan marcados como Creem y el webhook pierde la idempotencia.
+
+> Documentación oficial de Creem consultada el **5-nov-2026**: [API](https://docs.creem.io/api-reference/introduction) (base `https://api.creem.io`, test `https://test-api.creem.io`, cabecera `x-api-key`), [modo test](https://docs.creem.io/getting-started/test-mode), [webhooks y firma](https://docs.creem.io/code/webhooks), [crear checkout](https://docs.creem.io/api-reference/endpoint/create-checkout), [suscripción](https://docs.creem.io/api-reference/endpoint/get-subscription), [cancelar](https://docs.creem.io/api-reference/endpoint/cancel-subscription) / [reanudar](https://docs.creem.io/api-reference/endpoint/resume-subscription), [portal del cliente](https://docs.creem.io/features/customer-portal) ([enlace por API](https://docs.creem.io/api-reference/endpoint/create-customer-billing)), [bajas y reembolsos](https://docs.creem.io/features/subscriptions/refunds-and-cancellations), [productos](https://docs.creem.io/api-reference/endpoint/create-product), [revisión de cuenta](https://docs.creem.io/merchant-of-record/account-reviews/account-reviews) y [tarifas](https://www.creem.io/pricing).
+
+### 6.1 Cuenta de Creem
+
+1. Regístrate en <https://creem.io> y crea la tienda «Wayio» (email de soporte = el de `NEXT_PUBLIC_CONTACT_EMAIL`, que debe verse igual en la web y en los recibos).
+2. Todo lo de abajo se hace primero con el interruptor **Test Mode** (abajo a la izquierda del panel) **activado**: el modo test es un entorno aparte, con sus propias claves, productos y webhooks.
+3. Para cobrar de verdad, Creem revisa la tienda (1-2 días hábiles) desde **Balance → Payout Account → Set up Payout Account** (solo en modo producción). Pide: la web en **dominio propio** (no vale `*.vercel.app`), **Política de privacidad y Términos** visibles (ya están en `/privacidad` y `/terminos`), precios visibles (`/precios`), un email de soporte que responda, tu nombre o empresa, el país de residencia fiscal (RD) y una descripción del negocio. Wayio genera texto con IA, no imágenes ni video, así que no necesita su API de moderación. Puede que hagan una compra de prueba con un cupón del 100 %.
+
+### 6.2 Productos (en Test Mode)
+
+Products → Create product, en **USD**, categoría fiscal _SaaS / digital_, con los importes de [`src/constants/pricing.ts`](src/constants/pricing.ts). Copia cada id (`prod_…`):
+
+| Producto                         | Tipo                 | Precio | Variable                 |
+| -------------------------------- | -------------------- | ------ | ------------------------ |
+| Wayio Pro Viajero Mensual        | Recurrente, cada mes | 6.99   | `CREEM_PRODUCT_MONTHLY`  |
+| Wayio Pro Viajero Anual          | Recurrente, cada año | 49.99  | `CREEM_PRODUCT_ANNUAL`   |
+| Wayio Pase Pro de 30 días        | Pago único           | 4.99   | `CREEM_PRODUCT_PER_TRIP` |
+| Wayio Pro Grupo Mensual (oculto) | Recurrente, cada mes | 12.99  | `CREEM_PRODUCT_GROUP`    |
+
+- El pase da Pro 30 días desde el pago (si se compra desde un viaje guardado, hasta el fin del viaje + 7 días). Pro Grupo no está a la venta (`PLANES_A_LA_VENTA`): su producto es opcional.
+- **Impuestos (tax mode):** con _exclusive_ el impuesto del país se suma al precio al pagar y a ti te llega el precio de la tabla menos la comisión (es lo que supone la calculadora de `/admin/rentabilidad`; la página de planes ya avisa de que pueden sumarse impuestos). Con _inclusive_ el cliente paga justo 6.99, pero el impuesto sale de tu parte. Decídelo antes de crear los productos de producción.
+- Developers → API keys → la clave de test (`creem_test_…`) → `CREEM_API_KEY`, y `CREEM_TEST_MODE=true`.
+- **No compartas el enlace de pago público** de los productos ni los pongas en una _storefront_: Wayio abre cada pago por API con la cuenta del usuario en la metadata, y un pago hecho desde el enlace suelto no se puede asociar a nadie (el webhook lo registra como error y no activa ningún plan).
+
+### 6.3 Webhook
+
+Developers → Webhooks → endpoint `https://<tu-dominio>/api/creem/webhook`. Eventos: déjalo en «todos» o marca al menos `checkout.completed`, `subscription.active`, `subscription.paid`, `subscription.update`, `subscription.trialing`, `subscription.scheduled_cancel`, `subscription.past_due`, `subscription.unpaid`, `subscription.paused`, `subscription.canceled`, `subscription.expired` y `refund.created` (más `dispute.created` para que quede en el registro). Copia el secreto de firma → `CREEM_WEBHOOK_SECRET`.
+
+- Cada evento llega firmado (`creem-signature`, HMAC-SHA256 del cuerpo) y el webhook rechaza los que no cuadran. Creem reintenta a los 30 s, 5 min, 30 min y 6 h si no recibe un 200; cada evento se procesa una sola vez (`payment_events`).
+- Qué escribe en `subscriptions` (igual que el de Stripe, con `source = 'creem'`; las columnas `stripe_*` guardan los ids de Creem): suscripción activa o en prueba → Pro hasta `current_period_end`; baja programada → sigue Pro con «Cancelado: tienes acceso hasta…»; pago fallido (`past_due`) → conserva Pro mientras Creem reintenta; `unpaid`, `paused` o `canceled` → Gratis; pase pagado → Pro hasta la fecha del pase; reembolso total del pase → lo retira.
+- **Bajas:** según su documentación, el portal de Creem cancela **en el acto**. Para cumplir la promesa de `/precios` («sigues con Pro hasta el final del periodo»), **Tu cuenta** tiene «Cancelar suscripción», que programa la baja al final del periodo por API. Si en los ajustes de facturación de tu tienda de Creem puedes elegir que las cancelaciones sean al final del periodo, actívalo también.
+
+### 6.4 Probar en modo test
+
+1. `.env.local` con las variables de arriba (`PAYMENTS_PROVIDER=creem`, `CREEM_TEST_MODE=true`) y `npm run verificar`: comprueba la clave, que cada producto existe en modo test con su tipo y precio, el secreto del webhook y la migración.
+2. Para que los webhooks lleguen a tu PC: `creem listen --forward-to http://localhost:3000/api/creem/webhook` ([CLI de Creem](https://docs.creem.io/code/cli), reenvía con la firma real) o un túnel tipo ngrok registrado como endpoint de test.
+3. `npm run dev` → `/precios` → «Continuar al pago» → paga con la tarjeta de prueba `4111 1111 1111 1111` (cualquier fecha futura y CVC). Para fallos: `4507 9900 0000 0028` (rechazada), `4507 9900 0000 0010` (sin fondos), `4507 9900 0000 0044` (CVC incorrecto).
+4. Vuelves a `/cuenta?pago=ok` con el plan activo. Prueba también «Cancelar suscripción» / «Mantener mi suscripción», «Gestionar pagos» (portal de Creem) y el pase de 30 días. Desde el panel de Creem puedes reenviar eventos y hacer reembolsos de prueba.
+
+**Sin cuenta de Creem todavía:** `npm run creem:mock` levanta un simulador local (`scripts/creem-mock.mjs`) con la misma API, una página de pago, el portal y webhooks firmados. Pon en `.env.local` `CREEM_API_URL=http://localhost:4010`, `CREEM_API_KEY=creem_test_simulador`, `CREEM_WEBHOOK_SECRET=whsec_simulador` y `CREEM_PRODUCT_MONTHLY|ANNUAL|PER_TRIP|GROUP` = `prod_sim_mensual|prod_sim_anual|prod_sim_pase|prod_sim_grupo` (las instrucciones están al principio del script). Usa un Supabase de **desarrollo**: el webhook escribe de verdad en `subscriptions`.
+
+### 6.5 Pasar a producción
+
+1. En el panel de Creem, desactiva Test Mode y aprueba la revisión de la cuenta (6.1).
+2. Crea los **mismos productos** en producción (tienen ids nuevos), una clave de API de producción y un webhook de producción con su propio secreto.
+3. En Vercel: `CREEM_API_KEY` (producción), `CREEM_TEST_MODE=false`, `CREEM_WEBHOOK_SECRET`, `CREEM_PRODUCT_*` de producción, `PAYMENTS_PROVIDER=creem` y **sin** `CREEM_API_URL`. Vuelve a desplegar.
+4. Haz una compra real pequeña (el pase) y reembólsala desde el panel: el plan debe activarse y luego volver a Gratis. El panel admin muestra el proveedor en **Estado del entorno** y el origen «Creem» en Suscripciones.
+
+### 6.6 Stripe (alternativa: `PAYMENTS_PROVIDER=stripe`)
+
+> Solo tiene sentido con una empresa fuera de RD (p. ej. una LLC en EE. UU. con Stripe Atlas). Con Creem activo, las variables de Stripe pueden quedarse vacías.
 
 1. dashboard.stripe.com (modo **Test** primero) → Developers → API keys → `STRIPE_SECRET_KEY`.
 2. Products (USD, importes de [`src/constants/pricing.ts`](src/constants/pricing.ts)):
@@ -160,7 +216,7 @@ IDs de afiliado (públicos; si faltan, los enlaces funcionan sin comisión): `NE
    - «Wayio Pro Grupo»: recurrente mensual 12.99 → `STRIPE_PRICE_GROUP`. **Oculto de la venta** (no está en `PLANES_A_LA_VENTA`): el checkout lo rechaza con 400 `plan_no_disponible`. Si ya tienes suscriptores, conserva el precio y la variable: el portal y el webhook siguen funcionando para ellos.
 3. Developers → Webhooks → endpoint `https://<tu-dominio>/api/stripe/webhook` con los eventos `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`, `customer.subscription.created|updated|deleted`, `invoice.paid`, `invoice.payment_failed` → `STRIPE_WEBHOOK_SECRET`. En local: `stripe listen --forward-to localhost:3000/api/stripe/webhook`.
 4. Settings → Billing → Customer portal: activa cancelar, cambiar método de pago y cambiar de plan; enlace de retorno `https://<tu-dominio>/cuenta`; **Save**.
-5. El «depósito de reserva» queda **desactivado** (`NEXT_PUBLIC_RESERVAS_ENABLED=false`): hoy no hay un proveedor real de reservas detrás y cobrar un depósito sin reservar nada es un riesgo legal. Actívalo solo cuando lo haya.
+5. El «depósito de reserva» queda **desactivado** (`NEXT_PUBLIC_RESERVAS_ENABLED=false`): hoy no hay un proveedor real de reservas detrás y cobrar un depósito sin reservar nada es un riesgo legal. Actívalo solo cuando lo haya. **Solo existe con Stripe**: un MoR como Creem vende software, no depósitos de viajes de terceros, así que con `PAYMENTS_PROVIDER=creem` el checkout de reservas responde 403.
 
 ## 7. Analítica y errores
 

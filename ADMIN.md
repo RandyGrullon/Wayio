@@ -44,20 +44,20 @@ Entra a `/admin`. Si no eres admin te redirige a la home; si no hay sesión, al 
 
 ## Qué controla
 
-| Sección       | Ruta                   | Qué hace                                                                                                         |
-| ------------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| Dashboard     | `/admin`               | Métricas: usuarios, viajes, MRR, costo de IA, gráficas                                                           |
-| Usuarios      | `/admin/users`         | Buscar, ver detalle, cambiar rol, banear, otorgar/revocar plan, eliminar                                         |
-| Viajes        | `/admin/trips`         | Listar/filtrar, ver itinerario+grupo, cambiar estado, borrar                                                     |
-| Suscripciones | `/admin/subscriptions` | MRR/ARR (solo planes cobrados en Stripe; los concedidos a mano se marcan «Concedido» y no cuentan), tiers, lista |
-| Grupos        | `/admin/groups`        | Moderar mensajes y gastos de los viajes en grupo                                                                 |
-| Referidos     | `/admin/referrals`     | Códigos, conversiones, leaderboard                                                                               |
-| Uso de IA     | `/admin/ai`            | Tokens, costo, latencia y éxito por proveedor/modelo; gasto de hoy frente al tope diario                         |
-| Rentabilidad  | `/admin/rentabilidad`  | **Solo el dueño** (`WAYIO_OWNER_EMAILS`): ingresos netos, IA por acción y usuario, fijos y equilibrio            |
-| Feature Flags | `/admin/flags`         | Guardar flags por plataforma (⚠️ la web y la app aún no las leen: ver abajo)                                     |
-| Anuncios      | `/admin/announcements` | Publicar banners para web y mobile                                                                               |
-| Auditoría     | `/admin/audit`         | Registro de todas las acciones de admin                                                                          |
-| Settings      | `/admin/settings`      | Modo mantenimiento (⚠️ aún no lo lee nadie) y proveedor de IA (⚠️ manda la variable `AI_PROVIDER` del servidor)  |
+| Sección       | Ruta                   | Qué hace                                                                                                                                |
+| ------------- | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Dashboard     | `/admin`               | Métricas: usuarios, viajes, MRR, costo de IA, gráficas                                                                                  |
+| Usuarios      | `/admin/users`         | Buscar, ver detalle, cambiar rol, banear, otorgar/revocar plan, eliminar                                                                |
+| Viajes        | `/admin/trips`         | Listar/filtrar, ver itinerario+grupo, cambiar estado, borrar                                                                            |
+| Suscripciones | `/admin/subscriptions` | MRR/ARR (solo planes cobrados en Creem o Stripe, con su origen; los concedidos a mano se marcan «Concedido» y no cuentan), tiers, lista |
+| Grupos        | `/admin/groups`        | Moderar mensajes y gastos de los viajes en grupo                                                                                        |
+| Referidos     | `/admin/referrals`     | Códigos, conversiones, leaderboard                                                                                                      |
+| Uso de IA     | `/admin/ai`            | Tokens, costo, latencia y éxito por proveedor/modelo; gasto de hoy frente al tope diario                                                |
+| Rentabilidad  | `/admin/rentabilidad`  | **Solo el dueño** (`WAYIO_OWNER_EMAILS`): ingresos netos, IA por acción y usuario, fijos y equilibrio                                   |
+| Feature Flags | `/admin/flags`         | Guardar flags por plataforma (⚠️ la web y la app aún no las leen: ver abajo)                                                            |
+| Anuncios      | `/admin/announcements` | Publicar banners para web y mobile                                                                                                      |
+| Auditoría     | `/admin/audit`         | Registro de todas las acciones de admin                                                                                                 |
+| Settings      | `/admin/settings`      | Modo mantenimiento (⚠️ aún no lo lee nadie) y proveedor de IA (⚠️ manda la variable `AI_PROVIDER` del servidor)                         |
 
 > Pendiente de producto: hoy solo los **anuncios** tienen efecto real. Las flags,
 > el modo mantenimiento y el selector de proveedor de IA se guardan pero ni la
