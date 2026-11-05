@@ -5,8 +5,9 @@
 ## ✅ Compras dentro de la app móvil (rama `feat/compras-integradas`, 2026-11-05)
 
 - **Por qué**: fuera de EE. UU., Apple (3.1.1) y Google Play no dejan vender Pro en la app abriendo el pago web. Hay que usar sus compras integradas (15 % de comisión con el programa para pequeños desarrolladores de Apple y en las suscripciones de Google). Se hace con **RevenueCat**, gratis hasta US$2.500 de ingresos al mes. Investigación, pasos y fuentes: sección 6b de [API-KEYS-GUIA.md](API-KEYS-GUIA.md).
-- **App** (`mobile/`): `react-native-purchases` 10.16 (la 11.x aún no sirve en Expo) detrás de la bandera `EXPO_PUBLIC_COMPRAS_TIENDA`, apagada por defecto. Así, una build sin la bandera cobra con el pago web igual que antes.
-  - Con la bandera, la pantalla de planes usa la oferta de la tienda con sus precios locales.
+- **Basta con poner las claves**: la clave pública de RevenueCat de cada plataforma en `mobile/.env` y `REVENUECAT_WEBHOOK_AUTH` en el servidor. Los ids de producto, el entitlement, la oferta y el paquete del pase tienen valores por defecto y se pueden cambiar por variables. Un producto con otro id se deduce del evento.
+- **App** (`mobile/`): `react-native-purchases` 10.16 (la 11.x aún no sirve en Expo). Se activa sola con la clave de la plataforma; `EXPO_PUBLIC_COMPRAS_TIENDA=false` la apaga. Sin clave, la build cobra con el pago web igual que antes.
+  - Con la clave, la pantalla de planes usa la oferta de la tienda con sus precios locales. Reconoce los planes por el tipo de paquete y de producto, no por sus ids.
   - Tiene «Restaurar compras», la gestión de la suscripción de la tienda, el aviso de renovación y los enlaces a Términos y Privacidad.
   - Tras pagar, relee el plan del servidor cada 2,5 s durante 30 s; si no llega, avisa y sugiere restaurar.
   - En iOS con cuenta de EE. UU., `EXPO_PUBLIC_CHECKOUT_WEB_EEUU=true` ofrece además el pago web. En Android no, porque Google exige inscribirse en su programa.
@@ -21,8 +22,8 @@
   - los eventos viejos o de otra compra no pisan la vigente, y nunca se pisa una suscripción de Stripe activa.
 - **Plan efectivo**: `my_effective_tier`, `tierEfectivo` (lo usan `/api/cupo`, el cupo y las funciones Pro) y la app dan acceso a los planes de la tienda hasta `current_period_end` + 3 h, por la demora de las renovaciones y los reintentos del webhook.
 - **Web**: el checkout de Stripe responde 409 `already_pro` a quien ya paga en la tienda, y `/cuenta` le explica que lo gestiona en App Store o Google Play. El admin etiqueta «App Store», «Google Play» o «· prueba» (sandbox), y cuenta en el MRR y en la calculadora solo las suscripciones reales de la tienda, a precio de lista.
-- Migración `20261105120000_compras_en_tienda.sql`: amplía `source`, añade `store_product_id`, `store_transaction_id` y `store_environment`, crea la tabla `revenuecat_events` (solo service role) y la nueva `my_effective_tier`. Está replicada en `supabase/schema.sql` y comprobada por `npm run verificar` («Migración 6»). Se probó en Postgres (PGlite): la migración dos veces seguidas, `schema.sql` completo dos veces y 17 casos de `my_effective_tier` y de los CHECK.
-- **Prueba del webhook**: `npm run probar:revenuecat` levanta un Supabase simulado y `next dev` y pasa 33 comprobaciones (33/33 el 2026-11-05). **Falta probarlo en un teléfono con el sandbox de cada tienda**: no había cuentas de Apple ni de Google para hacerlo.
+- Migración `20261105130000_compras_en_tienda.sql` (va después de la de Creem, `20261105120000`): amplía `source` con un CHECK aditivo, que conserva los valores existentes como `creem`, añade `store_product_id`, `store_transaction_id` y `store_environment`, crea la tabla `revenuecat_events` (solo service role) y la nueva `my_effective_tier`. Está replicada en `supabase/schema.sql` y comprobada por `npm run verificar` («Migración 7»). Se probó en Postgres (PGlite): la migración dos veces seguidas, `schema.sql` completo dos veces y 17 casos de `my_effective_tier` y de los CHECK.
+- **Prueba del webhook**: `npm run probar:revenuecat` levanta un Supabase simulado y `next dev` y pasa 37 comprobaciones (37/37 el 2026-11-05). **Falta probarlo en un teléfono con el sandbox de cada tienda**: no había cuentas de Apple ni de Google para hacerlo.
 
 ## ✅ Planes Gratis y Pro en el servidor (rama `feat/planes-rentabilidad`, 2026-10-20)
 
@@ -112,7 +113,7 @@
 1. **IA**: pon `ANTHROPIC_API_KEY` en `.env.local`, arranca `npm run dev` y ejecuta `npm run eval:ia -- --base http://localhost:3000 --interpret`. Todos los casos deberían salir sin errores (ver el informe en `scripts/eval-ia/resultados/`). Generar exige sesión: con Supabase configurado, pon `EVAL_IA_BEARER` con el access_token de una cuenta de pruebas.
 2. **Supabase**:
    - restaura el proyecto si está pausado;
-   - en el SQL Editor, pega y ejecuta `supabase/migrations/20261008120000_seguridad_y_flujos.sql`, después `supabase/migrations/20261017120000_ai_gasto_diario.sql` (RPC del tope diario de IA; sin ella el tope queda abierto) y por último `supabase/migrations/20261017130000_cupos_y_rentabilidad.sql` (cupos del plan Gratis y ajustes privados del admin; sin ella los cupos quedan abiertos y la calculadora del admin no puede guardar) y, si vas a vender en la app, `supabase/migrations/20261105120000_compras_en_tienda.sql` (compras de App Store y Google Play);
+   - en el SQL Editor, pega y ejecuta `supabase/migrations/20261008120000_seguridad_y_flujos.sql`, después `supabase/migrations/20261017120000_ai_gasto_diario.sql` (RPC del tope diario de IA; sin ella el tope queda abierto) y por último `supabase/migrations/20261017130000_cupos_y_rentabilidad.sql` (cupos del plan Gratis y ajustes privados del admin; sin ella los cupos quedan abiertos y la calculadora del admin no puede guardar) y, si vas a vender en la app, `supabase/migrations/20261105130000_compras_en_tienda.sql` (compras de App Store y Google Play);
    - revisa los admins y comprueba realtime;
    - configura Auth (URLs, plantillas de correo, SMTP y Google), guía en `supabase/CONFIGURACION-AUTH.md`.
 3. **Upstash Redis** (gratis): `UPSTASH_REDIS_REST_URL` y `UPSTASH_REDIS_REST_TOKEN`, para que los límites de uso protejan tu factura de IA en producción (sin Upstash cada instancia cuenta por su lado).
@@ -149,8 +150,8 @@
      - proyecto con las dos apps y el entitlement `pro`, adjunto **solo** a las suscripciones (el pase no);
      - oferta `default` con `$rc_monthly`, `$rc_annual` y `pase_30_dias`;
      - webhook a `https://<tu-dominio>/api/revenuecat/webhook` con un «Authorization header value» secreto;
-   - **Vercel**: `REVENUECAT_WEBHOOK_AUTH` con ese mismo secreto (`openssl rand -hex 32`). Después, «Send test event» en RevenueCat debe dar 200 y `npm run verificar` debe sacar OK en la migración 6;
-   - **`mobile/.env`**: `EXPO_PUBLIC_COMPRAS_TIENDA=true`, `EXPO_PUBLIC_REVENUECAT_IOS_KEY` y `EXPO_PUBLIC_REVENUECAT_ANDROID_KEY`. Haz un development build nuevo;
+   - **Vercel**: `REVENUECAT_WEBHOOK_AUTH` con ese mismo secreto (`openssl rand -hex 32`). Después, «Send test event» en RevenueCat debe dar 200 y `npm run verificar` debe sacar OK en la migración 7;
+   - **`mobile/.env`**: solo `EXPO_PUBLIC_REVENUECAT_IOS_KEY` y `EXPO_PUBLIC_REVENUECAT_ANDROID_KEY`. Con ellas la app vende con la tienda. Haz un development build nuevo;
    - **prueba en sandbox** con una cuenta de Wayio: compra mensual, renovación acelerada, caducidad, pase de 30 días, «Restaurar compras» tras reinstalar y restaurar con otra cuenta (la compra se mueve). En Supabase comprueba la fila de `subscriptions` (`source`, `store_environment = SANDBOX`, `current_period_end`).
 10. **Pruebas finales con 2 cuentas** (checklist):
 

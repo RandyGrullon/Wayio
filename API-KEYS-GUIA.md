@@ -171,12 +171,13 @@ IDs de afiliado (públicos; si faltan, los enlaces funcionan sin comisión): `NE
 
 **Cómo está hecho en el código.**
 
-- App (`mobile/src/lib/compras/tienda.ts` y `PaywallScreen.tsx`): con `EXPO_PUBLIC_COMPRAS_TIENDA=true` y la clave de la plataforma, los planes y precios salen de la oferta de RevenueCat y se pagan con la hoja de la tienda. Hay botón «Restaurar compras», aviso de renovación y enlaces a Términos y Privacidad (los exige Apple). El app_user_id de RevenueCat es el id de Supabase de la cuenta, así que comprar exige sesión. Sin la bandera, la app sigue con el pago web como antes.
+- **Basta con poner las claves**: en la app, la clave pública de RevenueCat de cada plataforma; en el servidor, `REVENUECAT_WEBHOOK_AUTH`. Lo demás tiene valores por defecto y solo se toca si usas otros identificadores.
+- App (`mobile/src/lib/compras/tienda.ts` y `PaywallScreen.tsx`): con la clave de la plataforma (`EXPO_PUBLIC_REVENUECAT_IOS_KEY` o `_ANDROID_KEY`), los planes y precios salen de la oferta de RevenueCat y se pagan con la hoja de la tienda; `EXPO_PUBLIC_COMPRAS_TIENDA=false` lo apaga. Hay botón «Restaurar compras», aviso de renovación y enlaces a Términos y Privacidad (los exige Apple). Los planes se reconocen por el tipo de paquete ($rc_monthly, $rc_annual) y de producto (no renovable = pase), no por sus ids. El app_user_id de RevenueCat es el id de Supabase de la cuenta, así que comprar exige sesión. Sin clave, la app sigue con el pago web como antes.
 - Servidor: `POST /api/revenuecat/webhook` comprueba la cabecera `Authorization` (`REVENUECAT_WEBHOOK_AUTH`), procesa cada `event.id` una sola vez (tabla `revenuecat_events`) y escribe en `subscriptions` con `source` `app_store` o `play_store`. El plan efectivo (RPC `my_effective_tier`, `/api/cupo` y el resto del servidor) da acceso hasta `current_period_end` más 3 horas, para cubrir la demora de las renovaciones y los reintentos del webhook (5 reintentos en unos 80 minutos).
 - El **Pase Pro de 30 días** no se renueva. En el App Store es una **suscripción no renovable** y en Google Play un **producto único consumible**: se puede volver a comprar para otro viaje. Un «no consumible» solo se podría comprar una vez en la vida. El servidor le da 30 días desde la compra al recibir `NON_RENEWING_PURCHASE`. **No lo adjuntes al entitlement `pro`**: RevenueCat lo daría para siempre.
-- Prueba local del webhook sin Supabase ni RevenueCat: `npm run probar:revenuecat`. Levanta un Supabase simulado y `next dev`, y comprueba 33 casos: compra, renovación, orden, cancelación, caducidad, reembolso, pase, transferencia, reintentos y `/api/cupo`.
+- Prueba local del webhook sin Supabase ni RevenueCat: `npm run probar:revenuecat`. Levanta un Supabase simulado y `next dev`, y comprueba 37 casos: compra, renovación, orden, cancelación, caducidad, reembolso, pase, transferencia, ids propios, reintentos y `/api/cupo`.
 
-**Identificadores (deben coincidir exactamente con `src/lib/revenuecat/productos.ts` y `mobile/src/lib/compras/tienda.ts`):**
+**Identificadores recomendados.** Con estos no hay que configurar nada. Si usas otros, ponlos en `REVENUECAT_PRODUCTOS_MENSUAL`, `_ANUAL` y `_PASE` (listas separadas por comas) o déjalos: el servidor deduce el plan del evento y lo avisa en el registro. El entitlement (`REVENUECAT_ENTITLEMENT` y `EXPO_PUBLIC_REVENUECAT_ENTITLEMENT`), la oferta (`EXPO_PUBLIC_REVENUECAT_OFERTA`) y el paquete del pase (`EXPO_PUBLIC_REVENUECAT_PAQUETE_PASE`) también se pueden cambiar.
 
 | Plan                 | App Store                                           | Google Play                                                     | Paquete en la oferta de RevenueCat |
 | -------------------- | --------------------------------------------------- | --------------------------------------------------------------- | ---------------------------------- |
@@ -228,8 +229,8 @@ IDs de afiliado (públicos; si faltan, los enlaces funcionan sin comisión): `NE
 
 ### App y servidor
 
-- Vercel: `REVENUECAT_WEBHOOK_AUTH` (un secreto largo, `openssl rand -hex 32`) y la migración `supabase/migrations/20261105120000_compras_en_tienda.sql` aplicada. `npm run verificar` lo comprueba («Migración 6» y «REVENUECAT_WEBHOOK_AUTH»).
-- `mobile/.env`: `EXPO_PUBLIC_COMPRAS_TIENDA=true` y las dos claves públicas; `EXPO_PUBLIC_CHECKOUT_WEB_EEUU` solo si quieres el pago web en EE. UU. (iOS).
+- Vercel: `REVENUECAT_WEBHOOK_AUTH` (un secreto largo, `openssl rand -hex 32`) y la migración `supabase/migrations/20261105130000_compras_en_tienda.sql` aplicada. Su CHECK de `source` es aditivo: conserva los valores que ya existan (por ejemplo, `creem`) y suma los de la tienda. `npm run verificar` lo comprueba («Migración 7» y «REVENUECAT_WEBHOOK_AUTH»).
+- `mobile/.env`: las dos claves públicas, y nada más. `EXPO_PUBLIC_CHECKOUT_WEB_EEUU=true` solo si quieres el pago web en EE. UU. (iOS).
 - `react-native-purchases` va fijado en la **10.x**: la 11.0 pide a las apps Expo quedarse en la 10.x mientras no salga su pod en CocoaPods. Es código nativo: haz un _development build_ nuevo (`npx expo run:ios` o `npx expo run:android`, o `eas build --profile development`). En Expo Go el SDK entra en «Preview API Mode»: se ve la pantalla, pero no se compra de verdad.
 - Si compilas iOS con **Xcode 27**, RevenueCat avisa de que Expo SDK ≤ 56 necesita un ajuste `post_install` en el Podfile. Revisa qué Xcode usa la imagen de EAS antes de la primera build.
 - Prueba en sandbox, de punta a punta:
