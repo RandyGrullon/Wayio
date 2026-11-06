@@ -16,13 +16,15 @@ import {
   Compass,
   Ellipsis,
   LogOut,
+  Pencil,
   Printer,
   Share2,
   Ship,
   Undo2,
   Users,
+  X,
 } from 'lucide-react'
-import type { Trip } from '@/types/trip'
+import type { Day, Trip } from '@/types/trip'
 import type { Activity } from '@/types/activity'
 import type { Alert } from '@/types/alerts'
 import type { Conflict } from '@/types/conflicts'
@@ -30,17 +32,24 @@ import { SiteHeader } from '@/components/layout/SiteHeader'
 import { TripMap } from '@/components/map/TripMap'
 import { AlertLevel5Cruise } from '@/components/alerts/AlertLevel5Cruise'
 import { Badge, SelloInfo } from '@/components/ui/Badge'
-import { Button, ButtonLink, buttonClasses } from '@/components/ui/Button'
+import {
+  Button,
+  ButtonLink,
+  Spinner,
+  buttonClasses,
+} from '@/components/ui/Button'
 import { Callout } from '@/components/ui/Callout'
 import { Card } from '@/components/ui/Card'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { Menu } from '@/components/ui/Menu'
-import { Modal } from '@/components/ui/Modal'
+import { ConfirmDialog, Modal } from '@/components/ui/Modal'
 import { Segmented } from '@/components/ui/Segmented'
 import { useToast, useToastOffset } from '@/components/ui/Toast'
+import { AjustarConIA } from '@/components/trip/AjustarConIA'
 import { ConflictDisplay } from '@/components/trip/ConflictDisplay'
 import { DayChapter } from '@/components/trip/DayChapter'
 import { DayChips, useDiaVisible } from '@/components/trip/DayChips'
+import { EditableDays } from '@/components/trip/EditableDays'
 import {
   ReserveButton,
   reservasHabilitadas,
@@ -69,6 +78,8 @@ import {
   formatRangoFechas,
   formatViajeros,
 } from '@/lib/utils/formatters'
+import { AlertasEnVivo } from './AlertasEnVivo'
+import { AvisoPendiente } from './AvisoPendiente'
 import { BarraInferior } from './BarraInferior'
 import type { ItemBarra } from './BarraInferior'
 import { CompartirSheet } from './CompartirSheet'
@@ -78,6 +89,7 @@ import { ReagendarSheet } from './ReagendarSheet'
 import { TarjetaAhora } from './TarjetaAhora'
 import { calcularEmbarque, calcularHoy } from './hoy'
 import { useAhora } from './useAhora'
+import { useEdicionViaje } from './useEdicionViaje'
 
 type Vista = 'hoy' | 'itinerario'
 
@@ -128,10 +140,12 @@ export function VistaViaje({ tripId }: { tripId: string }) {
     error,
     errorCode,
     saveError,
+    saving,
     loadTrip,
     markActivityLost,
     rescheduleActivity,
     acceptReschedule,
+    guardarViaje,
     setPublic,
   } = useTrip(tripId)
   const gps = useGPS()
@@ -160,6 +174,21 @@ export function VistaViaje({ tripId }: { tripId: string }) {
   const [enfocarId, setEnfocarId] = useState<string | null>(null)
   const [saliendo, startSalida] = useTransition()
   const itinerarioRef = useRef<HTMLDivElement | null>(null)
+  // Edición manual: borrador local de los días hasta «Guardar cambios».
+  const [editando, setEditando] = useState(false)
+  const [borrador, setBorrador] = useState<Day[] | null>(null)
+  const [confirmarDescarte, setConfirmarDescarte] = useState(false)
+  // Al guardar con el viaje cambiado desde que se empezó a editar.
+  const [conflictoEdicion, setConflictoEdicion] = useState(false)
+  // Viaje sobre el que se empezó a editar (para no pisar cambios de otra vía).
+  const [baseEdicion, setBaseEdicion] = useState<Trip | null>(null)
+  // Navegación interna o «Cerrar sesión» con cambios sin guardar.
+  const [salida, setSalida] = useState<
+    { tipo: 'ruta'; href: string } | { tipo: 'sesion' } | null
+  >(null)
+  // Copias síncronas: «Guardar» puede llegar justo tras un onChange.
+  const borradorRef = useRef<Day[] | null>(null)
+  const editadasRef = useRef<Set<string>>(new Set())
 
   const trip = loadedTrip ?? offlineTrip
   const desdeCache = !loadedTrip && offlineTrip !== null
@@ -206,38 +235,114 @@ export function VistaViaje({ tripId }: { tripId: string }) {
     if (saveError) toastError(saveError)
   }, [saveError, toastError])
 
-  // Los toasts quedan por encima de la barra inferior en móvil.
-  useToastOffset(72, '(max-width: 767px)')
-
   // ── Derivados ─────────────────────────────────────────────────────────────
   const monedaViaje = trip ? monedaDelViaje(trip, { moneda }) : moneda
+  // Ajustar con IA, editar a mano y deshacer (solo el dueño, ver puedeEditar).
+  // Mientras se edita o se reagenda, lo que llegue queda pendiente.
+  const edicion = useEdicionViaje(loadedTrip, guardarViaje, {
+    moneda: monedaViaje,
+    enPausa: editando || reagendar !== null,
+    guardando: saving,
+  })
+  const guardandoAlgo = saving || edicion.aplicando
   const hoy = useMemo(
     () => (trip && ahora ? calcularHoy(trip, ahora) : null),
     [trip, ahora]
   )
   const enCurso = hoy?.momento === 'durante'
-  const vista: Vista = vistaElegida ?? (enCurso ? 'hoy' : 'itinerario')
+  // Mientras se edita solo se ve el itinerario (el borrador).
+  const vista: Vista = editando
+    ? 'itinerario'
+    : (vistaElegida ?? (enCurso ? 'hoy' : 'itinerario'))
+  const diasVista = editando && borrador ? borrador : (trip?.dias ?? null)
   const diaVisible = useDiaVisible(
     itinerarioRef,
-    `${vista}-${trip?.dias.length}`
+    `${vista}-${editando}-${diasVista?.length}`
   )
   const pendientes = loadedTrip
     ? actividadesPendientes
     : (trip?.actividadesPendientes ?? [])
   const puedeEditar = esDueno && isOnline && !desdeCache && Boolean(rowId)
+  // «Me la perdí», la tarjeta de ahora y las alertas: no mientras se edita ni
+  // mientras se guarda otro cambio (dos PUT a la vez pisarían datos).
+  const puedeTocar = puedeEditar && !editando && !guardandoAlgo
+  // El dueño con el viaje del servidor (no la copia offline): monta el FAB
+  // «Ajustar con IA» aunque se corte la conexión, para no perder el chat.
+  const conAjustes = esDueno && Boolean(rowId) && loadedTrip !== null
+  const hayCambiosSinGuardar =
+    editando && borrador !== null && borrador !== baseEdicion?.dias
+  // Lo que se perdería al salir: el borrador o un ajuste de la IA sin aplicar.
+  const hayQueAvisar = hayCambiosSinGuardar || edicion.pendiente?.tipo === 'ia'
   const reserva = searchParams.get('reserva')
   const esCrucero = Boolean(
-    trip?.dias.some((d) => d.actividades.some((a) => a.puertoCrucero))
+    diasVista?.some((d) => d.actividades.some((a) => a.puertoCrucero))
   )
 
   const conflictosLocales = useMemo(
-    () => (trip ? detectarConflictosLocales(trip.dias) : []),
-    [trip]
+    () => (diasVista ? detectarConflictosLocales(diasVista) : []),
+    [diasVista]
   )
   const conflictos = [
     ...conflictosLocales,
-    ...(conflictosIA && conflictosIA.para === trip ? conflictosIA.lista : []),
+    ...(conflictosIA && conflictosIA.para === trip && !editando
+      ? conflictosIA.lista
+      : []),
   ].filter((c) => !descartados.has(c.id))
+
+  // Los toasts quedan por encima de la barra inferior en móvil y, con el FAB
+  // «Ajustar con IA» visible, también por encima de él.
+  const conFab = conAjustes && isOnline && !editando
+  useToastOffset(72, '(max-width: 767px)')
+  useToastOffset(conFab ? 152 : 0, '(max-width: 767px)')
+  useToastOffset(conFab ? 72 : 0)
+
+  // Salir con cambios sin guardar pide confirmación: al cerrar o recargar
+  // (beforeunload) y en los enlaces internos (cabecera, «Grupo»…), que se
+  // interceptan antes de que Next navegue.
+  useEffect(() => {
+    if (!hayQueAvisar) return
+    const avisar = (e: BeforeUnloadEvent) => e.preventDefault()
+    const alClic = (e: MouseEvent) => {
+      if (
+        e.defaultPrevented ||
+        e.button !== 0 ||
+        e.metaKey ||
+        e.ctrlKey ||
+        e.shiftKey ||
+        e.altKey
+      ) {
+        return
+      }
+      const enlace =
+        e.target instanceof Element ? e.target.closest('a[href]') : null
+      if (!(enlace instanceof HTMLAnchorElement)) return
+      if ((enlace.target && enlace.target !== '_self') || enlace.download) {
+        return
+      }
+      const url = new URL(enlace.href, window.location.href)
+      // Fuera de Wayio lo cubre beforeunload; las anclas de esta página no
+      // salen de ella.
+      if (url.origin !== window.location.origin) return
+      if (
+        url.pathname === window.location.pathname &&
+        url.search === window.location.search
+      ) {
+        return
+      }
+      e.preventDefault()
+      e.stopPropagation()
+      setSalida({
+        tipo: 'ruta',
+        href: `${url.pathname}${url.search}${url.hash}`,
+      })
+    }
+    window.addEventListener('beforeunload', avisar)
+    document.addEventListener('click', alClic, true)
+    return () => {
+      window.removeEventListener('beforeunload', avisar)
+      document.removeEventListener('click', alClic, true)
+    }
+  }, [hayQueAvisar])
 
   const embarque = useMemo(
     () => (trip && ahora ? calcularEmbarque(trip, ahora, tripId) : null),
@@ -341,7 +446,7 @@ export function VistaViaje({ tripId }: { tripId: string }) {
     }
   }
 
-  const cerrarSesion = () =>
+  const salirDeLaSesion = () =>
     startSalida(async () => {
       try {
         await clearOfflineData()
@@ -355,6 +460,16 @@ export function VistaViaje({ tripId }: { tripId: string }) {
       }
       await signOut()
     })
+
+  // Con cambios sin guardar, «Cerrar sesión» pregunta antes.
+  const cerrarSesion = () => {
+    if (!hayQueAvisar) {
+      salirDeLaSesion()
+      return
+    }
+    setMasAbierto(false)
+    setSalida({ tipo: 'sesion' })
+  }
 
   const alCalendario = () => {
     if (!trip) return
@@ -376,10 +491,77 @@ export function VistaViaje({ tripId }: { tripId: string }) {
     setOcultasSesion((o) => [...o, embarqueVisible.clave])
   }
 
+  // ── Edición manual ────────────────────────────────────────────────────────
+  const entrarEdicion = () => {
+    if (!loadedTrip || !puedeEditar || guardandoAlgo) return
+    borradorRef.current = loadedTrip.dias
+    editadasRef.current = new Set()
+    setBaseEdicion(loadedTrip)
+    setBorrador(loadedTrip.dias)
+    setEditando(true)
+    setVistaElegida('itinerario')
+    window.requestAnimationFrame(() =>
+      document.getElementById(ID_INICIO)?.scrollIntoView({ block: 'start' })
+    )
+  }
+
+  const cambiarBorrador = (dias: Day[]) => {
+    borradorRef.current = dias
+    setBorrador(dias)
+  }
+
+  const salirEdicion = () => {
+    borradorRef.current = null
+    editadasRef.current = new Set()
+    setBaseEdicion(null)
+    setBorrador(null)
+    setEditando(false)
+    edicion.limpiarFalloManual()
+  }
+
+  // «Guardar cambios» (pasa antes por la confirmación de EditableDays si hay
+  // una actividad abierta en el editor). Si falla, el borrador se conserva.
+  // `aunqueCambio`: el viaje cambió por otra vía desde que se empezó a editar
+  // y el usuario aceptó que sus días sustituyan a los de ahora.
+  const guardarEdicion = async (aunqueCambio = false) => {
+    const dias = borradorRef.current
+    if (!loadedTrip || !dias || dias === baseEdicion?.dias) {
+      salirEdicion()
+      return
+    }
+    if (loadedTrip !== baseEdicion && !aunqueCambio) {
+      setConflictoEdicion(true)
+      return
+    }
+    const guardado = await edicion.guardarEdicion(
+      { ...loadedTrip, dias },
+      editadasRef.current
+    )
+    if (!guardado) return
+    if (borradorRef.current === dias) {
+      salirEdicion()
+      return
+    }
+    // Se siguió editando mientras se guardaba: eso no se pierde. Lo guardado
+    // pasa a ser la base y se sigue en modo edición.
+    setBaseEdicion(guardado)
+    toast({
+      message: 'Guardamos tus cambios',
+      description: 'Lo que editaste mientras se guardaba sigue sin guardar.',
+    })
+  }
+
+  const descartarEdicion = () => {
+    if (hayCambiosSinGuardar) setConfirmarDescarte(true)
+    else salirEdicion()
+  }
+
   const elegirBarra = (item: ItemBarra) => {
     if (item === 'mapa') setMapaAbierto(true)
     else if (item === 'mas') setMasAbierto(true)
-    else {
+    else if (editando && item === 'hoy') {
+      toast({ message: 'Guarda o descarta tus cambios para ver «Hoy».' })
+    } else {
       setVistaElegida(item === 'hoy' ? 'hoy' : 'itinerario')
       window.scrollTo({ top: 0 })
     }
@@ -452,9 +634,24 @@ export function VistaViaje({ tripId }: { tripId: string }) {
     hoy?.indiceHoy !== null && hoy?.indiceHoy !== undefined
       ? trip.dias[hoy.indiceHoy]
       : undefined
+  // Lo que se pinta en el itinerario, los chips y el mapa (el borrador al editar).
+  const diasMostrados = diasVista ?? trip.dias
+
+  // Ajuste con IA o deshacer sin guardar: en la página y en el panel de la IA.
+  const avisoPendiente = edicion.pendiente ? (
+    <AvisoPendiente
+      pendiente={edicion.pendiente}
+      aplicando={guardandoAlgo}
+      online={isOnline}
+      editando={editando}
+      saveError={saveError}
+      onAplicar={edicion.aplicarPendiente}
+      onDescartar={edicion.descartarPendiente}
+    />
+  ) : null
 
   const accionesHoy = (act: Activity) =>
-    puedeEditar && act.estado !== 'perdida' && !act.esPerdida ? (
+    puedeTocar && act.estado !== 'perdida' && !act.esPerdida ? (
       <Button
         variant="ghost"
         size="sm"
@@ -490,7 +687,7 @@ export function VistaViaje({ tripId }: { tripId: string }) {
       key: 'ia',
       label: 'Revisar el horario con IA',
       icon: <Compass />,
-      disabled: !isOnline || revisando,
+      disabled: !isOnline || revisando || editando,
       onSelect: () => {
         setVistaElegida('itinerario')
         void revisarConIA()
@@ -625,8 +822,19 @@ export function VistaViaje({ tripId }: { tripId: string }) {
               ]}
               value={vista}
               onValueChange={(v) => setVistaElegida(v)}
+              disabled={editando}
             />
             <div className="hidden items-center gap-2 md:flex">
+              {puedeEditar && !editando ? (
+                <Button
+                  variant="outline"
+                  icon={<Pencil />}
+                  disabled={guardandoAlgo}
+                  onClick={entrarEdicion}
+                >
+                  Editar
+                </Button>
+              ) : null}
               <Button
                 variant="outline"
                 icon={<Share2 />}
@@ -667,6 +875,12 @@ export function VistaViaje({ tripId }: { tripId: string }) {
                 items={masItems}
               />
             </div>
+            {saving || edicion.aplicando ? (
+              <span className="inline-flex items-center gap-2 text-body-s text-fg-muted">
+                <Spinner />
+                Guardando…
+              </span>
+            ) : null}
             <PildoraGPS
               className="sm:ml-auto"
               estado={gps.estado}
@@ -676,6 +890,8 @@ export function VistaViaje({ tripId }: { tripId: string }) {
             />
           </div>
 
+          {avisoPendiente ? <div className="mt-6">{avisoPendiente}</div> : null}
+
           <div className="mt-8 grid gap-8 lg:grid-cols-12 xl:gap-10">
             <aside
               aria-label="Mapa del viaje"
@@ -684,7 +900,7 @@ export function VistaViaje({ tripId }: { tripId: string }) {
             >
               <div className="h-[40dvh] min-h-60 lg:sticky lg:top-20 lg:h-[calc(100dvh-104px)]">
                 <TripMap
-                  dias={trip.dias}
+                  dias={diasMostrados}
                   diaEnfocado={diaMapa}
                   userLocation={ubicacion}
                   siguiente={siguiente}
@@ -711,7 +927,7 @@ export function VistaViaje({ tripId }: { tripId: string }) {
                       <TarjetaAhora
                         hoy={hoy}
                         ahora={ahora}
-                        puedeReagendar={puedeEditar}
+                        puedeReagendar={puedeTocar}
                         onPerdida={abrirReagenda}
                       />
                       {diaHoy ? (
@@ -780,7 +996,7 @@ export function VistaViaje({ tripId }: { tripId: string }) {
                         icon={<Compass />}
                         loading={revisando}
                         loadingText="Revisando…"
-                        disabled={!isOnline}
+                        disabled={!isOnline || editando}
                         onClick={() => void revisarConIA()}
                       >
                         Revisar con IA
@@ -802,7 +1018,7 @@ export function VistaViaje({ tripId }: { tripId: string }) {
                   </section>
 
                   <DayChips
-                    dias={trip.dias}
+                    dias={diasMostrados}
                     trip={trip}
                     activo={diaVisible}
                     onElegir={() => undefined}
@@ -812,16 +1028,50 @@ export function VistaViaje({ tripId }: { tripId: string }) {
                     advertencias={trip.advertencias}
                     className="mt-6"
                   />
-                  <div className="mt-8 flex flex-col gap-14">
-                    {trip.dias.map((dia, i) => (
-                      <DayChapter
-                        key={`${dia.numero}-${i}`}
-                        dia={dia}
-                        indice={i}
-                        trip={trip}
-                        moneda={monedaViaje}
-                      />
-                    ))}
+                  {editando && edicion.falloManual ? (
+                    <Callout
+                      tone="danger"
+                      title="No se guardaron tus cambios"
+                      className="mt-6"
+                      data-print="hide"
+                    >
+                      {saveError ?? 'No pudimos guardar los cambios.'} Siguen
+                      aquí: vuelve a pulsar «Guardar cambios».
+                    </Callout>
+                  ) : null}
+                  <div className="mt-8">
+                    <EditableDays
+                      dias={diasMostrados}
+                      editing={editando}
+                      onChange={cambiarBorrador}
+                      onTerminar={() => void guardarEdicion()}
+                      onActividadesEditadas={(ids) => {
+                        for (const id of ids) editadasRef.current.add(id)
+                      }}
+                      moneda={monedaViaje}
+                      trip={trip}
+                      resaltados={edicion.resaltados}
+                      claveResaltado={edicion.claveResaltado}
+                      textoListo="Guardar cambios"
+                      listoCargando={edicion.aplicando}
+                      listoDeshabilitado={!isOnline || saving}
+                      accionEdicion={
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          icon={<X />}
+                          disabled={edicion.aplicando}
+                          onClick={descartarEdicion}
+                        >
+                          Descartar
+                        </Button>
+                      }
+                      avisoEdicion={
+                        isOnline
+                          ? 'Reordena, edita o borra actividades. Arrastra el asa o usa las flechas del teclado para moverlas. Al terminar, guarda los cambios.'
+                          : 'Sin conexión: puedes seguir editando y guardar cuando vuelvas a conectarte.'
+                      }
+                    />
                   </div>
                   <NotasDeRuta consejos={trip.consejos} className="mt-14" />
                   <ParaTuProximaVisita
@@ -878,6 +1128,20 @@ export function VistaViaje({ tripId }: { tripId: string }) {
           >
             Compartir
           </Button>
+          {puedeEditar && !editando ? (
+            <Button
+              variant="ghost"
+              icon={<Pencil />}
+              className="justify-start"
+              disabled={guardandoAlgo}
+              onClick={() => {
+                setMasAbierto(false)
+                entrarEdicion()
+              }}
+            >
+              Editar el itinerario
+            </Button>
+          ) : null}
           {grupoLink ? (
             <ButtonLink
               href={`/group/${grupoLink}`}
@@ -933,7 +1197,7 @@ export function VistaViaje({ tripId }: { tripId: string }) {
         bodyClassName="-mx-5 -mb-4 flex"
       >
         <TripMap
-          dias={trip.dias}
+          dias={diasMostrados}
           diaEnfocado={diaMapa}
           userLocation={ubicacion}
           siguiente={siguiente}
@@ -956,6 +1220,72 @@ export function VistaViaje({ tripId }: { tripId: string }) {
         aceptar={aceptarReagenda}
       />
 
+      {/* Solo el dueño (los miembros del grupo ven el viaje en lectura). */}
+      {conAjustes && edicion.tripIA ? (
+        <AjustarConIA
+          trip={edicion.tripIA}
+          onAdjusted={edicion.aplicarAjuste}
+          puedeDeshacer={edicion.puedeDeshacer}
+          onDeshacer={edicion.deshacer}
+          onEditarManual={entrarEdicion}
+          conBarraInferior
+          loginRedirect={`/trip/${tripId}`}
+          ocupado={guardandoAlgo}
+          oculto={editando || !isOnline}
+          // Con un ajuste pendiente no se pide otro: se resuelve antes.
+          bloqueado={edicion.pendiente !== null}
+          aviso={avisoPendiente}
+        />
+      ) : null}
+
+      <ConfirmDialog
+        open={conflictoEdicion}
+        onClose={() => setConflictoEdicion(false)}
+        tone="neutral"
+        title="El viaje cambió mientras editabas"
+        description="Se guardó otro cambio en el viaje después de que empezaras a editar. Si guardas, tus días sustituyen a los del viaje actual."
+        confirmLabel="Guardar mis cambios"
+        loadingLabel="Guardando…"
+        cancelLabel="Seguir editando"
+        onConfirm={() => guardarEdicion(true)}
+      />
+
+      <ConfirmDialog
+        open={salida !== null}
+        onClose={() => setSalida(null)}
+        tone="neutral"
+        title="¿Salir sin guardar?"
+        description={
+          hayCambiosSinGuardar
+            ? 'Tienes cambios en el itinerario sin guardar. Si sales ahora, se pierden.'
+            : 'Tienes un ajuste con IA sin aplicar. Si sales ahora, se pierde.'
+        }
+        confirmLabel={
+          salida?.tipo === 'sesion' ? 'Cerrar sesión' : 'Salir sin guardar'
+        }
+        cancelLabel="Quedarme"
+        onConfirm={() => {
+          const destino = salida
+          setSalida(null)
+          if (!destino) return
+          salirEdicion()
+          edicion.descartarPendiente()
+          if (destino.tipo === 'sesion') salirDeLaSesion()
+          else router.push(destino.href)
+        }}
+      />
+
+      <ConfirmDialog
+        open={confirmarDescarte}
+        onClose={() => setConfirmarDescarte(false)}
+        tone="neutral"
+        title="¿Descartar los cambios?"
+        description="Lo que cambiaste en el itinerario no se guardará. Tu viaje se queda como estaba."
+        confirmLabel="Descartar cambios"
+        cancelLabel="Seguir editando"
+        onConfirm={salirEdicion}
+      />
+
       {alertaEmbarque ? (
         <AlertLevel5Cruise
           alert={alertaEmbarque}
@@ -963,6 +1293,16 @@ export function VistaViaje({ tripId }: { tripId: string }) {
           onAction={verPuerto}
         />
       ) : null}
+      <AlertasEnVivo
+        tripId={tripId}
+        dia={diaHoy}
+        ubicacion={ubicacion}
+        ahora={ahora}
+        esCrucero={esCrucero}
+        pausada={alertaEmbarque !== null || reagendar !== null || editando}
+        onMover={puedeTocar ? abrirReagenda : undefined}
+        onSaltar={puedeTocar ? (act) => markActivityLost(act.id) : undefined}
+      />
     </>
   )
 }

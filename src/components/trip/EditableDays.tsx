@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import type { DragEvent, KeyboardEvent } from 'react'
+import type { DragEvent, KeyboardEvent, ReactNode } from 'react'
 import {
   ArrowDown,
   ArrowUp,
@@ -49,6 +49,16 @@ export interface EditableDaysProps {
   onActividadesEditadas?: (ids: string[]) => void
   /** Entrada de las actividades con whileInView. */
   animar?: boolean
+  /** Texto del botón del aviso de edición (por defecto «Listo»). */
+  textoListo?: string
+  /** El botón del aviso está terminando (p. ej. guardando en el servidor). */
+  listoCargando?: boolean
+  /** Deshabilita el botón del aviso (p. ej. sin conexión). */
+  listoDeshabilitado?: boolean
+  /** Acción extra del aviso, antes del botón (p. ej. «Descartar»). */
+  accionEdicion?: ReactNode
+  /** Texto del aviso de edición (por defecto, cómo mover las actividades). */
+  avisoEdicion?: ReactNode
 }
 
 /** Id del botón «Listo» del aviso de edición (lo usa la barra de acciones). */
@@ -125,6 +135,11 @@ export function EditableDays({
   onTerminar,
   onActividadesEditadas,
   animar = false,
+  textoListo = 'Listo',
+  listoCargando = false,
+  listoDeshabilitado = false,
+  accionEdicion,
+  avisoEdicion,
 }: EditableDaysProps) {
   const [editId, setEditId] = useState<string | null>(null)
   const [draft, setDraft] = useState<Activity | null>(null)
@@ -385,19 +400,25 @@ export function EditableDays({
           title="Modo edición"
           className="sticky top-[118px] z-(--z-sticky) shadow-elev md:top-[126px]"
           action={
-            <Button
-              id={ID_LISTO_EDICION}
-              variant="tinta"
-              size="sm"
-              icon={<Check />}
-              onClick={terminar}
-            >
-              Listo
-            </Button>
+            <>
+              {accionEdicion}
+              <Button
+                id={ID_LISTO_EDICION}
+                variant="tinta"
+                size="sm"
+                icon={<Check />}
+                onClick={terminar}
+                loading={listoCargando}
+                loadingText="Guardando…"
+                disabled={listoDeshabilitado}
+              >
+                {textoListo}
+              </Button>
+            </>
           }
         >
-          Reordena, edita o borra actividades. Arrastra el asa o usa las flechas
-          del teclado para moverlas.
+          {avisoEdicion ??
+            'Reordena, edita o borra actividades. Arrastra el asa o usa las flechas del teclado para moverlas.'}
         </Callout>
       ) : null}
 

@@ -83,7 +83,8 @@ interface TripState {
 
 export interface UseTripReturn extends TripState {
   loadTrip: () => Promise<void>
-  markActivityLost: (activityId: string) => Promise<void>
+  /** Marca la actividad como perdida y guarda. Devuelve true si se guardó. */
+  markActivityLost: (activityId: string) => Promise<boolean>
   /** Pide a /api/reschedule una nueva hora (no cambia nada todavía). */
   rescheduleActivity: (
     activityId: string,
@@ -306,9 +307,9 @@ export function useTrip(id: string): UseTripReturn {
   }, [id])
 
   const markActivityLost = useCallback(
-    async (activityId: string) => {
+    async (activityId: string): Promise<boolean> => {
       const { trip, pendientes } = editable.current
-      if (!trip) return
+      if (!trip) return false
       const dias = trip.dias.map((day) => ({
         ...day,
         actividades: day.actividades.map((act) =>
@@ -326,7 +327,7 @@ export function useTrip(id: string): UseTripReturn {
       const updatedTrip = { ...trip, dias }
 
       aplicar(updatedTrip, nuevasPendientes)
-      await guardar({
+      return guardar({
         data: updatedTrip,
         actividades_pendientes: nuevasPendientes,
       })

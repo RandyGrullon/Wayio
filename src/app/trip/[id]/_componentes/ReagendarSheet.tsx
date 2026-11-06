@@ -35,8 +35,8 @@ interface ReagendarSheetProps {
   diaActual: number
   tripId: string | null
   onClose: () => void
-  /** Marca la actividad como perdida (y la guarda). */
-  marcarPerdida: (activityId: string) => Promise<void>
+  /** Marca la actividad como perdida y la guarda (true si se guardó). */
+  marcarPerdida: (activityId: string) => Promise<boolean>
   /** Pide una nueva hora a /api/reschedule (useTrip().rescheduleActivity). */
   reagendar: (activityId: string, reason: string) => Promise<ResultadoReagenda>
   /** Aplica el cambio: mueve la actividad al día y la hora elegidos. */

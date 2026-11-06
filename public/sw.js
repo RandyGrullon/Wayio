@@ -146,6 +146,32 @@ function respuestaOffline() {
   })
 }
 
+// Tocar un aviso del viaje en vivo (src/lib/alertas/notificar.ts) enfoca la
+// pestaña del viaje o la abre. Solo rutas propias: nunca otro origen.
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close()
+  const pedida = event.notification.data && event.notification.data.url
+  let url = '/'
+  try {
+    // Se resuelve contra el propio origen y solo se acepta si sigue en él
+    // (descarta '//otro.com', '/\otro.com' y similares).
+    const destino = new URL(String(pedida || '/'), self.location.origin)
+    if (destino.origin === self.location.origin) url = destino.pathname
+  } catch {
+    url = '/'
+  }
+  event.waitUntil(
+    self.clients
+      .matchAll({ type: 'window', includeUncontrolled: true })
+      .then((ventanas) => {
+        const abierta = ventanas.find(
+          (c) => new URL(c.url).pathname === url && 'focus' in c
+        )
+        return abierta ? abierta.focus() : self.clients.openWindow(url)
+      })
+  )
+})
+
 self.addEventListener('install', (event) => {
   event.waitUntil(
     (async () => {

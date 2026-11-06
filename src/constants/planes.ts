@@ -106,11 +106,17 @@ export const COMPARATIVA: readonly FilaComparativa[] = [
     pro: true,
   },
   {
-    funcion: 'Ubicación en vivo y avisos al llegar (app móvil)',
+    funcion: 'Ubicación en vivo y avisos al llegar',
     gratis: true,
     pro: true,
+    nota: 'En la web, con la página abierta; en la app, también en segundo plano.',
   },
-  { funcion: 'Alertas básicas de demora', gratis: true, pro: true },
+  {
+    funcion: 'Alertas básicas de demora',
+    gratis: true,
+    pro: true,
+    nota: 'En la web, con la página abierta y la ubicación activa.',
+  },
   { funcion: 'Alertas de demora con análisis de IA', gratis: false, pro: true },
   {
     funcion: 'Reagendar con IA lo que te pierdas',

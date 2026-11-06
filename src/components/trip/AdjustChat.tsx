@@ -35,8 +35,11 @@ export interface MensajeAjuste {
 
 interface AdjustChatProps {
   trip: Trip
-  /** Ajuste aplicado: el viaje nuevo y el resumen de la IA. */
-  onAdjusted: (trip: Trip, resumenCambios: string) => void
+  /**
+   * Ajuste aplicado: el viaje nuevo, el resumen de la IA y el viaje que se
+   * envió (para saber si el de pantalla cambió mientras la IA respondía).
+   */
+  onAdjusted: (trip: Trip, resumenCambios: string, enviado: Trip) => void
   /** Historial (vive fuera para no perderse al cerrar el panel). */
   historial?: MensajeAjuste[]
   onMensaje?: (mensaje: MensajeAjuste) => void
@@ -49,6 +52,18 @@ interface AdjustChatProps {
    * itinerario del planificador, que guarda el viaje en sessionStorage.
    */
   loginRedirect?: string
+  /**
+   * Quien monta el chat está aplicando el último ajuste (p. ej. guardándolo en
+   * el servidor): no se puede pedir otro ni deshacer hasta que termine.
+   */
+  ocupado?: boolean
+  /** Texto que acompaña al spinner mientras `ocupado`. */
+  textoOcupado?: string
+  /**
+   * No se puede pedir otro ajuste ni deshacer (p. ej. hay uno pendiente de
+   * aplicar); quien monta el chat explica por qué.
+   */
+  bloqueado?: boolean
   className?: string
 }
 
@@ -90,10 +105,16 @@ export function AdjustChat({
   onDeshacer,
   onEditarManual,
   loginRedirect = '/planificar?paso=itinerario',
+  ocupado = false,
+  textoOcupado = 'Guardando el ajuste en tu viaje…',
+  bloqueado = false,
   className,
 }: AdjustChatProps) {
   const [texto, setTexto] = useState('')
-  const [cargando, setCargando] = useState(false)
+  const [pidiendo, setPidiendo] = useState(false)
+  // Mientras se pide a la IA o quien monta el chat aplica el ajuste.
+  const cargando = pidiendo || ocupado
+  const inactivo = cargando || bloqueado
   // Flag 'paywall' del admin: apagado, el cupo agotado no ofrece «Ver planes».
   const conPlanes = useFlag('paywall')
   const [historialLocal, setHistorialLocal] = useState<MensajeAjuste[]>([])
@@ -111,10 +132,10 @@ export function AdjustChat({
 
   const enviar = async (instruccion: string) => {
     const limpia = instruccion.trim().slice(0, MAX_INSTRUCCION)
-    if (limpia.length < 2 || cargando) return
+    if (limpia.length < 2 || inactivo) return
     agregar({ id: idMensaje(), rol: 'viajero', texto: limpia })
     setTexto('')
-    setCargando(true)
+    setPidiendo(true)
     try {
       const res = await fetch('/api/adjust', {
         method: 'POST',
@@ -125,7 +146,7 @@ export function AdjustChat({
       if (res.ok && data.trip) {
         const resumen =
           data.resumenCambios?.trim() || 'Listo, ajusté tu itinerario.'
-        onAdjusted(data.trip, resumen)
+        onAdjusted(data.trip, resumen, trip)
         agregar({ id: idMensaje(), rol: 'wayio', texto: resumen })
         return
       }
@@ -183,11 +204,14 @@ export function AdjustChat({
         })
         return
       }
+      // Mantenimiento (503 'mantenimiento', lo activa el admin): reintentar
+      // tampoco sirve, así que también se ofrece editar a mano.
       agregar({
         id: idMensaje(),
         rol: 'wayio',
         error: true,
-        manual: data.code === 'ia_no_disponible',
+        manual:
+          data.code === 'ia_no_disponible' || data.code === 'mantenimiento',
         texto:
           data.error ?? 'No pudimos ajustar el itinerario. Inténtalo de nuevo.',
       })
@@ -199,7 +223,7 @@ export function AdjustChat({
         texto: 'No pudimos ajustar el itinerario. Revisa tu conexión.',
       })
     } finally {
-      setCargando(false)
+      setPidiendo(false)
     }
   }
 
@@ -212,7 +236,7 @@ export function AdjustChat({
             <Chip
               key={s}
               size="sm"
-              disabled={cargando}
+              disabled={inactivo}
               onClick={() => void enviar(s)}
             >
               {s}
@@ -302,7 +326,9 @@ export function AdjustChat({
           {cargando ? (
             <p className="mr-8 inline-flex items-center gap-2 self-start rounded-[16px_16px_16px_4px] border border-border bg-surface px-4 py-2.5 text-body-s text-fg-muted">
               <Spinner />
-              Ajustando tu viaje… puede tardar unos segundos.
+              {pidiendo
+                ? 'Ajustando tu viaje… puede tardar unos segundos.'
+                : textoOcupado}
             </p>
           ) : null}
           <div ref={finRef} />
@@ -315,7 +341,7 @@ export function AdjustChat({
           size="sm"
           icon={<Undo2 />}
           className="self-start"
-          disabled={cargando}
+          disabled={inactivo}
           onClick={onDeshacer}
         >
           Deshacer último ajuste
@@ -333,7 +359,7 @@ export function AdjustChat({
           label="¿Qué quieres cambiar?"
           value={texto}
           maxLength={MAX_INSTRUCCION}
-          disabled={cargando}
+          disabled={inactivo}
           placeholder="Ej.: añade un mercado local el día 2 y baja el presupuesto"
           onChange={(e) => setTexto(e.target.value)}
           onKeyDown={(e) => {
@@ -351,8 +377,8 @@ export function AdjustChat({
           type="submit"
           icon={<Send />}
           loading={cargando}
-          loadingText="Ajustando…"
-          disabled={texto.trim().length < 2}
+          loadingText={pidiendo ? 'Ajustando…' : 'Guardando…'}
+          disabled={texto.trim().length < 2 || bloqueado}
           className="self-end"
         >
           Ajustar
