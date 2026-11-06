@@ -251,6 +251,14 @@ Cómo funciona cada flujo en la app:
   confirma la cuenta allí.
 - **¿Olvidaste tu contraseña?:** la app envía el correo; la contraseña nueva se
   elige en la web (`/auth/nueva-clave`) y después se inicia sesión en la app.
+- **Continuar con Google:** la app abre la página de Google con
+  `redirectTo: wayio://auth/callback` y recibe la sesión al volver. En Google
+  Cloud no hace falta otra URI: basta la de Supabase que ya usa la web
+  (`https://<ref>.supabase.co/auth/v1/callback`). Necesita `wayio://**` en
+  Redirect URLs y el proveedor Google activo (sección 4).
+- **Enlace mágico:** `signInWithOtp` con `emailRedirectTo: wayio://auth/callback`
+  y `shouldCreateUser: false`; el correo sigue el mismo camino que el registro
+  (`/auth/confirm` → `/auth/abrir-app` → app → `verifyOtp`).
 - **Sin variables `EXPO_PUBLIC_SUPABASE_*`:** la app muestra "Configuración
   incompleta" en lugar de cerrarse.
 

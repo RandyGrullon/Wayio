@@ -353,5 +353,6 @@ EXPO_PUBLIC_WEB_URL=https://<tu-dominio>
 EXPO_PUBLIC_MAPBOX_TOKEN=pk....          # account.mapbox.com (token público)
 ```
 
+- Afiliados y analítica: los mismos IDs de la sección 5 con `EXPO_PUBLIC_*` (también `EXPO_PUBLIC_VIATOR_PID`, `_VIATOR_MCID`, `_CIVITATIS_AID` y `_GYG_PARTNER_ID` para «Reservar» por actividad) y `EXPO_PUBLIC_POSTHOG_KEY` / `_HOST` para medir los clics. Expo incrusta estas variables al compilar: tras cambiarlas, nueva build.
 - **Expo Go ya no abre este proyecto** (Expo Go va por un SDK más nuevo que el 54 del proyecto, y el mapa, la ubicación en segundo plano y los enlaces `wayio://` necesitan código nativo). Haz un _development build_: `cd mobile && npx expo install expo-dev-client expo-system-ui && npx expo run:android` (Android Studio) o `eas build --profile development`.
 - Publicar en tiendas: Apple Developer (99 USD/año) y Google Play (25 USD, pago único). Para vender Pro dentro de la app: sección 6b (RevenueCat, compras integradas y prueba cerrada de Google Play).

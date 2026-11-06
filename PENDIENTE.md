@@ -1,6 +1,36 @@
 # Wayio — estado y pasos para terminar
 
-> Actualizado el 2026-11-05 (cobro web con Creem, compras dentro de la app con RevenueCat, integraciones que solo piden la clave y pendientes cerrados); el 2026-10-20 (planes Gratis y Pro aplicados en el servidor); el 2026-10-17 (freno al gasto de IA, y geocodificación y rutas con Geoapify); antes, el 2026-10-09, tras el análisis completo, la reconstrucción de la IA, los arreglos de seguridad, el rediseño y la integración final. Los detalles de cada servicio están en [API-KEYS-GUIA.md](API-KEYS-GUIA.md).
+> Actualizado el 2026-11-06 (paridad entre la web y la app móvil); el 2026-11-05 (cobro web con Creem, compras dentro de la app con RevenueCat, integraciones que solo piden la clave y pendientes cerrados); el 2026-10-20 (planes Gratis y Pro aplicados en el servidor); el 2026-10-17 (freno al gasto de IA, y geocodificación y rutas con Geoapify); antes, el 2026-10-09, tras el análisis completo, la reconstrucción de la IA, los arreglos de seguridad, el rediseño y la integración final. Los detalles de cada servicio están en [API-KEYS-GUIA.md](API-KEYS-GUIA.md).
+
+## ✅ Paridad entre la web y la app móvil (rama `feat/paridad-web-movil`, 2026-11-06)
+
+Una auditoría encontró 18 funciones que estaban solo en una de las dos. Ya están en las dos; lo que queda distinto es a propósito (compras de la tienda y GPS en segundo plano solo en la app; admin y guías SEO solo en la web).
+
+- **Móvil, viaje guardado** (`TripDetailScreen`):
+  - mapa del itinerario con pines numerados, rutas por calles (`/api/ruta`, caché por tramo de 30 días) y trazo animado de 600 ms; el mapa del modo en vivo también dibuja rutas por calles en lugar de líneas rectas;
+  - en Gratis, reagendar ya no salta a Planes: ofrece los huecos para elegir a mano, como la web, y deja elegir el motivo (también en el modo en vivo);
+  - deshacer de hasta 10 niveles;
+  - copia sin conexión con el aviso «copia guardada del …» (solo lectura sin red);
+  - exportar a PDF (`expo-print`) y añadir al calendario (.ics con `expo-sharing`).
+- **Móvil, crear**:
+  - «Otra versión» en la elección de versiones (cuenta como viaje en Gratis y lo avisa);
+  - trazar desde una foto de la galería o de la cámara (`expo-image-picker`).
+- **Móvil, reservar**:
+  - «Reservar» y «Ver hotel» por actividad (Viator → Civitatis → GetYourGuide; Trip.com o Booking.com) con la etiqueta «Patrocinado»;
+  - aviso de enlace patrocinado visible en los precios reales;
+  - clics de afiliado en PostHog (`EXPO_PUBLIC_POSTHOG_KEY`, sin dependencias nuevas ni datos personales).
+- **Móvil, cuenta y acceso**:
+  - entrar con Google y con enlace mágico;
+  - cancelar al final del periodo y reanudar para quien paga en la web (nunca para las compras de la tienda);
+  - referidos («Invitaciones» en Planes);
+  - abrir `wayio://viaje-compartido/<id>` en una vista de solo lectura con «Copiar a mis viajes».
+- **Móvil, grupo**: compartir la ubicación propia (solo con la app abierta, consentimiento y ritmo de la web) y mapa con los miembros.
+- **Web, viaje guardado** (`/trip/[id]`): el dueño puede ajustar con IA y editar a mano, con guardado en el servidor, deshacer de 10 niveles y reintento si falla.
+- **Web, modo en vivo**:
+  - con la página abierta y la ubicación activa: avisos al llegar y alertas de demora por niveles, con sugerencia de IA en el nivel 3;
+  - notificación del sistema si la pestaña está oculta y ya hay permiso;
+  - `/precios` aclara qué hace cada plataforma.
+- **Falta**: probar todo esto en un teléfono (development build nuevo) y en el navegador con una cuenta. Pasan `validate` de web y móvil y el build de producción.
 
 ## ✅ Integraciones por clave y pendientes cerrados (rama `feat/integraciones-pendientes`, 2026-11-05)
 
@@ -159,7 +189,9 @@ Todo lo de esta sección funciona **con solo poner la clave o el ID** (detalles 
 9. **App móvil**:
    - `cd mobile && npx expo install expo-dev-client expo-system-ui`;
    - crea `mobile/.env` con las `EXPO_PUBLIC_*`;
-   - genera un _development build_ con `npx expo run:android` o `eas build --profile development`. Expo Go ya no sirve para este proyecto. Vuelve a generarlo tras unir las compras integradas: `react-native-purchases` es código nativo.
+   - genera un _development build_ con `npx expo run:android` o `eas build --profile development`. Expo Go ya no sirve para este proyecto. Vuelve a generarlo tras unir las compras integradas (`react-native-purchases`) y la paridad (`expo-image-picker`, `expo-print`, `expo-sharing` y los permisos de cámara y fotos): son código nativo;
+   - para «Continuar con Google» y el enlace mágico en la app, confirma que `wayio://**` está en Supabase → Auth → Redirect URLs (guía en `supabase/CONFIGURACION-AUTH.md`, sección 6);
+   - pon en `mobile/.env` los IDs de afiliado nuevos (`EXPO_PUBLIC_VIATOR_PID`, `_VIATOR_MCID`, `_CIVITATIS_AID`, `_GYG_PARTNER_ID`) y, si quieres medir clics, `EXPO_PUBLIC_POSTHOG_KEY`.
 10. **Compras dentro de la app** (solo si vas a vender Pro en las tiendas). Los pasos detallados están en la sección 6b de [API-KEYS-GUIA.md](API-KEYS-GUIA.md):
     - **Google Play, lo primero (es lo que más tarda)**: si tu cuenta de desarrollador es personal y se creó después del 13-nov-2023, necesitas una **prueba cerrada con al menos 12 testers inscritos de forma continua durante 14 días** antes de poder pedir producción. Sube un AAB a una pista cerrada e invita a los testers cuanto antes;
     - **App Store Connect**:
@@ -185,6 +217,8 @@ Todo lo de esta sección funciona **con solo poner la clave o el ID** (detalles 
     - con una cuenta Gratis, el tercer viaje del mes da el aviso de cupo agotado (402) y `GET /api/cupo` lo refleja; con Pro, no;
     - la recuperación de contraseña funciona de punta a punta;
     - en el móvil: crear cuenta, generar, guardar y modo en vivo;
+    - en el móvil: entrar con Google y con enlace mágico, «Otra versión», trazar desde una foto, mapa del viaje guardado con rutas por calles, reagendar en Gratis eligiendo hueco, deshacer varias veces, abrir el viaje en modo avión (copia guardada), exportar PDF y calendario, compartir ubicación en el grupo con dos cuentas, abrir un `wayio://viaje-compartido/<id>` y copiarlo, cancelar y reanudar una suscripción web, y un código de referido;
+    - en la web: ajustar con IA y editar a mano un viaje guardado, deshacer y recargar; y en un viaje en curso con el GPS activo, que llegue el aviso al llegar a una parada;
     - con 3 cuentas en un grupo: un gasto pagado por otro y otro solo para dos, y que los saldos cuadren en las tres sesiones (web y móvil);
     - activa el modo mantenimiento en `/admin/settings` y comprueba el aviso y el 503 al trazar y ajustar; apágalo y que vuelva a funcionar.
 
@@ -194,7 +228,6 @@ Todo lo de esta sección funciona **con solo poner la clave o el ID** (detalles 
 - **Modelo del itinerario**: sigue `claude-opus-5-5` ($4/$20 por millón). `AI_ITINERARY_MODEL=claude-sonnet-5-5` lo abarata a la mitad; es decisión tuya, el tope diario no lo cambia.
 - **Valores de los límites y del tope**: los de ahora son para la beta (`src/lib/security/aiGuard.ts` y `AI_DAILY_BUDGET_USD`). Revísalos con el gasto real de `/admin/ai`.
 - **Reservas con depósito**: desactivadas (`NEXT_PUBLIC_RESERVAS_ENABLED=false`) hasta que haya un proveedor real de reservas y una revisión legal. Solo existen con Stripe: Creem (MoR de software) no las admite.
-- **Bajas en la app móvil**: hoy «Gestionar suscripción» abre el portal de pagos, que con Creem cancela en el acto; la web ya ofrece cancelar al final del periodo (`/api/pagos/suscripcion`). Falta el mismo botón en `PaywallScreen`.
 - **Precios de hoteles**: se muestra el mayor entre la tarifa de LiteAPI y su precio público sugerido (lo que pide LiteAPI); confírmalo. Supuestos: 2 huéspedes por habitación, nacionalidad DO y 12 hoteles mostrados. El formato de ocupación del enlace a la marca blanca hay que comprobarlo con una marca blanca real.
 - **Afiliados**: Trip.com va antes que Booking cuando está activo; el código de Airalo actual es el de referidos (crédito), no el de comisión (Impact); IATI no vende en RD.
 - **Video**: el worker no usa el título del video (podría ayudar a la IA, pero abre otra vía de inyección de instrucciones). Revisa los textos nuevos de error «bloqueado», «ocupado» y «cancelado».
