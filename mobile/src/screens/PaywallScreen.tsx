@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ScrollView, StyleSheet, View } from 'react-native'
+import { ScrollView, Share, StyleSheet, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import * as WebBrowser from 'expo-web-browser'
 import {
@@ -8,6 +8,7 @@ import {
   Callout,
   Card,
   CardKicker,
+  Input,
   Pantalla,
   ScreenHeader,
   Skeleton,
@@ -21,12 +22,31 @@ import {
   CreditCard,
   ExternalLink,
   RefreshCw,
+  Share2,
+  UserPlus,
 } from '../components/ui/iconos'
-import { formatCurrency, formatFecha } from '../components/ui/formato'
+import {
+  formatCurrency,
+  formatFecha,
+  formatNumero,
+} from '../components/ui/formato'
 import { config } from '../config'
 import { useAuth } from '../context/AuthContext'
 import { BackendError, postJSON } from '../lib/api/http'
 import { getCupo, type CupoDelMes, type UsoCupo } from '../lib/api/backend'
+import {
+  cambiarSuscripcion,
+  leerSuscripcionWeb,
+  type AccionSuscripcion,
+  type SuscripcionWeb,
+} from '../lib/api/suscripcion'
+import {
+  CODIGO_RE,
+  canjearCodigo,
+  getMiCodigo,
+  mensajeInvitacion,
+  type MiCodigo,
+} from '../lib/api/referidos'
 import {
   NOMBRE_TIENDA,
   comprar,
@@ -274,6 +294,336 @@ function SelectorDePlanes({
   )
 }
 
+const MENSAJE_CAMBIO_FALLIDO =
+  'No pudimos cambiar tu suscripción ahora mismo. Inténtalo de nuevo en unos minutos.'
+
+/**
+ * Baja al final del periodo pagado (y deshacerla) de una suscripción WEB,
+ * como src/app/cuenta/CancelarSuscripcion.tsx: primero confirma con el aviso
+ * de hasta cuándo sigue el plan; ya cancelada, ofrece «Mantener mi
+ * suscripción». La frase de vigencia cambia al momento con la respuesta.
+ */
+function CancelarSuscripcion({
+  sub,
+  onCambio,
+  onNoHay,
+}: {
+  sub: SuscripcionWeb
+  onCambio: (nueva: SuscripcionWeb, accion: AccionSuscripcion) => void
+  /** El servidor dice que ya no hay suscripción que cambiar (404). */
+  onNoHay: () => void
+}): React.ReactElement {
+  const styles = useEstilos(crearEstilos)
+  const [confirmando, setConfirmando] = useState(false)
+  const [enviando, setEnviando] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const hasta = sub.finPeriodo
+    ? formatFecha(sub.finPeriodo, { anio: true, diaSemana: false })
+    : ''
+
+  const enviar = async (accion: AccionSuscripcion): Promise<void> => {
+    setEnviando(true)
+    setError(null)
+    try {
+      const nueva = await cambiarSuscripcion(accion)
+      setConfirmando(false)
+      onCambio(
+        { ...nueva, finPeriodo: nueva.finPeriodo ?? sub.finPeriodo },
+        accion
+      )
+    } catch (e) {
+      if (e instanceof BackendError && e.status === 404) onNoHay()
+      setError(e instanceof BackendError ? e.message : MENSAJE_CAMBIO_FALLIDO)
+    } finally {
+      setEnviando(false)
+    }
+  }
+
+  const vigencia = hasta ? (
+    <Txt variant="bodyS" color="fgMuted" style={styles.bloque}>
+      {sub.cancelaAlFinal
+        ? `Cancelado: tienes acceso hasta el ${hasta}.`
+        : `Se renueva el ${hasta}.`}
+    </Txt>
+  ) : null
+
+  const aviso = error ? (
+    <Callout tone="danger" style={styles.nota}>
+      {error}
+    </Callout>
+  ) : null
+
+  if (sub.cancelaAlFinal) {
+    return (
+      <View>
+        {vigencia}
+        <Button
+          title="Mantener mi suscripción"
+          variant="outline"
+          size="lg"
+          fullWidth
+          loading={enviando}
+          loadingText="Reanudando…"
+          onPress={() => void enviar('reanudar')}
+          style={styles.nota}
+        />
+        {aviso}
+      </View>
+    )
+  }
+
+  if (!confirmando) {
+    return (
+      <View>
+        {vigencia}
+        <Button
+          title="Cancelar suscripción"
+          variant="ghost"
+          size="lg"
+          fullWidth
+          onPress={() => setConfirmando(true)}
+          style={styles.nota}
+        />
+      </View>
+    )
+  }
+
+  return (
+    <View>
+      {vigencia}
+      <Callout
+        tone="warning"
+        title="¿Cancelar tu suscripción?"
+        style={styles.nota}
+      >
+        {hasta
+          ? `Seguirás con tu plan hasta el ${hasta} y no se te volverá a cobrar. Después pasarás al plan Gratis.`
+          : 'Seguirás con tu plan hasta el final del periodo que ya pagaste y no se te volverá a cobrar. Después pasarás al plan Gratis.'}
+      </Callout>
+      <View style={styles.filaBotones}>
+        <Button
+          title="Sí, cancelar"
+          variant="danger-outline"
+          size="lg"
+          loading={enviando}
+          loadingText="Cancelando…"
+          onPress={() => void enviar('cancelar')}
+        />
+        <Button
+          title="No, mantenerla"
+          variant="ghost"
+          size="lg"
+          disabled={enviando}
+          onPress={() => setConfirmando(false)}
+        />
+      </View>
+      {aviso}
+    </View>
+  )
+}
+
+type EstadoCodigo =
+  | { tipo: 'cargando' }
+  | { tipo: 'ok'; codigo: MiCodigo }
+  | { tipo: 'error'; mensaje: string }
+
+/** Texto de un fallo de /api/referrals (red aparte del texto del servidor). */
+function mensajeReferidos(e: unknown, respaldo: string): string {
+  if (e instanceof BackendError) {
+    if (e.code === 'network' || e.code === 'timeout') return e.message
+    return e.message || respaldo
+  }
+  return e instanceof Error && e.message.includes(' ') ? e.message : respaldo
+}
+
+/**
+ * Invitaciones, como src/app/cuenta/Referidos.tsx: tu código (GET
+ * /api/referrals) con la hoja nativa de compartir (que también deja
+ * copiarlo) y canjear el de otra persona (POST /api/referrals { code }).
+ */
+function Referidos(): React.ReactElement {
+  const styles = useEstilos(crearEstilos)
+  const { colors } = useTheme()
+  const toast = useToast()
+  const [estado, setEstado] = useState<EstadoCodigo>({ tipo: 'cargando' })
+  const [recarga, setRecarga] = useState(0)
+  const [codigo, setCodigo] = useState('')
+  const [errorCampo, setErrorCampo] = useState<string | null>(null)
+  const [enviando, setEnviando] = useState(false)
+  const [resultado, setResultado] = useState<{
+    ok: boolean
+    texto: string
+  } | null>(null)
+
+  useEffect(() => {
+    let vivo = true
+    getMiCodigo().then(
+      (c) => {
+        if (vivo) setEstado({ tipo: 'ok', codigo: c })
+      },
+      (e: unknown) => {
+        if (vivo) {
+          setEstado({
+            tipo: 'error',
+            mensaje: mensajeReferidos(
+              e,
+              'Tu código de invitación no está disponible ahora mismo.'
+            ),
+          })
+        }
+      }
+    )
+    return () => {
+      vivo = false
+    }
+  }, [recarga])
+
+  const reintentar = (): void => {
+    setEstado({ tipo: 'cargando' })
+    setRecarga((n) => n + 1)
+  }
+
+  const compartir = async (code: string): Promise<void> => {
+    try {
+      await Share.share({ message: mensajeInvitacion(code) })
+    } catch {
+      toast.error('No pudimos abrir el menú de compartir.')
+    }
+  }
+
+  const canjear = async (): Promise<void> => {
+    if (enviando) return
+    setResultado(null)
+    const limpio = codigo.trim()
+    if (!CODIGO_RE.test(limpio)) {
+      setErrorCampo('Escribe un código válido: de 4 a 32 letras o números.')
+      return
+    }
+    setErrorCampo(null)
+    setEnviando(true)
+    try {
+      const mensaje = await canjearCodigo(limpio)
+      setResultado({ ok: true, texto: mensaje })
+      setCodigo('')
+    } catch (e) {
+      setResultado({
+        ok: false,
+        texto: mensajeReferidos(
+          e,
+          'No pudimos aplicar el código. Inténtalo más tarde.'
+        ),
+      })
+    } finally {
+      setEnviando(false)
+    }
+  }
+
+  return (
+    <Card style={styles.seccion}>
+      <CardKicker icon={UserPlus}>Invitaciones</CardKicker>
+      <Txt variant="h3" style={styles.nota}>
+        Invita a quien viaja contigo
+      </Txt>
+
+      <Txt variant="title" style={styles.bloque}>
+        Tu código
+      </Txt>
+      <Txt variant="bodyS" color="fgMuted">
+        Compártelo con quien quieras invitar a Wayio.
+      </Txt>
+      <View style={styles.nota} accessibilityLiveRegion="polite">
+        {estado.tipo === 'cargando' ? (
+          <SkeletonRegion label="Cargando tu código de invitación">
+            <Skeleton width={200} height={52} />
+          </SkeletonRegion>
+        ) : estado.tipo === 'error' ? (
+          <Callout
+            tone="warning"
+            action={{ label: 'Reintentar', onPress: reintentar }}
+          >
+            {estado.mensaje}
+          </Callout>
+        ) : (
+          <>
+            <View style={styles.codigoFila}>
+              <View
+                style={[
+                  styles.codigo,
+                  {
+                    borderColor: colors.borderStrong,
+                    backgroundColor: colors.surface2,
+                  },
+                ]}
+                accessible
+                accessibilityLabel={`Tu código: ${estado.codigo.code.split('').join(' ')}`}
+              >
+                <Txt variant="data" selectable style={styles.codigoTexto}>
+                  {estado.codigo.code}
+                </Txt>
+              </View>
+              <Button
+                title="Compartir"
+                variant="outline"
+                size="lg"
+                icon={Share2}
+                accessibilityHint="Abre el menú para enviar o copiar tu código"
+                onPress={() => void compartir(estado.codigo.code)}
+              />
+            </View>
+            <Txt variant="caption" color="fgMuted" tnum style={styles.nota}>
+              {estado.codigo.conversions === 1
+                ? '1 persona se unió con tu código.'
+                : `${formatNumero(estado.codigo.conversions)} personas se unieron con tu código.`}
+            </Txt>
+          </>
+        )}
+      </View>
+
+      <View style={[styles.divisor, { borderTopColor: colors.border }]}>
+        <Txt variant="title">¿Te invitó alguien?</Txt>
+        <Txt variant="bodyS" color="fgMuted">
+          Escribe su código. Solo se puede usar una vez y en cuentas nuevas.
+        </Txt>
+        <Input
+          label="Código de invitación"
+          value={codigo}
+          onChangeText={(v) => {
+            setCodigo(v)
+            if (errorCampo) setErrorCampo(null)
+          }}
+          error={errorCampo}
+          autoCapitalize="characters"
+          autoCorrect={false}
+          autoComplete="off"
+          spellCheck={false}
+          maxLength={32}
+          returnKeyType="send"
+          onSubmitEditing={() => void canjear()}
+          containerStyle={styles.bloque}
+        />
+        <Button
+          title="Aplicar código"
+          variant="outline"
+          size="lg"
+          fullWidth
+          loading={enviando}
+          loadingText="Aplicando…"
+          onPress={() => void canjear()}
+          style={styles.nota}
+        />
+        {resultado ? (
+          <Callout
+            tone={resultado.ok ? 'success' : 'danger'}
+            style={styles.bloque}
+          >
+            {resultado.texto}
+          </Callout>
+        ) : null}
+      </View>
+    </Card>
+  )
+}
+
 /**
  * Planes (M05): Gratis con sus cupos del mes y lo que Pro añade de verdad,
  * con el uso del mes de la cuenta (GET /api/cupo).
@@ -293,6 +643,12 @@ function SelectorDePlanes({
  *   procesador); al volver se relee el plan (`refreshTier`) y el uso. Con
  *   plan activo, «Gestionar suscripción» abre el portal de pagos (POST
  *   /api/pagos/portal), donde también se cancela.
+ *
+ * Si el plan es una suscripción recurrente pagada en la web (Creem o
+ * Stripe, nunca de la tienda), también se cancela al final del periodo o se
+ * reanuda aquí mismo (POST /api/pagos/suscripcion), como en /cuenta.
+ * Debajo, «Invitaciones»: tu código para compartir y canjear el de otra
+ * persona (/api/referrals).
  *
  * Pro Grupo no se vende (quien ya lo tiene lo sigue viendo como su plan).
  */
@@ -321,6 +677,11 @@ export function PaywallScreen(): React.ReactElement {
   const [recargaOfertas, setRecargaOfertas] = useState(0)
   /** País de la cuenta de la tienda (pago web solo en EE. UU.). */
   const [pais, setPais] = useState<string | null>(null)
+  /** Suscripción recurrente web (la que se cancela aquí), o null. */
+  const [suscripcionWeb, setSuscripcionWeb] = useState<SuscripcionWeb | null>(
+    null
+  )
+  const [recargaSub, setRecargaSub] = useState(0)
   const montada = useRef(true)
 
   useEffect(() => {
@@ -373,6 +734,31 @@ export function PaywallScreen(): React.ReactElement {
     }
   }, [uid])
 
+  useEffect(() => {
+    if (!uid || tier === 'free') return
+    let vivo = true
+    void leerSuscripcionWeb(uid).then((s) => {
+      if (vivo) setSuscripcionWeb(s)
+    })
+    return () => {
+      vivo = false
+    }
+  }, [uid, tier, recargaSub])
+
+  /** Tras cancelar o reanudar: frase al día y plan releído. */
+  const trasCambioSuscripcion = (
+    nueva: SuscripcionWeb,
+    accion: AccionSuscripcion
+  ): void => {
+    setSuscripcionWeb(nueva)
+    void refreshTier()
+    toast.success(
+      accion === 'cancelar'
+        ? 'Listo: tu suscripción no se renovará'
+        : 'Listo: tu suscripción sigue activa'
+    )
+  }
+
   /** Pago web: siempre sin tienda; con ella, solo iOS de EE. UU. */
   const webPermitido = !MODO_TIENDA || pagoWebPermitido(pais)
 
@@ -391,6 +777,8 @@ export function PaywallScreen(): React.ReactElement {
     await WebBrowser.openAuthSessionAsync(url, RETORNO)
     await refreshTier()
     setRecargaUso((n) => n + 1)
+    // En el portal también se puede cancelar o reanudar.
+    setRecargaSub((n) => n + 1)
   }
 
   const pagar = async (): Promise<void> => {
@@ -801,18 +1189,29 @@ export function PaywallScreen(): React.ReactElement {
             ) : null}
           </>
         ) : (
-          <Button
-            title="Gestionar suscripción"
-            variant="outline"
-            iconEnd={ExternalLink}
-            size="lg"
-            fullWidth
-            loading={abriendo}
-            loadingText="Abriendo…"
-            onPress={() => void gestionarPlan()}
-            style={styles.bloque}
-          />
+          <>
+            <Button
+              title="Gestionar suscripción"
+              variant="outline"
+              iconEnd={ExternalLink}
+              size="lg"
+              fullWidth
+              loading={abriendo}
+              loadingText="Abriendo…"
+              onPress={() => void gestionarPlan()}
+              style={styles.bloque}
+            />
+            {suscripcionWeb ? (
+              <CancelarSuscripcion
+                sub={suscripcionWeb}
+                onCambio={trasCambioSuscripcion}
+                onNoHay={() => setRecargaSub((n) => n + 1)}
+              />
+            ) : null}
+          </>
         )}
+
+        {uid && config.apiUrl ? <Referidos /> : null}
 
         {MODO_TIENDA && config.webUrl ? (
           <View style={styles.legales}>
@@ -870,6 +1269,32 @@ const crearEstilos = (t: Tema) =>
     },
     ahorro: { marginTop: 10, marginLeft: 34 },
     nota: { marginTop: 10 },
+    filaBotones: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 10,
+      marginTop: 12,
+    },
+    codigoFila: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      alignItems: 'center',
+      gap: 12,
+    },
+    codigo: {
+      minHeight: 52,
+      justifyContent: 'center',
+      paddingHorizontal: 16,
+      borderWidth: 1,
+      borderStyle: 'dashed',
+      borderRadius: t.radius.control,
+    },
+    codigoTexto: { fontSize: 18, lineHeight: 24, letterSpacing: 2 },
+    divisor: {
+      marginTop: 24,
+      paddingTop: 20,
+      borderTopWidth: StyleSheet.hairlineWidth,
+    },
     legales: {
       flexDirection: 'row',
       justifyContent: 'center',

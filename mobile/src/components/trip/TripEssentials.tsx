@@ -21,12 +21,18 @@ import { contarNoches, formatCurrency, formatNoches } from '../ui/formato'
 import type { Moneda, Paquete, PlanningTrip } from '../../types/planning'
 import {
   AVISO_PATROCINADO,
-  enlaceCarros,
+  describirCarros,
   enlaceEsim,
   enlaceHoteles,
   enlaceSeguro,
   enlaceVuelos,
+  proveedorDe,
 } from './enlacesAfiliado'
+import {
+  track,
+  type CategoriaAfiliado,
+  type ProveedorAfiliado,
+} from '../../lib/analytics'
 
 interface Props {
   trip: PlanningTrip
@@ -57,10 +63,14 @@ function abrir(url: string): void {
   Linking.openURL(url).catch(() => undefined)
 }
 
-/** Abre el enlace de afiliado del backend (data.enlace) o el de respaldo. */
+/**
+ * Abre el enlace de afiliado del backend (data.enlace) o el de respaldo.
+ * `alAbrir` recibe la URL que se abre de verdad (para la analítica).
+ */
 async function abrirBusqueda(
   pedir: () => Promise<SearchResponse>,
-  respaldo: string
+  respaldo: string,
+  alAbrir: (url: string) => void
 ): Promise<void> {
   let url = respaldo
   try {
@@ -71,6 +81,7 @@ async function abrirBusqueda(
   } catch {
     // Sin backend o con límite: la búsqueda genérica sigue sirviendo.
   }
+  alAbrir(url)
   await Linking.openURL(url).catch(() => undefined)
 }
 
@@ -111,6 +122,19 @@ export function TripEssentials({
   // eSIM y seguro solo aparecen con su ID configurado.
   const esim = enlaceEsim()
   const seguro = enlaceSeguro()
+  const carros = describirCarros(trip.destino)
+  // Mismo evento y ubicación que el TripEssentials de la web.
+  const clic = (
+    proveedor: ProveedorAfiliado,
+    categoria: CategoriaAfiliado
+  ): void =>
+    track('click_afiliado', {
+      proveedor,
+      categoria,
+      destino: trip.destino,
+      tripId,
+      ubicacion: 'completa-tu-viaje',
+    })
 
   const [vuelo, setVuelo] = useState(!sinVuelo && vueloEst !== null)
   const [hotel, setHotel] = useState(false)
@@ -195,7 +219,8 @@ export function TripEssentials({
                 ida: trip.fechaInicio,
                 vuelta: trip.fechaFin,
                 personas,
-              })
+              }),
+              (url) => clic(proveedorDe(url), 'vuelo')
             )
           }
         />
@@ -237,7 +262,8 @@ export function TripEssentials({
               salida: trip.fechaFin,
               adultos: personas,
               habitaciones,
-            })
+            }),
+            (url) => clic(proveedorDe(url), 'hotel')
           )
         }
       />
@@ -250,7 +276,10 @@ export function TripEssentials({
         activo={carro}
         onCambiar={carroEst !== null ? setCarro : null}
         enlace="Ver carros"
-        onEnlace={() => abrir(enlaceCarros(trip.destino))}
+        onEnlace={() => {
+          clic(carros.proveedor, 'carro')
+          abrir(carros.url)
+        }}
       />
 
       {esim || seguro ? (
@@ -261,7 +290,10 @@ export function TripEssentials({
               variant="link"
               iconEnd={ExternalLink}
               accessibilityHint="Abre Airalo (enlace patrocinado)"
-              onPress={() => abrir(esim)}
+              onPress={() => {
+                clic('airalo', 'esim')
+                abrir(esim)
+              }}
             />
           ) : null}
           {seguro ? (
@@ -270,7 +302,10 @@ export function TripEssentials({
               variant="link"
               iconEnd={ExternalLink}
               accessibilityHint="Abre IATI Seguros (enlace patrocinado)"
-              onPress={() => abrir(seguro)}
+              onPress={() => {
+                clic('iati', 'seguro')
+                abrir(seguro)
+              }}
             />
           ) : null}
         </View>

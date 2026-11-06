@@ -10,12 +10,14 @@ import {
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import * as Haptics from 'expo-haptics'
+import { useNetworkState } from 'expo-network'
 import {
   Badge,
   Button,
   Callout,
   Card,
   CardKicker,
+  ChipGroup,
   ConfirmDialog,
   EmptyState,
   IconButton,
@@ -29,12 +31,20 @@ import {
   useToast,
 } from '../components/ui'
 import { DayCard } from '../components/trip/DayCard'
+import { MapaItinerario } from '../components/trip/MapaItinerario'
 import { EditableDays } from '../components/trip/EditableDays'
 import { AdjustChat } from '../components/trip/AdjustChat'
 import { RealSearch } from '../components/trip/RealSearch'
 import { TripEssentials } from '../components/trip/TripEssentials'
 import {
+  BotonesExportar,
+  IconoCalendario,
+  IconoPdf,
+  useExportarViaje,
+} from '../components/trip/ExportarViaje'
+import {
   CalendarDays,
+  CloudOff,
   Compass,
   Link2,
   MessagesSquare,
@@ -51,6 +61,7 @@ import {
   formatDias,
   formatFaltan,
   formatFecha,
+  formatFechaHora,
   formatHora12,
   formatRangoFechas,
   formatViajeros,
@@ -69,6 +80,20 @@ import {
   setTripPublic,
   updateTrip,
 } from '../lib/trips/repository'
+import { conTiempoLimite } from '../lib/scheduling/tiempoLimite'
+import {
+  borrarCopiaViaje,
+  estaEnLinea,
+  guardarCopiaViaje,
+  hayConexion,
+  leerCopiaViaje,
+} from '../lib/offline/viajeGuardado'
+import {
+  MOTIVO_POR_DEFECTO,
+  MOTIVOS_REAGENDAR,
+  textoMotivoReagendar,
+  type MotivoReagendar,
+} from '../lib/utils/motivosReagendar'
 import {
   BackendError,
   huecosDelError,
@@ -169,6 +194,19 @@ const esperar = (ms: number): Promise<void> =>
 /** Alto que ocupan el FAB «Ajustar con IA» o la barra de edición (+ aire). */
 const OFFSET_TOAST = 64
 
+/** Niveles de «Deshacer» de los ajustes con IA (igual que la web). */
+const MAX_DESHACER = 10
+
+/** Estado previo a un ajuste con IA (`id` ata cada toast a su nivel). */
+interface NivelDeshacer {
+  id: number
+  trip: PlanningTrip
+  pend: PlanningActivity[]
+}
+
+/** Tope para leer el viaje antes de caer a la copia sin conexión. */
+const TOPE_CARGA_MS = 10_000
+
 function tonoConflicto(
   sev: Conflict['severidad']
 ): 'danger' | 'warning' | 'info' {
@@ -180,9 +218,14 @@ function tonoConflicto(
 /**
  * Viaje guardado (§6.5–§6.6 en móvil): portada, acciones, avisos, días como
  * capítulos con chips de día fijos, edición, «Completa tu viaje»,
- * disponibilidad real y «Ajustar con IA» con deshacer. Cada guardado espera a
- * Supabase y, si falla (p. ej., un miembro que no es el dueño, M16), revierte
- * y lo explica.
+ * disponibilidad real y «Ajustar con IA» con deshacer (hasta 10 niveles).
+ * Cada guardado espera a Supabase y, si falla (p. ej., un miembro que no es
+ * el dueño, M16), revierte y lo explica.
+ *
+ * Sin conexión (como la web, VistaViaje): se guarda una copia local tras
+ * cargar y tras cada cambio; si no hay red o falla la carga se muestra la
+ * copia con el aviso «copia guardada del …», en solo lectura (sin editar,
+ * ajustar ni reagendar). PDF y calendario funcionan igual.
  */
 export function TripDetailScreen({
   tripId,
@@ -190,7 +233,7 @@ export function TripDetailScreen({
   tripId: string
 }): React.ReactElement {
   const { navigate, reset, route } = useNavigation()
-  const { tier, user } = useAuth()
+  const { user } = useAuth()
   const toast = useToast()
   const { setOffset: setOffsetToast } = toast
   const { colors, days } = useTheme()
@@ -220,11 +263,43 @@ export function TripDetailScreen({
   const [diaFiltro, setDiaFiltro] = useState<number | 'todo'>('todo')
   const [resumenAbierto, setResumenAbierto] = useState(false)
   const [esPublico, setEsPublico] = useState(false)
-  const [anterior, setAnterior] = useState<PlanningTrip | null>(null)
+  /**
+   * Viaje (y pendientes) previos a cada ajuste con IA, el último arriba, como
+   * la web. Cualquier otro cambio (editar, marcar perdida, reagendar,
+   * recargar) lo vacía: deshacer nunca pisa lo que se guardó después.
+   */
+  const [historial, setHistorial] = useState<NivelDeshacer[]>([])
+  const historialRef = useRef<NivelDeshacer[]>([])
+  const siguienteNivel = useRef(0)
+  const fijarHistorial = useCallback((h: NivelDeshacer[]) => {
+    historialRef.current = h
+    setHistorial(h)
+  }, [])
+  const vaciarHistorial = useCallback(() => {
+    if (historialRef.current.length > 0) fijarHistorial([])
+  }, [fijarHistorial])
   const [resaltadas, setResaltadas] = useState<ReadonlySet<string>>(
     () => new Set()
   )
   const [reagendar, setReagendar] = useState<EstadoReagendar | null>(null)
+  const [motivo, setMotivo] = useState<MotivoReagendar>(MOTIVO_POR_DEFECTO)
+  const abrirReagendar = (a: PlanningActivity): void => {
+    setMotivo(MOTIVO_POR_DEFECTO)
+    setReagendar({ paso: 'pregunta', actividad: a })
+  }
+
+  // ── Sin conexión ────────────────────────────────────────────────────────
+  const enLinea = estaEnLinea(useNetworkState())
+  /** Se muestra la copia local (no la de Supabase). */
+  const [desdeCopia, setDesdeCopia] = useState(false)
+  /** ISO de la última copia local guardada. */
+  const [guardadoEn, setGuardadoEn] = useState<string | null>(null)
+  /** La carga falló sin red y sin copia en este dispositivo. */
+  const [sinRedNiCopia, setSinRedNiCopia] = useState(false)
+  /** Última fila conocida (para reescribir la copia tras cada cambio). */
+  const filaRef = useRef<TripRow | null>(null)
+
+  const { exportando, alCalendario, aPdf } = useExportarViaje()
   /** Petición de reagendar en curso (cerrar la hoja la invalida). */
   const reagendarVigente = useRef(0)
   const cerrarReagendar = (): void => {
@@ -241,34 +316,125 @@ export function TripDetailScreen({
     ultimo.current = { trip, pend: pendientes }
   }, [trip, pendientes])
 
-  const load = useCallback(async () => {
-    try {
-      setError(null)
-      const r = await getTrip(tripId)
-      if (!r) {
-        setError('No encontramos este viaje o ya no tienes acceso.')
-        return
-      }
+  const mostrarFila = useCallback(
+    (r: TripRow) => {
+      filaRef.current = r
       setRow(r)
       setTrip(r.data)
       setPendientes(r.actividades_pendientes ?? [])
       setEsPublico(Boolean(r.is_public))
-    } catch (e) {
+      // El viaje cambió por otra vía (recarga o copia): deshacer ya no vale.
+      vaciarHistorial()
+    },
+    [vaciarHistorial]
+  )
+
+  /** Muestra la copia local, si la hay. */
+  const usarCopia = useCallback(async (): Promise<boolean> => {
+    const copia = await leerCopiaViaje(tripId)
+    if (!copia) return false
+    mostrarFila(copia.fila)
+    setGuardadoEn(copia.guardadoEn)
+    setDesdeCopia(true)
+    setError(null)
+    setSinRedNiCopia(false)
+    return true
+  }, [tripId, mostrarFila])
+
+  /** Muestra la fila recién leída de Supabase y renueva la copia local. */
+  const usarFresca = useCallback(
+    (r: TripRow) => {
+      mostrarFila(r)
+      setDesdeCopia(false)
+      void guardarCopiaViaje(r).then((g) => {
+        if (g) setGuardadoEn(g)
+      })
+    },
+    [mostrarFila]
+  )
+
+  const load = useCallback(async () => {
+    try {
+      setError(null)
+      setSinRedNiCopia(false)
+      // Sin red y con copia, la copia sale ya: supabase-js puede tardar
+      // ~30 s en rendirse (reintenta refrescar el token). Al volver la red
+      // se revalida sola (efecto de abajo).
+      if (!(await hayConexion()) && (await usarCopia())) return
+      // getTrip lanza si falla la red o Supabase (y aquí, si pasa del tope);
+      // null es «no existe / sin acceso» (el 404 de la web): entonces no se
+      // recurre a la copia.
+      const r = await conTiempoLimite(getTrip(tripId), TOPE_CARGA_MS)
+      if (!r) {
+        setError('No encontramos este viaje o ya no tienes acceso.')
+        return
+      }
+      usarFresca(r)
+    } catch {
+      if (await usarCopia()) return
+      const conRed = await hayConexion()
+      setSinRedNiCopia(!conRed)
       setError(
-        e instanceof Error
-          ? e.message
-          : 'No pudimos cargar el viaje. Inténtalo de nuevo.'
+        conRed
+          ? 'No pudimos cargar el viaje. Revisa tu conexión e inténtalo de nuevo.'
+          : 'Este viaje no se guardó en este dispositivo. Conéctate para abrirlo.'
       )
     } finally {
       setLoading(false)
     }
-  }, [tripId])
+  }, [tripId, usarCopia, usarFresca])
 
   useEffect(() => {
     void (async () => {
       await load()
     })()
   }, [load])
+
+  /**
+   * Con la copia local en pantalla: vuelve a pedir el viaje a Supabase. Si
+   * no llega, la copia se queda (nunca se cambia por la pantalla de error).
+   */
+  const reconectar = useCallback(
+    async (silencioso: boolean): Promise<void> => {
+      let r: TripRow | null = null
+      try {
+        r = await conTiempoLimite(getTrip(tripId), TOPE_CARGA_MS)
+      } catch {
+        r = null
+      }
+      if (r) {
+        usarFresca(r)
+        if (!silencioso) toast.success('Viaje actualizado')
+        return
+      }
+      if (!silencioso) {
+        toast.error('Seguimos sin poder conectar. Inténtalo más tarde.')
+      }
+    },
+    [tripId, usarFresca, toast]
+  )
+
+  // Vuelve la red mientras se ve la copia local: se actualiza sola.
+  const enLineaPrevia = useRef(enLinea)
+  useEffect(() => {
+    const antes = enLineaPrevia.current
+    enLineaPrevia.current = enLinea
+    if (antes || !enLinea || !desdeCopia) return
+    void (async () => {
+      await reconectar(true)
+    })()
+  }, [enLinea, desdeCopia, reconectar])
+
+  /** Reescribe la copia local con lo último guardado en Supabase. */
+  const actualizarCopia = useCallback((cambios: Partial<TripRow>) => {
+    const base = filaRef.current
+    if (!base) return
+    const fila: TripRow = { ...base, ...cambios }
+    filaRef.current = fila
+    void guardarCopiaViaje(fila).then((g) => {
+      if (g) setGuardadoEn(g)
+    })
+  }, [])
 
   // Validación local (sin IA) al cargar y al cambiar el itinerario.
   useEffect(() => {
@@ -282,13 +448,16 @@ export function TripDetailScreen({
   }, [trip])
 
   const esDueno = Boolean(row && user && row.user_id === user.id)
+  // Como la web: sin red o con la copia local no se edita, ni se ajusta ni
+  // se reagenda (se guardaría sobre datos viejos o fallaría).
+  const puedeEditar = esDueno && enLinea && !desdeCopia
   const moneda = monedaDe(trip)
   const hayViaje = trip !== null
 
   // Los toasts suben por encima del FAB o de la barra de edición mientras
   // esta pantalla está arriba en la pila (si no, tapan «Ajustar con IA»).
   const enCima = route.name === 'trip' && route.tripId === tripId
-  const conBarra = editing || esDueno
+  const conBarra = editing || puedeEditar
   useEffect(() => {
     if (!enCima || !hayViaje || !conBarra) return
     setOffsetToast(OFFSET_TOAST)
@@ -308,6 +477,7 @@ export function TripDetailScreen({
           data: next,
           actividades_pendientes: nextPend,
         })
+        actualizarCopia({ data: next, actividades_pendientes: nextPend })
         return true
       } catch (e) {
         setTrip(previo.trip)
@@ -322,7 +492,7 @@ export function TripDetailScreen({
         setGuardando(false)
       }
     },
-    [tripId, toast]
+    [tripId, toast, actualizarCopia]
   )
 
   const aplicar = useCallback(
@@ -339,32 +509,36 @@ export function TripDetailScreen({
   )
 
   // ── Reagendar (3 pasos) ─────────────────────────────────────────────────
-  const confirmarPerdida = async (buscar: boolean): Promise<void> => {
-    if (!trip || !reagendar) return
-    const act = reagendar.actividad
+  const marcarPerdida = (act: PlanningActivity): void => {
+    const actual = ultimo.current.trip
+    if (!actual) return
+    const yaPerdida = actual.dias.some((d) =>
+      d.actividades.some(
+        (a) => a.id === act.id && (a.estado === 'perdida' || a.esPerdida)
+      )
+    )
+    const pend = ultimo.current.pend
+    const enPendientes = pend.some((p) => p.id === act.id)
+    if (yaPerdida && enPendientes) return
     const next: PlanningTrip = {
-      ...trip,
-      dias: trip.dias.map((d) => ({
+      ...actual,
+      dias: actual.dias.map((d) => ({
         ...d,
         actividades: d.actividades.map((a) =>
           a.id === act.id ? { ...a, estado: 'perdida', esPerdida: true } : a
         ),
       })),
     }
-    const nextPend = pendientes.some((p) => p.id === act.id)
-      ? pendientes
-      : [...pendientes, act]
-    void aplicar(next, nextPend)
+    vaciarHistorial()
+    void aplicar(next, enPendientes ? pend : [...pend, act])
+  }
 
-    if (!buscar) {
-      setReagendar(null)
-      return
-    }
-    if (tier === 'free') {
-      setReagendar(null)
-      navigate({ name: 'paywall' })
-      return
-    }
+  /**
+   * Pide la nueva hora a /api/reschedule con el motivo elegido (como la web,
+   * también en Gratis): en Gratis el servidor responde 503 'requiere_pro' con
+   * los huecos libres y se elige uno a mano.
+   */
+  const buscarNuevaHora = async (act: PlanningActivity): Promise<void> => {
     setReagendar({ paso: 'buscando', actividad: act })
     const peticion = ++reagendarVigente.current
     try {
@@ -372,7 +546,7 @@ export function TripDetailScreen({
       const r = await rescheduleActivityDetailed(
         act.id,
         tripId,
-        'El viajero la perdió o no pudo asistir'
+        textoMotivoReagendar(motivo)
       )
       // Si el viajero cerró la hoja mientras buscábamos, no se reabre.
       if (peticion !== reagendarVigente.current) return
@@ -380,17 +554,31 @@ export function TripDetailScreen({
     } catch (e) {
       if (peticion !== reagendarVigente.current) return
       const huecos = e instanceof BackendError ? huecosDelError(e.data) : []
+      const requierePro = e instanceof BackendError && esRequierePro(e.data)
       setReagendar({
         paso: 'error',
         actividad: act,
         mensaje:
-          e instanceof Error
+          e instanceof Error && e.message
             ? e.message
-            : 'No pudimos buscar una nueva hora ahora mismo.',
+            : huecos.length > 0
+              ? 'La sugerencia automática no está disponible. Elige un hueco libre.'
+              : 'No pudimos buscar una nueva hora. Inténtalo de nuevo.',
         huecos,
-        requierePro: e instanceof BackendError && esRequierePro(e.data),
+        requierePro,
       })
     }
+  }
+
+  const confirmarPerdida = async (buscar: boolean): Promise<void> => {
+    if (!trip || !reagendar) return
+    const act = reagendar.actividad
+    marcarPerdida(act)
+    if (!buscar) {
+      setReagendar(null)
+      return
+    }
+    await buscarNuevaHora(act)
   }
 
   const colocar = (act: PlanningActivity, dia: number): void => {
@@ -398,6 +586,7 @@ export function TripDetailScreen({
     if (!actual) return
     const next = moverActividad(actual, act, dia)
     const nextPend = ultimo.current.pend.filter((a) => a.id !== act.id)
+    vaciarHistorial()
     void aplicar(next, nextPend).then((ok) => {
       if (!ok) return
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(
@@ -443,31 +632,61 @@ export function TripDetailScreen({
     )
   }
 
-  // ── Ajuste con IA y deshacer ────────────────────────────────────────────
-  const restaurar = useCallback(
-    (t: PlanningTrip) => {
-      void aplicar(t, ultimo.current.pend).then((ok) => {
-        if (ok) toast.success('Ajuste deshecho')
+  // ── Ajuste con IA y deshacer (pila de hasta 10, como la web) ────────────
+  /**
+   * Vuelve al estado previo al último ajuste con IA y lo guarda. Con `id`
+   * (el toast de un ajuste concreto) solo deshace si ese ajuste sigue siendo
+   * el último: un toast viejo nunca deshace otra cosa.
+   */
+  const deshacer = useCallback(
+    (id?: number) => {
+      const h = historialRef.current
+      const nivel = h[h.length - 1]
+      if (!nivel) return
+      if (id !== undefined && nivel.id !== id) {
+        toast.toast('Ese ajuste ya no se puede deshacer.')
+        return
+      }
+      const resto = h.slice(0, -1)
+      fijarHistorial(resto)
+      setResaltadas(new Set())
+      void aplicar(nivel.trip, nivel.pend).then((ok) => {
+        if (ok) {
+          toast.success('Deshicimos el último ajuste')
+          return
+        }
+        // No se guardó (persist ya revirtió y lo explicó): si nada cambió
+        // entretanto, el nivel vuelve a la pila para intentarlo otra vez.
+        if (historialRef.current === resto) fijarHistorial([...resto, nivel])
       })
-      setAnterior(null)
     },
-    [aplicar, toast]
+    [aplicar, fijarHistorial, toast]
   )
 
   const handleAdjusted = (updated: PlanningTrip, resumen: string): void => {
     const previo = ultimo.current.trip
     if (!previo) return
     const cambiados = idsCambiados(previo, updated)
-    setAnterior(previo)
+    const nivel: NivelDeshacer = {
+      id: ++siguienteNivel.current,
+      trip: previo,
+      pend: ultimo.current.pend,
+    }
+    fijarHistorial([...historialRef.current, nivel].slice(-MAX_DESHACER))
     setResaltadas(cambiados)
     setTimeout(() => setResaltadas(new Set()), 1200)
-    void aplicar(updated, ultimo.current.pend)
+    void aplicar(updated, ultimo.current.pend).then((ok) => {
+      // Si no se guardó, el viaje volvió a `previo`: ese nivel sobra.
+      if (ok) return
+      const h = historialRef.current
+      if (h[h.length - 1]?.id === nivel.id) fijarHistorial(h.slice(0, -1))
+    })
     setSheet(null)
     const n = cambiados.size
     toast.toast(
       n > 0 ? `${n} ${n === 1 ? 'cambio' : 'cambios'} · ${resumen}` : resumen,
       'exito',
-      { accion: { label: 'Deshacer', onPress: () => restaurar(previo) } }
+      { accion: { label: 'Deshacer', onPress: () => deshacer(nivel.id) } }
     )
   }
 
@@ -513,6 +732,9 @@ export function TripDetailScreen({
     if (!trip) return
     const ok = await aplicar({ ...trip, dias: editDias }, pendientes)
     if (ok) {
+      // La edición manual no entra en la pila: deshacer un ajuste anterior
+      // la borraría.
+      vaciarHistorial()
       setEditing(false)
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(
         () => undefined
@@ -535,8 +757,13 @@ export function TripDetailScreen({
     if (!trip) return
     try {
       if (esDueno && !esPublico) {
+        if (!enLinea) {
+          toast.error('Necesitas conexión para publicar la vista.')
+          return
+        }
         await setTripPublic(tripId, true)
         setEsPublico(true)
+        actualizarCopia({ is_public: true })
       }
       setSheet(null)
       await esperar(ESPERA_MODAL)
@@ -554,6 +781,7 @@ export function TripDetailScreen({
     try {
       await setTripPublic(tripId, false)
       setEsPublico(false)
+      actualizarCopia({ is_public: false })
       toast.success('La vista de solo lectura ya no se comparte')
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'No pudimos cambiarlo.')
@@ -571,6 +799,25 @@ export function TripDetailScreen({
     await Share.share({ message: `Únete a mi viaje en Wayio: ${url}` }).catch(
       () => undefined
     )
+  }
+
+  // ── Exportar: PDF y calendario (sin conexión también) ───────────────────
+  const exportarCalendario = async (desdeHoja: boolean): Promise<void> => {
+    if (!trip) return
+    if (desdeHoja) {
+      setSheet(null)
+      await esperar(ESPERA_MODAL)
+    }
+    await alCalendario(trip)
+  }
+
+  const exportarPdfViaje = async (desdeHoja: boolean): Promise<void> => {
+    if (!trip) return
+    if (desdeHoja) {
+      setSheet(null)
+      await esperar(ESPERA_MODAL)
+    }
+    await aPdf(trip, { moneda, pendientes })
   }
 
   const diasVisibles = useMemo(
@@ -618,7 +865,11 @@ export function TripDetailScreen({
         <ScreenHeader title="Viaje" />
         <EmptyState
           ilustracion="error"
-          title="Este viaje no está en el mapa"
+          title={
+            sinRedNiCopia
+              ? 'Sin conexión y sin copia guardada'
+              : 'Este viaje no está en el mapa'
+          }
           description={error ?? 'No encontramos este viaje.'}
           action={{
             label: 'Reintentar',
@@ -660,8 +911,35 @@ export function TripDetailScreen({
         stickyHeaderIndices={editing ? [] : [2]}
         contentContainerStyle={{ paddingBottom: 120 + insets.bottom }}
       >
-        {/* 0 · Portada */}
+        {/* 0 · Portada (con el único aviso de conexión arriba) */}
         <View style={styles.margen}>
+          {!enLinea ? (
+            <Callout
+              tone="warning"
+              icon={CloudOff}
+              title="Sin conexión"
+              style={styles.avisoRed}
+            >
+              {guardadoEn
+                ? `Te mostramos tu copia guardada del ${formatFechaHora(guardadoEn)}.`
+                : 'Te mostramos la última versión que abriste.'}
+            </Callout>
+          ) : desdeCopia ? (
+            <Callout
+              tone="warning"
+              icon={CloudOff}
+              title="No pudimos conectar"
+              action={{
+                label: 'Reintentar',
+                onPress: () => void reconectar(false),
+              }}
+              style={styles.avisoRed}
+            >
+              {guardadoEn
+                ? `Te mostramos tu copia guardada del ${formatFechaHora(guardadoEn)}.`
+                : 'Te mostramos tu copia guardada.'}
+            </Callout>
+          ) : null}
           <Txt variant="overline" color="fgMuted" style={styles.hueco}>
             Itinerario · {PAQUETE[trip.paquete] ?? 'Confort'} ·{' '}
             {formatDias(trip.dias.length)}
@@ -695,6 +973,11 @@ export function TripDetailScreen({
             ) : null}
             {esPublico ? (
               <SelloInfo tone="tinta">Vista pública activa</SelloInfo>
+            ) : null}
+            {enLinea && !desdeCopia && guardadoEn ? (
+              <SelloInfo tone="laton">
+                {`Disponible sin conexión · guardado ${formatFechaHora(guardadoEn)}`}
+              </SelloInfo>
             ) : null}
             {guardando ? (
               <View style={styles.guardando} accessibilityLiveRegion="polite">
@@ -739,7 +1022,7 @@ export function TripDetailScreen({
             style={styles.vivo}
           />
           <View style={styles.acciones}>
-            {esDueno && !editing ? (
+            {puedeEditar && !editing ? (
               <Button
                 title="Editar"
                 variant="outline"
@@ -752,6 +1035,11 @@ export function TripDetailScreen({
               variant="outline"
               icon={MessagesSquare}
               onPress={() => navigate({ name: 'group', trip, tripId })}
+            />
+            <BotonesExportar
+              exportando={exportando}
+              onCalendario={() => void exportarCalendario(false)}
+              onPdf={() => void exportarPdfViaje(false)}
             />
           </View>
         </View>
@@ -779,7 +1067,12 @@ export function TripDetailScreen({
             icon={Compass}
             loading={revisando}
             loadingText="Revisando…"
-            accessibilityHint="Busca choques de horario y traslados imposibles"
+            disabled={!enLinea}
+            accessibilityHint={
+              enLinea
+                ? 'Busca choques de horario y traslados imposibles'
+                : 'Necesitas conexión para revisar con IA'
+            }
             onPress={() => void revisarConIA()}
             style={styles.revisar}
           />
@@ -847,21 +1140,32 @@ export function TripDetailScreen({
               moneda={moneda}
             />
           ) : (
-            diasVisibles.map((d) => (
-              <DayCard
-                key={d.numero}
-                day={d}
-                fechaInicio={trip.fechaInicio}
-                moneda={moneda}
-                resaltadas={resaltadas}
-                {...(esDueno
-                  ? {
-                      onMarkLost: (a: PlanningActivity) =>
-                        setReagendar({ paso: 'pregunta', actividad: a }),
-                    }
-                  : {})}
-              />
-            ))
+            <>
+              {enLinea && !desdeCopia ? (
+                <MapaItinerario
+                  dias={trip.dias}
+                  diaElegido={diaFiltro}
+                  moneda={moneda}
+                  style={styles.mapaItinerario}
+                />
+              ) : null}
+              {diasVisibles.map((d) => (
+                <DayCard
+                  key={d.numero}
+                  day={d}
+                  fechaInicio={trip.fechaInicio}
+                  moneda={moneda}
+                  resaltadas={resaltadas}
+                  destino={trip.destino}
+                  tripId={tripId}
+                  {...(puedeEditar
+                    ? {
+                        onMarkLost: (a: PlanningActivity) => abrirReagendar(a),
+                      }
+                    : {})}
+                />
+              ))}
+            </>
           )}
         </View>
 
@@ -905,6 +1209,7 @@ export function TripDetailScreen({
               fechaFin={trip.fechaFin}
               personas={trip.personas}
               moneda={moneda}
+              tripId={tripId}
             />
           </View>
         </View>
@@ -929,7 +1234,7 @@ export function TripDetailScreen({
             style={styles.flexBoton}
           />
         </View>
-      ) : esDueno ? (
+      ) : puedeEditar ? (
         <View
           style={[styles.fab, { bottom: 16 + insets.bottom }]}
           pointerEvents="box-none"
@@ -970,11 +1275,11 @@ export function TripDetailScreen({
           <AdjustChat
             trip={trip}
             onAdjusted={handleAdjusted}
-            {...(anterior
+            {...(historial.length > 0
               ? {
                   onUndo: () => {
                     setSheet(null)
-                    restaurar(anterior)
+                    deshacer()
                   },
                 }
               : {})}
@@ -1007,9 +1312,11 @@ export function TripDetailScreen({
             icono={Link2}
             titulo="Vista de solo lectura"
             detalle={
-              esDueno
-                ? 'Un enlace para que cualquiera vea el plan, sin editar.'
-                : 'Comparte el enlace del plan.'
+              esDueno && !esPublico && !enLinea
+                ? 'Necesitas conexión para publicarla.'
+                : esDueno
+                  ? 'Un enlace para que cualquiera vea el plan, sin editar.'
+                  : 'Comparte el enlace del plan.'
             }
             onPress={() => void compartirVista()}
           />
@@ -1027,7 +1334,7 @@ export function TripDetailScreen({
             onPress={() => void invitar()}
           />
         ) : null}
-        {esDueno && esPublico ? (
+        {esDueno && esPublico && enLinea ? (
           <Button
             title="Dejar de compartir la vista"
             variant="ghost"
@@ -1053,7 +1360,19 @@ export function TripDetailScreen({
             navigate({ name: 'group', trip, tripId })
           }}
         />
-        {esDueno ? (
+        <OpcionSheet
+          icono={IconoCalendario}
+          titulo="Añadir al calendario"
+          detalle="Un archivo .ics con todas las actividades del viaje."
+          onPress={() => void exportarCalendario(true)}
+        />
+        <OpcionSheet
+          icono={IconoPdf}
+          titulo="Exportar PDF"
+          detalle="El itinerario listo para guardar, enviar o imprimir."
+          onPress={() => void exportarPdfViaje(true)}
+        />
+        {esDueno && enLinea ? (
           <Button
             title="Eliminar viaje"
             variant="danger-outline"
@@ -1078,7 +1397,7 @@ export function TripDetailScreen({
             : reagendar?.paso === 'buscando'
               ? 'Buscando nueva hora…'
               : reagendar?.paso === 'error'
-                ? reagendar.requierePro && reagendar.huecos.length > 0
+                ? reagendar.huecos.length > 0
                   ? 'Elige el nuevo horario'
                   : 'No encontramos hueco'
                 : '¿Te la perdiste?'
@@ -1091,6 +1410,16 @@ export function TripDetailScreen({
               La marcamos como perdida y buscamos otro momento del viaje para
               hacerla.
             </Txt>
+            <View style={styles.motivo}>
+              <Txt variant="label">Qué pasó</Txt>
+              <ChipGroup
+                label="Qué pasó"
+                size="sm"
+                options={MOTIVOS_REAGENDAR}
+                value={motivo}
+                onValueChange={setMotivo}
+              />
+            </View>
             <Button
               title="Sí, buscar nueva hora"
               variant="tinta"
@@ -1155,9 +1484,22 @@ export function TripDetailScreen({
               {reagendar.mensaje}
             </Callout>
             {reagendar.requierePro ? (
-              <Txt variant="caption" color="fgMuted">
-                {TEXTO_REAGENDAR_PRO}
-              </Txt>
+              <View style={styles.pro}>
+                <Txt variant="caption" color="fgMuted">
+                  {TEXTO_REAGENDAR_PRO}
+                </Txt>
+                {conMuroDePago ? (
+                  <Button
+                    title="Ver planes"
+                    variant="link"
+                    size="sm"
+                    onPress={() => {
+                      cerrarReagendar()
+                      navigate({ name: 'paywall' })
+                    }}
+                  />
+                ) : null}
+              </View>
             ) : null}
             {reagendar.huecos.length > 0 ? (
               <>
@@ -1180,7 +1522,14 @@ export function TripDetailScreen({
                   </Pressable>
                 ))}
               </>
-            ) : null}
+            ) : (
+              <Button
+                title="Reintentar"
+                variant="tinta"
+                fullWidth
+                onPress={() => void buscarNuevaHora(reagendar.actividad)}
+              />
+            )}
             <Button
               title="Dejarla para después"
               variant="outline"
@@ -1201,6 +1550,7 @@ export function TripDetailScreen({
         onConfirm={async () => {
           try {
             await deleteTrip(tripId)
+            void borrarCopiaViaje(tripId)
             toast.success('Viaje eliminado')
             reset({ name: 'home' })
           } catch (e) {
@@ -1312,6 +1662,7 @@ const crearEstilos = (t: Tema) =>
     flex: { flex: 1 },
     flexBoton: { flex: 1 },
     margen: { paddingHorizontal: 16 },
+    mapaItinerario: { marginTop: 16 },
     hueco: { marginTop: 8 },
     huecoGrande: { marginTop: 20 },
     esqueletoFila: { flexDirection: 'row', gap: 16, marginTop: 20 },
@@ -1379,6 +1730,9 @@ const crearEstilos = (t: Tema) =>
     fab: { position: 'absolute', right: 16 },
     fabBoton: { ...t.elevation.float },
     pasos: { gap: 12 },
+    motivo: { gap: 8 },
+    pro: { gap: 2, alignItems: 'flex-start' },
+    avisoRed: { marginBottom: 16 },
     buscando: {
       flexDirection: 'row',
       alignItems: 'center',

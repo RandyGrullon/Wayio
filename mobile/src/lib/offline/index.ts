@@ -8,3 +8,11 @@ export {
   clearPendingSync,
 } from './storage'
 export { syncPendingChanges } from './sync'
+export {
+  guardarCopiaViaje,
+  leerCopiaViaje,
+  borrarCopiaViaje,
+  hayConexion,
+  estaEnLinea,
+  type CopiaViajeGuardado,
+} from './viajeGuardado'

@@ -47,7 +47,9 @@ export async function generarViaje(
     if (esMantenimiento(err.status, err.code)) throw err
     onProgress({ fase: 'ia', label: 'La IA arma 3 versiones de tu viaje' })
     try {
-      const r = await generateTrip(form)
+      // Mismo `noCache` que el stream: «Otra versión» tampoco sale de la caché
+      // en el respaldo (como la web).
+      const r = await generateTrip(form, { noCache })
       if (signal?.aborted) {
         throw new ErrorGeneracion('Cancelado', {
           started: true,

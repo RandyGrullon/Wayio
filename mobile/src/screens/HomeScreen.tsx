@@ -233,7 +233,7 @@ export function HomeScreen(): React.ReactElement {
           />
           <Button
             variant="outline"
-            title="Desde un video"
+            title="Desde un video o una foto"
             icon={Clapperboard}
             onPress={() => navigate({ name: 'recreate' })}
           />
@@ -391,7 +391,7 @@ export function HomeScreen(): React.ReactElement {
       >
         <Apariencia />
         <Button
-          title="Planes y suscripción"
+          title="Planes, suscripción e invitaciones"
           variant="outline"
           icon={CreditCard}
           fullWidth

@@ -13,6 +13,7 @@ import {
   Badge,
   Button,
   Callout,
+  ConfirmDialog,
   Pantalla,
   ScreenHeader,
   Segmented,
@@ -25,7 +26,7 @@ import {
   distintas,
 } from '../components/trip/PackageCard'
 import { WeatherStrip } from '../components/trip/WeatherStrip'
-import { ArrowRight } from '../components/ui/iconos'
+import { ArrowRight, RefreshCw } from '../components/ui/iconos'
 import {
   contarNoches,
   formatCurrency,
@@ -34,20 +35,35 @@ import {
   formatViajeros,
   monedaDe,
 } from '../components/ui/formato'
+import { useAuth } from '../context/AuthContext'
+import { useMantenimiento } from '../hooks/useConfigRemota'
 import { useNavigation } from '../navigation/NavigationContext'
 import { createTrip } from '../lib/trips/repository'
 import { useEstilos, type Tema } from '../theme'
 import type { GenerateResult, Paquete, PlanningTrip } from '../types/planning'
 import type { FormularioViaje } from './crear/formulario'
+import { useTrazado } from './crear/useTrazado'
+import { LoadingScreen } from './LoadingScreen'
 
 const ORDER: Paquete[] = ['basico', 'confort', 'premium']
 const SEPARACION = 12
+
+/** Aviso de «Otra versión» (el de la web: /precios, preguntas frecuentes). */
+const AVISO_OTRA_VERSION =
+  '«Otra versión» le pide a la IA un viaje completo nuevo, así que cuenta como uno de tus viajes del mes. Si la IA falla y no te entrega el viaje, no se descuenta; los itinerarios de ejemplo tampoco cuentan.'
 
 /**
  * Versiones (§6.4, móvil): segmented de nivel, tarjetas con snap al 88 % y
  * barra inferior con «Guardar y ver itinerario». Seleccionar no navega.
  * Tras guardar se reinicia la pila (Inicio → Viaje) para no duplicar el viaje
  * al volver atrás (M15).
+ *
+ * «Otra versión» (y «Reintentar» del ejemplo) vuelve a trazar el mismo
+ * formulario con `noCache`, como la web (PlannerFlow: `trazar(formData,
+ * true)`), con la misma pantalla de carga y los mismos errores que el
+ * planificador (`useTrazado`). En Gratis pide confirmación con el aviso de
+ * que cuenta como un viaje del cupo. Las versiones nuevas sustituyen a estas
+ * en la pila: atrás sigue llevando al formulario.
  */
 export function PackagesScreen({
   result,
@@ -56,7 +72,9 @@ export function PackagesScreen({
   result: GenerateResult
   form: FormularioViaje
 }): React.ReactElement {
-  const { reset, goBack } = useNavigation()
+  const { reset, goBack, replace, navigate } = useNavigation()
+  const { tier } = useAuth()
+  const mantenimiento = useMantenimiento()
   const toast = useToast()
   const styles = useEstilos(crearEstilos)
   const insets = useSafeAreaInsets()
@@ -65,6 +83,29 @@ export function PackagesScreen({
   const [elegido, setElegido] = useState<Paquete>(form.paquete ?? 'confort')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [confirmarOtra, setConfirmarOtra] = useState(false)
+  /** «Otra versión» se topó con el mantenimiento: aviso sobre las versiones. */
+  const [avisoMantenimiento, setAvisoMantenimiento] = useState(false)
+
+  const { trazado, trazar, reintentar, cancelar, cerrar } = useTrazado({
+    // Las versiones nuevas sustituyen a estas (atrás → formulario).
+    onListo: (nuevo, payload) =>
+      replace({ name: 'packages', result: nuevo, form: payload }),
+    onMantenimiento: () => setAvisoMantenimiento(true),
+  })
+
+  const otraVersion = (): void => {
+    setConfirmarOtra(false)
+    setError(null)
+    setAvisoMantenimiento(false)
+    void trazar(form, { noCache: true })
+  }
+
+  /** «Otra versión»: en Gratis gasta un viaje del cupo, así que se avisa antes. */
+  const pedirOtraVersion = (): void => {
+    if (tier === 'free') setConfirmarOtra(true)
+    else otraVersion()
+  }
 
   const anchoTarjeta = Math.round(Math.min(420, width * 0.88))
   const paso = anchoTarjeta + SEPARACION
@@ -123,6 +164,30 @@ export function PackagesScreen({
 
   const viajeElegido = result[elegido]
 
+  // Trazando otra versión: la pantalla de carga del planificador. Si falla,
+  // el error se muestra aquí encima de estas versiones (que siguen valiendo
+  // y se pueden guardar), no en la pantalla de carga, que no tiene salida a
+  // ellas.
+  if (trazado && !trazado.error) {
+    const destinoTrazado = trazado.form.destinoSorpresa
+      ? 'Destino sorpresa'
+      : trazado.form.destino
+    return (
+      <LoadingScreen
+        kicker={`Otra versión · ${destinoTrazado} · ${formatRangoFechas(trazado.form.fechaInicio, trazado.form.fechaFin)}`}
+        fase={trazado.fase}
+        label={trazado.label}
+        inicio={trazado.inicio}
+        error={null}
+        // Cancelar (o atrás) vuelve a estas versiones.
+        onCancel={cancelar}
+        onRetry={reintentar}
+        onEdit={goBack}
+      />
+    )
+  }
+  const falloOtra = trazado?.error ? trazado : null
+
   return (
     <Pantalla edges={['top', 'left', 'right']}>
       <ScreenHeader
@@ -149,11 +214,53 @@ export function PackagesScreen({
             ))}
           </View>
 
+          {falloOtra ? (
+            <Callout
+              tone={falloOtra.cupoAgotado ? 'info' : 'danger'}
+              title={
+                falloOtra.cupoAgotado
+                  ? 'Llegaste al límite de este mes'
+                  : result.demo
+                    ? 'No pudimos trazar tu viaje'
+                    : 'No pudimos trazar otra versión'
+              }
+              // Cupo agotado (402): «Ver planes», sin reintento (fallaría igual).
+              action={
+                falloOtra.cupoAgotado
+                  ? {
+                      label: 'Ver planes',
+                      onPress: () => navigate({ name: 'paywall' }),
+                    }
+                  : { label: 'Reintentar', onPress: reintentar }
+              }
+              onDismiss={cerrar}
+              style={styles.bloque}
+            >
+              {falloOtra.error}
+            </Callout>
+          ) : null}
+
+          {avisoMantenimiento && mantenimiento.activo ? (
+            <Callout
+              tone="warning"
+              title="No podemos trazar viajes ahora"
+              onDismiss={() => setAvisoMantenimiento(false)}
+              style={styles.bloque}
+            >
+              {`${mantenimiento.mensaje} Estas versiones siguen aquí: puedes guardarlas.`}
+            </Callout>
+          ) : null}
+
           {result.demo ? (
             <Callout
               tone="warning"
               title="Te mostramos un ejemplo"
-              action={{ label: 'Volver a intentarlo', onPress: goBack }}
+              // Como la web (PasoVersiones): vuelve a trazar sin caché. El
+              // ejemplo no gastó cupo; si ahora sale bien, cuenta como el viaje.
+              // Con el cupo agotado no se ofrece (daría el mismo 402).
+              {...(falloOtra?.cupoAgotado
+                ? {}
+                : { action: { label: 'Reintentar', onPress: otraVersion } })}
               style={styles.bloque}
             >
               No pudimos trazar tu plan ahora mismo: estas versiones son de
@@ -219,7 +326,38 @@ export function PackagesScreen({
             />
           ))}
         </ScrollView>
+
+        {!result.demo ? (
+          <View style={[styles.margen, styles.otra]}>
+            <Txt variant="bodyS" color="fgMuted">
+              ¿Ninguna te convence? La IA puede trazarte un viaje nuevo con los
+              mismos datos.
+            </Txt>
+            <Button
+              title="Otra versión"
+              variant="outline"
+              icon={RefreshCw}
+              // Con el cupo agotado volvería a dar el mismo 402.
+              disabled={saving || falloOtra?.cupoAgotado === true}
+              {...(tier === 'free'
+                ? { accessibilityHint: 'Cuenta como uno de tus viajes del mes' }
+                : {})}
+              onPress={pedirOtraVersion}
+              style={styles.botonOtra}
+            />
+          </View>
+        ) : null}
       </ScrollView>
+
+      <ConfirmDialog
+        visible={confirmarOtra}
+        onClose={() => setConfirmarOtra(false)}
+        onConfirm={otraVersion}
+        title="¿Trazar otra versión?"
+        description={AVISO_OTRA_VERSION}
+        confirmLabel="Trazar otra versión"
+        tone="neutral"
+      />
 
       <View
         style={[styles.barra, { paddingBottom: Math.max(12, insets.bottom) }]}
@@ -255,6 +393,8 @@ const crearEstilos = (t: Tema) =>
     resumen: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 12 },
     bloque: { marginTop: 16 },
     carrusel: { paddingHorizontal: 16, paddingTop: 16 },
+    otra: { marginTop: 24 },
+    botonOtra: { marginTop: 12, alignSelf: 'flex-start' },
     barra: {
       position: 'absolute',
       left: 0,

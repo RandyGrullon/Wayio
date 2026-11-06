@@ -31,6 +31,8 @@ export type Route =
   /** Unirse a un grupo desde wayio://group/<link>. */
   | { name: 'unirse'; link: string }
   | { name: 'paywall' }
+  /** Vista pública de solo lectura (wayio://viaje-compartido/<id>). */
+  | { name: 'viajeCompartido'; id: string }
 
 export interface Entrada {
   key: number

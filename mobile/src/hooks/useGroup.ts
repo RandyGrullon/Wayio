@@ -16,7 +16,7 @@ interface GroupState {
   loading: boolean
   /** Error al cargar el grupo (sin acceso, sin conexión...). */
   error: string | null
-  /** Error de la última acción (enviar, votar, gasto). */
+  /** Error de la última acción (enviar, votar, gasto, ubicación). */
   actionError: string | null
 }
 
@@ -24,6 +24,8 @@ export interface UseGroupReturn extends GroupState {
   sendMessage: (mensaje: string) => Promise<boolean>
   castVote: (activityId: string, voto: boolean) => Promise<boolean>
   addExpense: (concepto: string, monto: number) => Promise<boolean>
+  /** Comparte tu posición con el grupo (solo tu fila de miembro). */
+  updateLocation: (lat: number, lng: number) => Promise<boolean>
   reload: () => Promise<void>
   clearActionError: () => void
 }
@@ -32,6 +34,9 @@ type ConId = { id: string }
 
 const PREFIJO_TEMPORAL = 'temp-'
 const LIMITE_MENSAJES = 100
+const ERROR_UBICACION = 'No se pudo compartir tu ubicación.'
+const ERROR_UBICACION_RED =
+  'No se pudo compartir tu ubicación. Revisa tu conexión.'
 
 /** Nombre que verán los demás miembros (nunca el email completo). */
 function nombreVisible(user: User): string {
@@ -177,8 +182,8 @@ async function cargarGrupo(tripId: string, userId: string): Promise<Carga> {
 }
 
 /**
- * Sala grupal de un viaje en mobile (miembros, chat, votos y gastos) con
- * Supabase Realtime. La seguridad la ponen las RLS por membresía: solo los
+ * Sala grupal de un viaje en mobile (miembros, chat, votos, gastos y la
+ * ubicación compartida) con Supabase Realtime. La seguridad la ponen las RLS por membresía: solo los
  * miembros ven y escriben. Ya NO hace un upsert libre en trip_members (eso
  * dejaba unirse a cualquier viaje): la membresía se garantiza con la RPC
  * join_trip usando el enlace del viaje, que solo ve quien ya tiene acceso.
@@ -199,6 +204,8 @@ export function useGroup(tripId: string, user: User): UseGroupReturn {
   })
   const userRef = useRef(user)
   const votesRef = useRef<ActivityVoteRow[]>([])
+  // Copia de los miembros para deshacer la ubicación optimista si falla.
+  const membersRef = useRef<TripMemberRow[]>([])
   const userId = user.id
 
   useEffect(() => {
@@ -208,6 +215,10 @@ export function useGroup(tripId: string, user: User): UseGroupReturn {
   useEffect(() => {
     votesRef.current = state.votes
   }, [state.votes])
+
+  useEffect(() => {
+    membersRef.current = state.members
+  }, [state.members])
 
   const fallarAccion = useCallback((mensaje: string) => {
     setState((s) => ({ ...s, actionError: mensaje }))
@@ -504,6 +515,95 @@ export function useGroup(tripId: string, user: User): UseGroupReturn {
     [tripId, fallarAccion]
   )
 
+  // Igual que PUT /api/groups/[id]/location de la web, pero directo en
+  // Supabase como el resto del hook: la RLS «members_update_own» y el GRANT
+  // por columnas (lat_actual, lng_actual, ultima_ubicacion) solo dejan tocar
+  // TU fila. Optimista: tu posición se ve al instante en el mapa.
+  const updateLocation = useCallback(
+    async (lat: number, lng: number): Promise<boolean> => {
+      if (
+        !Number.isFinite(lat) ||
+        !Number.isFinite(lng) ||
+        Math.abs(lat) > 90 ||
+        Math.abs(lng) > 180
+      ) {
+        fallarAccion('La ubicación no es válida.')
+        return false
+      }
+      const ahora = new Date().toISOString()
+      const previa = membersRef.current.find((m) => m.user_id === userId)
+      setState((s) => ({
+        ...s,
+        members: s.members.map((m) =>
+          m.user_id === userId
+            ? {
+                ...m,
+                lat_actual: lat,
+                lng_actual: lng,
+                ultima_ubicacion: ahora,
+              }
+            : m
+        ),
+      }))
+      // Deshace solo ESTA posición optimista: si ya llegó otra (realtime o un
+      // envío posterior), no la pisa.
+      const deshacer = (): void => {
+        if (!previa) return
+        setState((s) => ({
+          ...s,
+          members: s.members.map((m) =>
+            m.user_id === userId &&
+            m.ultima_ubicacion === ahora &&
+            m.lat_actual === lat &&
+            m.lng_actual === lng
+              ? {
+                  ...m,
+                  lat_actual: previa.lat_actual,
+                  lng_actual: previa.lng_actual,
+                  ultima_ubicacion: previa.ultima_ubicacion,
+                }
+              : m
+          ),
+        }))
+      }
+      try {
+        const { data, error } = await getSupabase()
+          .from('trip_members')
+          .update({
+            lat_actual: lat,
+            lng_actual: lng,
+            ultima_ubicacion: ahora,
+          })
+          .eq('trip_id', tripId)
+          .eq('user_id', userId)
+          .select('id')
+        if (error) {
+          deshacer()
+          // Sin código de PostgREST = no llegó al servidor (sin red).
+          fallarAccion(
+            error.code
+              ? mensajeDeError(error, ERROR_UBICACION)
+              : ERROR_UBICACION_RED
+          )
+          return false
+        }
+        if (!data || data.length === 0) {
+          deshacer()
+          fallarAccion(
+            'No formas parte de este grupo, así que no podemos compartir tu ubicación.'
+          )
+          return false
+        }
+        return true
+      } catch {
+        deshacer()
+        fallarAccion(ERROR_UBICACION_RED)
+        return false
+      }
+    },
+    [tripId, userId, fallarAccion]
+  )
+
   const clearActionError = useCallback(() => {
     setState((s) => ({ ...s, actionError: null }))
   }, [])
@@ -513,6 +613,7 @@ export function useGroup(tripId: string, user: User): UseGroupReturn {
     sendMessage,
     castVote,
     addExpense,
+    updateLocation,
     reload,
     clearActionError,
   }

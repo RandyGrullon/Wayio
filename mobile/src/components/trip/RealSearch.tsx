@@ -30,6 +30,8 @@ import {
   formatRangoFechas,
 } from '../ui/formato'
 import type { Moneda } from '../../types/planning'
+import { track, type CategoriaAfiliado } from '../../lib/analytics'
+import { AVISO_PATROCINADO, proveedorDe } from './enlacesAfiliado'
 
 interface Props {
   destino: string
@@ -39,9 +41,17 @@ interface Props {
   personas: number
   /** Moneda del viaje (precios de actividades en esa moneda). */
   moneda?: Moneda
+  /** Id de fila de `trips` (analítica). */
+  tripId?: string
 }
 
 type Pestana = 'hoteles' | 'actividades' | 'vuelos'
+
+const CATEGORIA: Record<Pestana, CategoriaAfiliado> = {
+  hoteles: 'hotel',
+  actividades: 'actividad',
+  vuelos: 'vuelo',
+}
 
 interface Seccion {
   estado: 'inactiva' | 'cargando' | 'lista' | 'error'
@@ -64,12 +74,20 @@ const NOMBRE_PROVEEDOR: Record<string, string> = {
   liteapi: 'Alojamiento',
 }
 
-function abrir(url: string): void {
+/** Abre el enlace del socio; `alAbrir` registra el clic (solo si se abre). */
+function abrir(url: string, alAbrir?: (url: string) => void): void {
   if (!url.startsWith('https://')) return
+  alAbrir?.(url)
   Linking.openURL(url).catch(() => undefined)
 }
 
-function ResultadoFila({ r }: { r: SearchResult }): React.ReactElement {
+function ResultadoFila({
+  r,
+  onClic,
+}: {
+  r: SearchResult
+  onClic: (url: string) => void
+}): React.ReactElement {
   const { colors } = useTheme()
   const styles = useEstilos(crearEstilos)
   const precio =
@@ -151,7 +169,7 @@ function ResultadoFila({ r }: { r: SearchResult }): React.ReactElement {
             size="sm"
             iconEnd={ExternalLink}
             accessibilityHint="Enlace patrocinado: abre la web del proveedor"
-            onPress={() => abrir(r.url ?? '')}
+            onPress={() => abrir(r.url ?? '', onClic)}
           />
         ) : null}
       </View>
@@ -171,10 +189,21 @@ export function RealSearch({
   fechaFin,
   personas,
   moneda = 'USD',
+  tripId,
 }: Props): React.ReactElement {
   const styles = useEstilos(crearEstilos)
   const { colors } = useTheme()
   const [tab, setTab] = useState<Pestana>('hoteles')
+
+  // Mismo evento y ubicación que el RealSearch de la web.
+  const clic = (url: string): void =>
+    track('click_afiliado', {
+      proveedor: proveedorDe(url),
+      categoria: CATEGORIA[tab],
+      destino,
+      tripId,
+      ubicacion: 'disponibilidad-real',
+    })
   const [secciones, setSecciones] = useState<Record<Pestana, Seccion>>({
     hoteles: INICIAL,
     actividades: INICIAL,
@@ -321,7 +350,7 @@ export function RealSearch({
           resultados.length > 0 ? (
             <View>
               {resultados.map((r) => (
-                <ResultadoFila key={r.id} r={r} />
+                <ResultadoFila key={r.id} r={r} onClic={clic} />
               ))}
               {sec.data?.aviso ? (
                 <Txt variant="caption" color="fgMuted" style={styles.aviso}>
@@ -361,7 +390,7 @@ export function RealSearch({
                   variant="outline"
                   iconEnd={ExternalLink}
                   accessibilityHint="Enlace patrocinado: abre la búsqueda del socio"
-                  onPress={() => abrir(enlace)}
+                  onPress={() => abrir(enlace, clic)}
                   style={styles.centrado}
                 />
               ) : (
@@ -375,6 +404,12 @@ export function RealSearch({
             </View>
           )
         ) : null}
+
+        {/* Aviso legal (FTC y LSSI) junto a los resultados y botones: siempre
+            visible, aunque falte algún ID el enlace puede ser de afiliado. */}
+        <Txt variant="caption" color="fgSubtle" style={styles.patrocinado}>
+          {AVISO_PATROCINADO}
+        </Txt>
       </View>
     </View>
   )
@@ -407,4 +442,5 @@ const crearEstilos = (_t: Tema) =>
     aviso: { marginBottom: 8 },
     vacio: { paddingVertical: 16 },
     centrado: { alignSelf: 'center' },
+    patrocinado: { marginTop: 12 },
   })

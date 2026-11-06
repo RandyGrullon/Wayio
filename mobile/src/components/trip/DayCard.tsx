@@ -5,7 +5,17 @@ import { colorDia, useEstilos, useTheme, type Tema } from '../../theme'
 import { Badge } from '../ui/Badge'
 import { Button } from '../ui/Button'
 import { Txt } from '../ui/Txt'
-import { Clock, MapPin, Navigation, Wallet, X } from '../ui/iconos'
+import {
+  Clock,
+  ExternalLink,
+  MapPin,
+  Navigation,
+  Ticket,
+  Wallet,
+  X,
+} from '../ui/iconos'
+import { track } from '../../lib/analytics'
+import { reservaDeActividad } from './enlacesAfiliado'
 import {
   formatCurrency,
   formatDuracion,
@@ -31,6 +41,8 @@ export const TIPO_LABEL: Record<PlanningActivityType, string> = {
   traslado: 'Traslado',
 }
 
+export type ModoDayCard = 'completo' | 'lectura'
+
 function ActivityRow({
   activity,
   color,
@@ -38,6 +50,10 @@ function ActivityRow({
   ultima,
   onMarkLost,
   resaltada,
+  ciudad,
+  destino,
+  tripId,
+  modo,
 }: {
   activity: PlanningActivity
   color: string
@@ -45,6 +61,11 @@ function ActivityRow({
   ultima: boolean
   onMarkLost?: (a: PlanningActivity) => void
   resaltada: boolean
+  /** Ciudad del día (o el destino): texto del enlace de reserva. */
+  ciudad: string
+  destino: string | undefined
+  tripId: string | undefined
+  modo: ModoDayCard
 }): React.ReactElement {
   const { colors } = useTheme()
   const styles = useEstilos(crearEstilos)
@@ -53,6 +74,10 @@ function ActivityRow({
   const fin = formatHora12(activity.horaFin)
   const hasCoords = activity.lat !== 0 || activity.lng !== 0
   const lost = activity.estado === 'perdida' || activity.esPerdida
+  // El enlace se construye AL RENDERIZAR; nunca se usa el `linkAfiliado`
+  // guardado (como ActivityItem de la web).
+  const reserva =
+    modo === 'completo' ? reservaDeActividad(activity, ciudad) : null
   const hayMas =
     activity.consejos.length > 0 ||
     Boolean(activity.mejorHoraVisita) ||
@@ -207,6 +232,37 @@ function ActivityRow({
                 }}
               />
             ) : null}
+            {reserva ? (
+              <Button
+                title={reserva.etiqueta}
+                variant="outline"
+                size="sm"
+                icon={reserva.categoria === 'hotel' ? ExternalLink : Ticket}
+                accessibilityLabel={`${reserva.etiqueta}: ${activity.nombre} (enlace patrocinado)`}
+                accessibilityHint="Abre el sitio del socio"
+                onPress={() => {
+                  track('click_afiliado', {
+                    proveedor: reserva.proveedor,
+                    categoria: reserva.categoria,
+                    destino,
+                    tripId,
+                    ubicacion: 'actividad',
+                  })
+                  Linking.openURL(reserva.url).catch(() => undefined)
+                }}
+              />
+            ) : null}
+            {reserva ? (
+              // El botón ya dice «enlace patrocinado» a los lectores.
+              <Txt
+                variant="caption"
+                color="fgSubtle"
+                accessibilityElementsHidden
+                importantForAccessibility="no-hide-descendants"
+              >
+                Patrocinado
+              </Txt>
+            ) : null}
             {onMarkLost && !lost ? (
               <Button
                 title="Me la perdí"
@@ -275,6 +331,9 @@ export function DayCard({
   moneda = 'USD',
   onMarkLost,
   resaltadas,
+  destino,
+  tripId,
+  modo = 'completo',
 }: {
   day: PlanningDay
   /** Fecha de salida del viaje ('YYYY-MM-DD') para fechar el día. */
@@ -283,12 +342,26 @@ export function DayCard({
   onMarkLost?: (a: PlanningActivity) => void
   /** Ids recién cambiados por la IA (se resaltan). */
   resaltadas?: ReadonlySet<string>
+  /**
+   * Destino del viaje: ciudad de respaldo del enlace de reserva si el día no
+   * trae la suya, y propiedad de la analítica.
+   */
+  destino?: string
+  /** Id de fila de `trips` (analítica). */
+  tripId?: string
+  /**
+   * completo: «Cómo llegar» y «Reservar» / «Ver hotel» (patrocinado).
+   * lectura: sin enlaces de reserva (vista compartida).
+   */
+  modo?: ModoDayCard
 }): React.ReactElement {
   const { days } = useTheme()
   const styles = useEstilos(crearEstilos)
   const color = colorDia(days, day.numero)
   const fecha = fechaInicio ? sumarDias(fechaInicio, day.numero - 1) : ''
   const numero = String(day.numero).padStart(2, '0')
+  // Viajes antiguos pueden traer el día sin ciudad.
+  const ciudad = day.ciudad?.trim() || destino?.trim() || ''
 
   return (
     <View style={styles.dia}>
@@ -323,6 +396,10 @@ export function DayCard({
             moneda={moneda}
             ultima={i === day.actividades.length - 1}
             resaltada={resaltadas?.has(a.id) ?? false}
+            ciudad={ciudad}
+            destino={destino}
+            tripId={tripId}
+            modo={modo}
             {...(onMarkLost ? { onMarkLost } : {})}
           />
         ))}
@@ -371,6 +448,7 @@ const crearEstilos = (t: Tema) =>
     acciones: {
       flexDirection: 'row',
       flexWrap: 'wrap',
+      alignItems: 'center',
       gap: 4,
       marginTop: 6,
       marginLeft: -12,

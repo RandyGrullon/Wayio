@@ -12,7 +12,7 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.wayio.app",
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "Wayio usa tu ubicación para detectar cuando llegas a cada actividad.",
+        "NSLocationWhenInUseUsageDescription": "Wayio usa tu ubicación para detectar cuando llegas a cada actividad y, si lo activas, para compartirla con tu grupo de viaje.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "Wayio necesita acceso a tu ubicación en segundo plano para el geofencing automático.",
         "NSLocationAlwaysUsageDescription": "Wayio necesita acceso a tu ubicación en segundo plano para el geofencing automático."
       }
@@ -76,7 +76,15 @@
       ],
       "@rnmapbox/maps",
       "expo-web-browser",
-      "expo-font"
+      "expo-font",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Wayio usa tus fotos para reconocer el lugar de una foto de viaje y trazarte un viaje parecido.",
+          "cameraPermission": "Wayio usa la cámara para que tomes una foto de un lugar y te trace un viaje parecido.",
+          "microphonePermission": false
+        }
+      ]
     ]
   }
 }

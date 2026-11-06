@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { forwardRef, useRef, useState } from 'react'
 import {
   KeyboardAvoidingView,
   Platform,
@@ -7,6 +7,7 @@ import {
   View,
   type TextInput,
 } from 'react-native'
+import Svg, { Path } from 'react-native-svg'
 import * as WebBrowser from 'expo-web-browser'
 import { useAuth } from '../context/AuthContext'
 import { config } from '../config'
@@ -21,9 +22,57 @@ import {
   Txt,
 } from '../components/ui'
 import { useTheme } from '../theme'
-import { ArrowLeft, Eye, EyeOff, MailCheck } from '../components/ui/iconos'
+import {
+  ArrowLeft,
+  Eye,
+  EyeOff,
+  MailCheck,
+  type LucideIcon,
+  type LucideProps,
+} from '../components/ui/iconos'
 
 type Mode = 'login' | 'signup' | 'recuperar'
+
+/** Qué botón está trabajando (cada uno con su propio «cargando»). */
+type Accion = 'email' | 'google' | 'magia'
+
+/**
+ * «G» oficial de Google para el botón «Continuar con Google». Lleva los
+ * colores de marca de Google (sus normas de marca lo exigen), no los del
+ * tema, igual que la web (src/app/(auth)/login/GoogleG.tsx). Con la firma de
+ * un icono lucide para usarse como `icon` de Button (ignora color y trazo).
+ */
+const GoogleG = forwardRef<Svg, LucideProps>(function GoogleG(
+  { size = 18 },
+  ref
+) {
+  return (
+    <Svg
+      ref={ref}
+      width={size}
+      height={size}
+      viewBox="0 0 48 48"
+      accessible={false}
+    >
+      <Path
+        fill="#4285F4"
+        d="M47.5 24.5c0-1.6-.1-3.2-.4-4.7H24v9h13.2c-.6 3-2.4 5.6-5 7.3v6h8.1c4.7-4.4 7.2-10.8 7.2-17.6z"
+      />
+      <Path
+        fill="#34A853"
+        d="M24 48c6.5 0 11.9-2.1 15.8-5.8l-8.1-6c-2.1 1.4-4.8 2.2-7.7 2.2-5.9 0-10.9-4-12.7-9.3H3v6.2C7 42.9 15 48 24 48z"
+      />
+      <Path
+        fill="#FBBC05"
+        d="M11.3 29.1c-.5-1.4-.7-2.9-.7-4.4s.3-3 .7-4.4V14H3c-1.6 3.1-2.5 6.6-2.5 10.3S1.4 31.5 3 34.6l8.3-5.5z"
+      />
+      <Path
+        fill="#EA4335"
+        d="M24 9.5c3.3 0 6.3 1.1 8.6 3.4l6.4-6.4C35.9 2.9 30.5.5 24 .5 15 .5 7 5.6 3 14l8.3 5.5C13.1 14 18 9.5 24 9.5z"
+      />
+    </Svg>
+  )
+}) as LucideIcon
 
 const TITULOS: Record<Mode, { h1: string; sub: string }> = {
   login: {
@@ -50,12 +99,16 @@ const BOTON: Record<Mode, { label: string; cargando: string }> = {
  * Login, registro y recuperación (§6.9, versión móvil): banda de postal
  * arriba, wordmark, H1, campos con label, errores en Callout y «Revisa tu
  * email» tras registrarse. Conserva los modos y el aviso de configuración.
+ * Como la web (LoginForm): «Continuar con Google» en entrar y crear cuenta, y
+ * «Prefiero recibir un enlace por email» (enlace mágico) al entrar.
  */
 export function AuthScreen(): React.ReactElement {
   const {
     signIn,
     signUp,
     resetPassword,
+    signInWithGoogle,
+    sendMagicLink,
     configured,
     authLinkError,
     clearAuthLinkError,
@@ -69,7 +122,8 @@ export function AuthScreen(): React.ReactElement {
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const [revisaEmail, setRevisaEmail] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
+  const [accion, setAccion] = useState<Accion | null>(null)
+  const loading = accion !== null
   const emailRef = useRef<TextInput>(null)
   const claveRef = useRef<TextInput>(null)
 
@@ -81,12 +135,48 @@ export function AuthScreen(): React.ReactElement {
     clearAuthLinkError()
   }
 
-  const handleSubmit = async (): Promise<void> => {
-    if (loading) return
+  const limpiarMensajes = (): void => {
     setError(null)
     setSuccess(null)
     clearAuthLinkError()
-    setLoading(true)
+  }
+
+  /** Como la web (LoginForm handleGoogle): el error vuelve en el Callout. */
+  const handleGoogle = async (): Promise<void> => {
+    if (loading) return
+    limpiarMensajes()
+    setAccion('google')
+    try {
+      const r = await signInWithGoogle()
+      if (r.error) setError(r.error)
+    } finally {
+      setAccion(null)
+    }
+  }
+
+  /** «Prefiero recibir un enlace por email» (LoginForm handleMagicLink). */
+  const handleMagicLink = async (): Promise<void> => {
+    if (loading) return
+    limpiarMensajes()
+    if (!email.trim()) {
+      setError('Escribe tu email y te enviamos un enlace para entrar.')
+      emailRef.current?.focus()
+      return
+    }
+    setAccion('magia')
+    try {
+      const r = await sendMagicLink(email)
+      if (r.error) setError(r.error)
+      else if (r.message) setSuccess(r.message)
+    } finally {
+      setAccion(null)
+    }
+  }
+
+  const handleSubmit = async (): Promise<void> => {
+    if (loading) return
+    limpiarMensajes()
+    setAccion('email')
     try {
       if (mode === 'login') {
         const r = await signIn(email, password)
@@ -101,7 +191,7 @@ export function AuthScreen(): React.ReactElement {
         else setSuccess(r.message ?? 'Revisa tu bandeja de entrada.')
       }
     } finally {
-      setLoading(false)
+      setAccion(null)
     }
   }
 
@@ -203,7 +293,49 @@ export function AuthScreen(): React.ReactElement {
                   </Callout>
                 ) : null}
 
-                <View style={styles.form}>
+                {mode !== 'recuperar' ? (
+                  <>
+                    <Button
+                      title="Continuar con Google"
+                      variant="outline"
+                      size="lg"
+                      fullWidth
+                      icon={GoogleG}
+                      loading={accion === 'google'}
+                      loadingText="Abriendo Google…"
+                      disabled={loading}
+                      onPress={() => void handleGoogle()}
+                      style={styles.google}
+                    />
+                    <View
+                      style={styles.separador}
+                      accessibilityElementsHidden
+                      importantForAccessibility="no-hide-descendants"
+                    >
+                      <View
+                        style={[
+                          styles.linea,
+                          { backgroundColor: colors.border },
+                        ]}
+                      />
+                      <Txt variant="caption" color="fgSubtle">
+                        o con tu email
+                      </Txt>
+                      <View
+                        style={[
+                          styles.linea,
+                          { backgroundColor: colors.border },
+                        ]}
+                      />
+                    </View>
+                  </>
+                ) : null}
+
+                <View
+                  style={
+                    mode === 'recuperar' ? styles.form : styles.formTrasGoogle
+                  }
+                >
                   {mode === 'signup' ? (
                     <Input
                       label="Nombre"
@@ -283,12 +415,26 @@ export function AuthScreen(): React.ReactElement {
                   <Button
                     title={BOTON[mode].label}
                     loadingText={BOTON[mode].cargando}
-                    loading={loading}
+                    loading={accion === 'email'}
+                    disabled={loading}
                     size="lg"
                     fullWidth
                     onPress={() => void handleSubmit()}
                     style={styles.enviar}
                   />
+
+                  {mode === 'login' ? (
+                    <Button
+                      title="Prefiero recibir un enlace por email"
+                      variant="ghost"
+                      fullWidth
+                      loading={accion === 'magia'}
+                      loadingText="Enviando el enlace…"
+                      disabled={loading}
+                      onPress={() => void handleMagicLink()}
+                      style={styles.magia}
+                    />
+                  ) : null}
                 </View>
 
                 <View style={styles.alternar}>
@@ -357,8 +503,18 @@ const styles = StyleSheet.create({
   sub: { marginTop: 8 },
   bloque: { marginTop: 16 },
   form: { marginTop: 24 },
+  formTrasGoogle: { marginTop: 0 },
+  google: { marginTop: 24 },
+  separador: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginVertical: 20,
+  },
+  linea: { flex: 1, height: StyleSheet.hairlineWidth },
   olvido: { alignSelf: 'flex-end', marginTop: -6, marginBottom: 4 },
   enviar: { marginTop: 12 },
+  magia: { marginTop: 8 },
   alternar: {
     flexDirection: 'row',
     flexWrap: 'wrap',

@@ -3,6 +3,7 @@ import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native'
 import { useEstilos, useTheme, type Tema } from '../theme'
 import { Txt } from './ui/Txt'
 import { Button } from './ui/Button'
+import { ChipGroup } from './ui/Chip'
 import { CalendarDays, Check, Compass } from './ui/iconos'
 import { formatDuracion, formatFecha, formatHora12 } from './ui/formato'
 import { Aviso, Hoja } from './alerts/piezas'
@@ -20,6 +21,12 @@ import {
 import { esRequierePro, TEXTO_REAGENDAR_PRO } from '../lib/api/limites'
 import { conTiempoLimite } from '../lib/scheduling/tiempoLimite'
 import {
+  MOTIVO_POR_DEFECTO,
+  MOTIVOS_REAGENDAR,
+  textoMotivoReagendar,
+  type MotivoReagendar,
+} from '../lib/utils/motivosReagendar'
+import {
   aISO,
   fechaDeDia,
   fechaYHora,
@@ -32,7 +39,7 @@ import type { Day } from '../types/trip'
 
 /**
  * «Me la perdí» en 3 pasos (DISENO §6.6):
- * 1. «¿Te la perdiste?» (confirmar),
+ * 1. «¿Te la perdiste?» (confirmar, con el motivo en chips como la web),
  * 2. «Buscando nueva hora…»,
  * 3. sugerencia con «Aceptar» y «Descartar».
  * Tocar la tarjeta de la actividad nunca marca nada: solo este flujo.
@@ -166,6 +173,8 @@ export function ReschedulePanel({
   const [aviso, setAviso] = useState<string | null>(null)
   /** Gratis: la IA no propone; el viajero elige a mano (503 requiere_pro). */
   const [aMano, setAMano] = useState(false)
+  /** «Qué pasó»: se manda a la IA como `reason` (igual que la web). */
+  const [motivo, setMotivo] = useState<MotivoReagendar>(MOTIVO_POR_DEFECTO)
   const diasRef = useRef(dias)
   const busqueda = useRef(0)
   const iniciada = useRef(false)
@@ -176,7 +185,7 @@ export function ReschedulePanel({
 
   /** Busca huecos (IA si hay fila, y locales). Solo fija estado al final. */
   const buscar = useCallback(
-    async (act: Activity) => {
+    async (act: Activity, razon: string) => {
       const id = ++busqueda.current
       const encontradas: Opcion[] = []
       let huecosServidor: RescheduleSlot[] = []
@@ -185,11 +194,7 @@ export function ReschedulePanel({
       if (filaId && UUID_RE.test(filaId)) {
         try {
           const r = await conTiempoLimite(
-            rescheduleActivityDetailed(
-              act.id,
-              filaId,
-              'El viajero se la perdió durante el viaje'
-            ),
+            rescheduleActivityDetailed(act.id, filaId, razon),
             25_000
           )
           const diaIdx = r.dia - 1
@@ -276,13 +281,14 @@ export function ReschedulePanel({
   )
 
   // Abierto desde «Mover a otro día»: el padre ya la marcó como perdida y
-  // se busca directamente (una sola vez por apertura).
+  // se busca directamente (una sola vez por apertura), con el motivo por
+  // defecto («Llegué tarde»: viene de un aviso de demora).
   useEffect(() => {
     if (!visible || !actividad || !saltarConfirmacion || iniciada.current) {
       return
     }
     iniciada.current = true
-    void buscar(actividad)
+    void buscar(actividad, textoMotivoReagendar(MOTIVO_POR_DEFECTO))
   }, [visible, actividad, saltarConfirmacion, buscar])
 
   if (!actividad) return null
@@ -294,7 +300,7 @@ export function ReschedulePanel({
     setAviso(null)
     setAMano(false)
     setOpciones([])
-    void buscar(actividad)
+    void buscar(actividad, textoMotivoReagendar(motivo))
   }
 
   const aceptar = (): void => {
@@ -408,10 +414,25 @@ export function ReschedulePanel({
       </View>
 
       {paso === 'confirmar' ? (
-        <Txt variant="bodyS" color="fgMuted">
-          La marcamos como perdida y buscamos un hueco más tarde o en los
-          próximos días. Tú decides si la aceptas.
-        </Txt>
+        <>
+          <Txt variant="bodyS" color="fgMuted">
+            La marcamos como perdida y buscamos un hueco más tarde o en los
+            próximos días. Tú decides si la aceptas.
+          </Txt>
+          <View style={styles.motivo}>
+            <Txt variant="label">Qué pasó</Txt>
+            <ChipGroup
+              label="Qué pasó"
+              size="sm"
+              options={MOTIVOS_REAGENDAR}
+              value={motivo}
+              onValueChange={(v) => {
+                void hapticSeleccion()
+                setMotivo(v)
+              }}
+            />
+          </View>
+        </>
       ) : null}
 
       {paso === 'buscando' ? (
@@ -517,6 +538,7 @@ const crearEstilos = (t: Tema) =>
       gap: t.space[3],
       paddingVertical: t.space[5],
     },
+    motivo: { gap: t.space[2] },
     opciones: { gap: t.space[2] },
     opcion: {
       gap: 2,

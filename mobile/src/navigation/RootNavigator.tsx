@@ -18,6 +18,7 @@ import { TripDetailScreen } from '../screens/TripDetailScreen'
 import { GroupScreen } from '../screens/GroupScreen'
 import { JoinGroupScreen } from '../screens/JoinGroupScreen'
 import { PaywallScreen } from '../screens/PaywallScreen'
+import { ViajeCompartidoScreen } from '../screens/ViajeCompartidoScreen'
 import { useTheme } from '../theme'
 import { useReduceMotion } from '../components/ui/useReduceMotion'
 import { AvisoMantenimiento } from '../components/AvisoMantenimiento'
@@ -86,6 +87,8 @@ function pantalla(route: Route): ReactNode {
       return <JoinGroupScreen link={route.link} />
     case 'paywall':
       return <PaywallScreen />
+    case 'viajeCompartido':
+      return <ViajeCompartidoScreen id={route.id} />
     case 'home':
     default:
       return <HomeScreen />

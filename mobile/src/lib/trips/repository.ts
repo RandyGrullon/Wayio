@@ -58,8 +58,10 @@ export async function getTrip(id: string): Promise<TripRow | null> {
     .select('*')
     .eq('id', id)
     .maybeSingle()
-  if (error || !data) return null
-  return data as TripRow
+  // Un fallo de red o de Supabase no es «no existe»: lanza para que la
+  // pantalla pueda caer a la copia sin conexión.
+  if (error) throw new Error('No pudimos cargar el viaje. Revisa tu conexión.')
+  return (data as TripRow | null) ?? null
 }
 
 export async function createTrip(trip: PlanningTrip): Promise<TripRow> {

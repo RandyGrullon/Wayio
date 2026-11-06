@@ -12,9 +12,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import type { User } from '@supabase/supabase-js'
 import {
-  Avatar,
   AvatarStack,
-  Badge,
   Callout,
   Card,
   EmptyState,
@@ -26,6 +24,7 @@ import {
   SkeletonRegion,
   Tabs,
   Txt,
+  indiceDesdeId,
 } from '../components/ui'
 import { Check, Send, UserPlus } from '../components/ui/iconos'
 import {
@@ -39,6 +38,8 @@ import { useAuth } from '../context/AuthContext'
 import { useGroup, type UseGroupReturn } from '../hooks/useGroup'
 import { GastosGrupo } from '../components/group/GastosGrupo'
 import { useGastosGrupo } from '../components/group/useGastosGrupo'
+import { MiembrosGrupo } from '../components/group/MiembrosGrupo'
+import { useCompartirUbicacion } from '../components/group/useCompartirUbicacion'
 import { getTrip } from '../lib/trips/repository'
 import { config } from '../config'
 import { useEstilos, useTheme, type Tema } from '../theme'
@@ -50,9 +51,10 @@ const TEMPORAL = 'temp-'
 const esPendiente = (id: string): boolean => id.startsWith(TEMPORAL)
 
 /**
- * Sala del grupo (§6.8, móvil): chat, votos, gastos y miembros con Supabase
- * Realtime. Muestra los errores de carga y de cada acción, y marca lo que aún
- * se está enviando. Si llega sin viaje (deep link), lo carga.
+ * Sala del grupo (§6.8, móvil): chat, votos, gastos y miembros (con el mapa
+ * del grupo y «Compartir mi ubicación») con Supabase Realtime. Muestra los
+ * errores de carga y de cada acción, y marca lo que aún se está enviando. Si
+ * llega sin viaje (deep link), lo carga.
  */
 export function GroupScreen({
   trip: tripInicial,
@@ -145,6 +147,9 @@ function Sala({
   grupoLink: string | null
 }): React.ReactElement {
   const group = useGroup(tripId, user)
+  // Aquí y no en la pestaña Miembros: se desmonta al cambiar de pestaña y eso
+  // apagaría el GPS sin avisar (igual que GroupRoom en la web).
+  const ubicacion = useCompartirUbicacion(group.updateLocation)
   // Gastos con «Pagó» y «Entre quiénes» (aquí y no en la pestaña para no
   // perder un gasto en camino al cambiar de pestaña).
   const gastos = useGastosGrupo(tripId, group.expenses, group.members, user.id)
@@ -153,9 +158,10 @@ function Sala({
   const [tab, setTab] = useState<Tab>('chat')
   const moneda = monedaDe(trip)
 
-  const personas = group.members.map((m, i) => ({
-    nombre: m.nombre,
-    indice: i,
+  // Mismo color por miembro en la pila, la lista y el mapa (como la web).
+  const personas = group.members.map((m) => ({
+    nombre: m.user_id === user.id ? `${m.nombre} (tú)` : m.nombre,
+    indice: indiceDesdeId(m.user_id),
   }))
 
   const invitar = (): void => {
@@ -191,6 +197,19 @@ function Sala({
           <Txt variant="caption" color="fgMuted">
             {formatViajeros(group.members.length)}
           </Txt>
+          {ubicacion.estado === 'activa' ? (
+            // Señal visible en cualquier pestaña de que tu ubicación se comparte.
+            <View
+              style={styles.enVivo}
+              accessible
+              accessibilityLabel="En vivo: estás compartiendo tu ubicación con el grupo"
+            >
+              <View style={styles.enVivoPunto} />
+              <Txt variant="overline" color="fg">
+                En vivo
+              </Txt>
+            </View>
+          ) : null}
         </View>
       ) : null}
 
@@ -252,7 +271,13 @@ function Sala({
           onAnadir={gastos.anadir}
         />
       ) : (
-        <Miembros group={group} userId={user.id} />
+        <MiembrosGrupo
+          members={group.members}
+          userId={user.id}
+          ubicacion={ubicacion}
+          dias={trip.dias}
+          destino={trip.destino}
+        />
       )}
     </Pantalla>
   )
@@ -527,44 +552,6 @@ function Votos({
   )
 }
 
-// ── Miembros ──────────────────────────────────────────────────────────────
-
-function Miembros({
-  group,
-  userId,
-}: {
-  group: UseGroupReturn
-  userId: string
-}): React.ReactElement {
-  const styles = useEstilos(crearEstilos)
-  if (group.members.length === 0) {
-    return (
-      <EmptyState
-        title="Aún no hay miembros"
-        description="Invita a tus acompañantes con el enlace del grupo."
-      />
-    )
-  }
-  return (
-    <ScrollView contentContainerStyle={styles.lista}>
-      {group.members.map((m, i) => (
-        <View key={m.id} style={styles.miembro}>
-          <Avatar nombre={m.nombre} indice={i} size={40} />
-          <View style={styles.flex}>
-            <Txt variant="label">{m.nombre}</Txt>
-            <Txt variant="caption" color="fgMuted">
-              {m.ultima_ubicacion
-                ? `Ubicación actualizada ${formatHora12(parseFecha(m.ultima_ubicacion))}`
-                : 'Sin ubicación'}
-            </Txt>
-          </View>
-          {m.user_id === userId ? <Badge label="Tú" variant="brand" /> : null}
-        </View>
-      ))}
-    </ScrollView>
-  )
-}
-
 const estilosFijos = StyleSheet.create({
   margen: { paddingHorizontal: 16 },
   hueco: { marginTop: 12 },
@@ -654,12 +641,22 @@ const crearEstilos = (t: Tema) =>
       overflow: 'hidden',
     },
     segmento: { height: 8 },
-    miembro: {
+    enVivo: {
+      marginLeft: 'auto',
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 12,
-      paddingVertical: 12,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: t.colors.border,
+      gap: 6,
+      height: 28,
+      paddingHorizontal: 10,
+      borderRadius: t.radius.pill,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      backgroundColor: t.colors.surface,
+    },
+    enVivoPunto: {
+      width: 8,
+      height: 8,
+      borderRadius: 4,
+      backgroundColor: t.colors.gps,
     },
   })

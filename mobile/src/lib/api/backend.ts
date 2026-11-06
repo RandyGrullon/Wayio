@@ -39,9 +39,19 @@ const IA_CON_SESION = {
  * Genera los 3 paquetes de itinerario (basico/confort/premium) + clima.
  * Requiere sesión; con el tope diario de IA agotado lanza BackendError
  * ('rate_limit', serverCode 'tope_diario').
+ *
+ * `noCache` («Otra versión») se salta la caché del servidor; va siempre en el
+ * cuerpo, igual que el respaldo de la web (PlannerFlow: `{ ...form, noCache }`).
  */
-export function generateTrip(form: TripFormValues): Promise<GenerateResult> {
-  return postJSON<GenerateResult>('/api/generate', form, IA_CON_SESION)
+export function generateTrip(
+  form: TripFormValues,
+  { noCache = false }: { noCache?: boolean } = {}
+): Promise<GenerateResult> {
+  return postJSON<GenerateResult>(
+    '/api/generate',
+    { ...form, noCache },
+    IA_CON_SESION
+  )
 }
 
 export interface VideoPlace {

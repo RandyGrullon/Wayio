@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Linking, Pressable, StyleSheet, View } from 'react-native'
+import { StyleSheet, View } from 'react-native'
 import MapboxGL from '@rnmapbox/maps'
 import { config } from '../config'
 import { colorDia, useEstilos, useTheme, type Tema } from '../theme'
@@ -7,6 +7,11 @@ import { GeofenceCircles } from '../components/GeofenceCircle'
 import { Txt } from '../components/ui/Txt'
 import { Button } from '../components/ui/Button'
 import { IconButton } from '../components/ui/IconButton'
+import { useReduceMotion } from '../components/ui/useReduceMotion'
+import { useRutasReales } from '../hooks/useRutasReales'
+import { CapasRuta } from '../lib/mapa/CapasRuta'
+import { CreditoRutas } from '../lib/mapa/CreditoRutas'
+import { featuresRutas } from '../lib/mapa/trazo'
 import {
   Anchor,
   LocateFixed,
@@ -53,9 +58,11 @@ interface Props {
 const conCoords = (a: Activity): boolean => a.lat !== 0 || a.lng !== 0
 
 /**
- * Mapa en vivo (§10): ruta por día con casing, geocercas con su radio real,
- * marcadores numerados por día, punto GPS con su precisión y el siguiente
- * tramo. Necesita la app completa (no Expo Go) y el token de Mapbox.
+ * Mapa en vivo (§10): rutas reales por calles de cada día (POST /api/ruta,
+ * con arco de respaldo mientras llegan) y trazo de 600 ms al cambiar de día,
+ * geocercas con su radio real, marcadores numerados por día, punto GPS con su
+ * precisión y el siguiente tramo. Necesita la app completa (no Expo Go) y el
+ * token de Mapbox.
  */
 export function MapScreen({
   activities,
@@ -69,8 +76,11 @@ export function MapScreen({
   const tema = useTheme()
   const { colors, days, isDark } = tema
   const styles = useEstilos(crearEstilos)
+  const reducir = useReduceMotion()
   const camara = useRef<React.ComponentRef<typeof MapboxGL.Camera>>(null)
   const [seleccion, setSeleccion] = useState<string | null>(null)
+  const crucero = isCrucero === true
+  const duracion = reducir ? 0 : 600
 
   const colorDeDia = useCallback(
     (diaIndex: number) => colorDia(days, diaIndex + 1),
@@ -79,32 +89,27 @@ export function MapScreen({
 
   const conLugar = useMemo(() => activities.filter(conCoords), [activities])
 
-  const rutas = useMemo<GeoJSON.FeatureCollection<GeoJSON.LineString>>(() => {
-    const porDia = new Map<number, Activity[]>()
-    for (const a of conLugar) {
-      const lista = porDia.get(a.diaIndex) ?? []
-      lista.push(a)
-      porDia.set(a.diaIndex, lista)
-    }
-    return {
-      type: 'FeatureCollection',
-      features: [...porDia.entries()]
-        .map(([dia, lista]) => ({
-          dia,
-          coords: ordenarPorHora(lista).map((a): Posicion => [a.lng, a.lat]),
-        }))
-        .filter((r) => r.coords.length > 1)
-        .map((r) => ({
-          type: 'Feature',
-          id: `ruta-${r.dia}`,
-          properties: {
-            color: colorDeDia(r.dia),
-            activo: diaActivo === null || r.dia === diaActivo ? 1 : 0,
-          },
-          geometry: { type: 'LineString', coordinates: r.coords },
-        })),
-    }
-  }, [conLugar, colorDeDia, diaActivo])
+  // Paradas de cada día (índice = diaIndex) en el orden del recorrido.
+  const paradasPorDia = useMemo(() => {
+    const ultimo = conLugar.reduce((m, a) => Math.max(m, a.diaIndex), -1)
+    return Array.from({ length: ultimo + 1 }, (_, i) =>
+      ordenarPorHora(conLugar.filter((a) => a.diaIndex === i))
+    )
+  }, [conLugar])
+
+  // Rutas reales por calles (llegan en segundo plano; caché compartida).
+  const rutasReales = useRutasReales(paradasPorDia, crucero)
+
+  const rutas = useMemo(
+    () =>
+      featuresRutas(paradasPorDia, {
+        colorDeDia,
+        enfocado: diaActivo,
+        crucero,
+        rutas: rutasReales,
+      }),
+    [paradasPorDia, colorDeDia, diaActivo, crucero, rutasReales]
+  )
 
   const marcadores = useMemo<GeoJSON.FeatureCollection<GeoJSON.Point>>(() => {
     const numeroEnDia = new Map<string, number>()
@@ -190,21 +195,21 @@ export function MapScreen({
       camara.current?.setCamera({
         centerCoordinate: caja.ne,
         zoomLevel: 14,
-        animationDuration: 600,
+        animationDuration: duracion,
       })
       return
     }
-    camara.current?.fitBounds(caja.ne, caja.sw, 60, 600)
-  }, [conLugar, diaActivo, userLocation])
+    camara.current?.fitBounds(caja.ne, caja.sw, 60, duracion)
+  }, [conLugar, diaActivo, userLocation, duracion])
 
   const irAMi = useCallback(() => {
     if (!userLocation) return
     camara.current?.setCamera({
       centerCoordinate: [userLocation.lng, userLocation.lat],
       zoomLevel: 15,
-      animationDuration: 600,
+      animationDuration: duracion,
     })
-  }, [userLocation])
+  }, [userLocation, duracion])
 
   // Encuadre inicial y cada vez que cambia el foco (no en cada posición).
   const encuadrado = useRef(false)
@@ -213,15 +218,20 @@ export function MapScreen({
       camara.current?.setCamera({
         centerCoordinate: [foco.lng, foco.lat],
         zoomLevel: 15,
-        animationDuration: 900,
+        animationDuration: reducir ? 0 : 900,
       })
       return
     }
     if (encuadrado.current || conLugar.length === 0) return
-    encuadrado.current = true
-    const t = setTimeout(ajustarVista, 300)
+    // Se marca al encuadrar de verdad: si el efecto se repite antes (llega
+    // «reducir movimiento» o una posición nueva), el temporizador cancelado
+    // no deja el mapa sin encuadrar.
+    const t = setTimeout(() => {
+      encuadrado.current = true
+      ajustarVista()
+    }, 300)
     return () => clearTimeout(t)
-  }, [foco, conLugar.length, ajustarVista])
+  }, [foco, conLugar.length, ajustarVista, reducir])
 
   const elegida = useMemo(
     () =>
@@ -253,34 +263,13 @@ export function MapScreen({
           maxZoomLevel={18}
         />
 
-        {rutas.features.length > 0 ? (
-          <MapboxGL.ShapeSource id="rutas" shape={rutas}>
-            <MapboxGL.LineLayer
-              id="rutas-casing"
-              style={{
-                lineColor: colors.mapCasing,
-                lineWidth: ['case', ['==', ['get', 'activo'], 1], 7, 6],
-                lineOpacity: ['case', ['==', ['get', 'activo'], 1], 1, 0.3],
-                lineCap: 'round',
-                lineJoin: 'round',
-              }}
-            />
-            <MapboxGL.LineLayer
-              id="rutas-linea"
-              style={{
-                lineColor: ['get', 'color'],
-                lineWidth:
-                  isCrucero === true
-                    ? 2.5
-                    : ['case', ['==', ['get', 'activo'], 1], 4.5, 3.5],
-                lineOpacity: ['case', ['==', ['get', 'activo'], 1], 1, 0.3],
-                lineCap: 'round',
-                lineJoin: 'round',
-                ...(isCrucero === true ? { lineDasharray: [2, 2] } : {}),
-              }}
-            />
-          </MapboxGL.ShapeSource>
-        ) : null}
+        {/* Siempre montadas (aunque vacías): así quedan bajo los marcadores. */}
+        <CapasRuta
+          rutas={rutas}
+          diaActivo={diaActivo}
+          reducirMovimiento={reducir}
+          casing={colors.mapCasing}
+        />
 
         <GeofenceCircles
           activities={activities}
@@ -407,24 +396,8 @@ export function MapScreen({
         ) : null}
       </MapboxGL.MapView>
 
-      {config.creditosGeoapify ? (
-        // Las coordenadas de los lugares vienen de Geoapify (backend): su plan
-        // Free exige este enlace junto al mapa. El de OpenStreetMap ya va en
-        // los créditos de Mapbox (botón «i»).
-        <Pressable
-          accessibilityRole="link"
-          accessibilityLabel="Powered by Geoapify. Abre geoapify.com"
-          onPress={() => {
-            Linking.openURL('https://www.geoapify.com/').catch(() => undefined)
-          }}
-          hitSlop={8}
-          style={styles.creditos}
-        >
-          <Txt variant="caption" color="fgMuted">
-            Powered by Geoapify
-          </Txt>
-        </Pressable>
-      ) : null}
+      {/* Coordenadas y rutas de Geoapify (o de OSRM con el backend en OSM). */}
+      <CreditoRutas style={styles.creditos} />
 
       <View style={styles.controles}>
         <IconButton
@@ -492,11 +465,6 @@ const crearEstilos = (t: Tema) =>
       position: 'absolute',
       top: t.space[3],
       left: t.space[3],
-      paddingHorizontal: t.space[2],
-      paddingVertical: 2,
-      borderRadius: t.radius.control,
-      backgroundColor: t.colors.surfaceRaised,
-      opacity: 0.9,
     },
     controles: {
       position: 'absolute',

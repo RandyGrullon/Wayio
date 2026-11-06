@@ -17,9 +17,15 @@
  *               el mapa muestra «Powered by Geoapify», que su plan Free exige
  *               donde se ven sus coordenadas. Pon 'osm' solo si el servidor no
  *               tiene GEOAPIFY_API_KEY.
- * - Afiliados  → los mismos IDs que NEXT_PUBLIC_* de la web, para los enlaces
- *               de respaldo (cuando el backend no responde) y para la eSIM y
+ * - Afiliados  → los mismos IDs que NEXT_PUBLIC_* de la web (con EXPO_PUBLIC_),
+ *               para los enlaces de respaldo (cuando el backend no responde),
+ *               «Reservar» / «Ver hotel» de cada actividad (Viator →
+ *               Civitatis → GetYourGuide; Trip.com o Booking.com) y la eSIM y
  *               el seguro. Sin ID se omite el parámetro (sin comisión).
+ * - POSTHOG_KEY / POSTHOG_HOST → la misma clave PÚBLICA del proyecto de
+ *               PostHog que NEXT_PUBLIC_POSTHOG_KEY de la web (host por
+ *               defecto https://us.i.posthog.com). Sin clave, la analítica
+ *               (lib/analytics) no hace nada.
  * - REVENUECAT_IOS_KEY / REVENUECAT_ANDROID_KEY → claves PÚBLICAS de
  *               RevenueCat de cada tienda (Project settings → API keys). Con
  *               la clave de la plataforma, la app vende Pro con compras
@@ -70,7 +76,19 @@ export const config = {
     discoverCarsAid: idAfiliado(process.env['EXPO_PUBLIC_DISCOVERCARS_AID']),
     airaloRef: idAfiliado(process.env['EXPO_PUBLIC_AIRALO_REF']),
     iatiRef: idAfiliado(process.env['EXPO_PUBLIC_IATI_REF']),
+    /** Viator: hacen falta los dos (pid y mcid) para que cuente la comisión. */
+    viatorPid: idAfiliado(process.env['EXPO_PUBLIC_VIATOR_PID']),
+    viatorMcid: idAfiliado(process.env['EXPO_PUBLIC_VIATOR_MCID']),
+    civitatisAid: idAfiliado(process.env['EXPO_PUBLIC_CIVITATIS_AID']),
+    gygPartnerId: idAfiliado(process.env['EXPO_PUBLIC_GYG_PARTNER_ID']),
   },
+  /** Clave pública del proyecto de PostHog ('' = analítica apagada). */
+  posthogKey: (process.env['EXPO_PUBLIC_POSTHOG_KEY'] ?? '').trim(),
+  /** Host de captura de PostHog (región de EE. UU. por defecto). */
+  posthogHost: (
+    process.env['EXPO_PUBLIC_POSTHOG_HOST']?.trim() ||
+    'https://us.i.posthog.com'
+  ).replace(/\/+$/, ''),
   /** Compras integradas (RevenueCat) si hay clave; 'false' las apaga. */
   comprasTienda: !['false', '0', 'no'].includes(
     (process.env['EXPO_PUBLIC_COMPRAS_TIENDA'] ?? '').trim().toLowerCase()
